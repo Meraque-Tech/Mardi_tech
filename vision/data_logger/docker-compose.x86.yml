@@ -1,4 +1,4 @@
-version: "3.8"
+version: "3"
 
 # x86_64  Ubuntu 22.04
 # Usage: docker compose -f docker-compose.x86.yml up --build

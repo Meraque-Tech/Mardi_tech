@@ -1,4 +1,4 @@
-version: "3.8"
+version: "3"
 
 # Jetson Nano  JetPack 4.6  (ARM64)
 # Usage: docker compose -f docker-compose.jetson.yml up --build
