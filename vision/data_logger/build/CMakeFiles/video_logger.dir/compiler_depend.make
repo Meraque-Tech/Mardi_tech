@@ -450,7 +450,10 @@ CMakeFiles/video_logger.dir/video_logger/video_logger.cpp.o: ../video_logger/vid
   /usr/include/x86_64-linux-gnu/bits/types/struct_sigstack.h \
   /usr/include/x86_64-linux-gnu/bits/sigthread.h \
   /usr/include/x86_64-linux-gnu/bits/signal_ext.h \
-  /usr/include/c++/11/atomic
+  /usr/include/c++/11/atomic \
+  /usr/include/c++/11/thread \
+  /usr/include/c++/11/bits/std_thread.h \
+  /usr/include/c++/11/bits/this_thread_sleep.h
 
 
 /usr/include/c++/11/atomic:
@@ -626,6 +629,8 @@ CMakeFiles/video_logger.dir/video_logger/video_logger.cpp.o: ../video_logger/vid
 /usr/include/c++/11/bits/parse_numbers.h:
 
 /usr/include/c++/11/ctime:
+
+/usr/include/c++/11/thread:
 
 /usr/include/c++/11/ratio:
 
@@ -909,6 +914,8 @@ CMakeFiles/video_logger.dir/video_logger/video_logger.cpp.o: ../video_logger/vid
 
 /usr/include/c++/11/bits/exception.h:
 
+/usr/include/c++/11/bits/std_thread.h:
+
 /usr/include/c++/11/bits/cpp_type_traits.h:
 
 /usr/include/c++/11/bits/stl_iterator_base_funcs.h:
@@ -1092,6 +1099,8 @@ CMakeFiles/video_logger.dir/video_logger/video_logger.cpp.o: ../video_logger/vid
 /usr/include/c++/11/bits/memoryfwd.h:
 
 /usr/include/c++/11/bits/stringfwd.h:
+
+/usr/include/c++/11/bits/this_thread_sleep.h:
 
 /usr/include/c++/11/bits/locale_facets.tcc:
 
