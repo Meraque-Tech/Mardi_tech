@@ -11,7 +11,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Build tools + ffmpeg + Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    g++ \
     build-essential \
     make \
     cmake \
@@ -19,9 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     python3 \
     python3-pip \
-    # OpenCV 4 dev headers from NVIDIA L4T feed
     libopencv-dev \
+    gcc-8 \
+    g++-8 \
     && rm -rf /var/lib/apt/lists/*
+
+# Use GCC 8 as default (required for C++17 filesystem support)
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 80 \
+ && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 80
 
 RUN pip3 install --no-cache-dir setuptools wheel && \
     pip3 install --no-cache-dir flask
