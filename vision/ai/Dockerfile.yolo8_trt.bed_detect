@@ -1,0 +1,45 @@
+ARG BASE_DOCKER_REPO="meraquetech/race_nav"
+FROM ${BASE_DOCKER_REPO}:humble-pytorch-l4t-r32.7.1 AS humble-pytorch-l4t-r32.7.1-bed-detect-yolov8-trt
+ARG BASE_DOCKER_REPO
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Select bash as default shell
+SHELL ["/bin/bash", "-c"]
+
+ENV SAR_WS="/agv_ws"
+
+WORKDIR ${SAR_WS}
+
+# export OPENBLAS_CORETYPE=ARMV8: https://forums.developer.nvidia.com/t/illegal-instruction-core-dumped-xavier/166278
+ENV OPENBLAS_CORETYPE="ARMV8"
+
+COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
+# COPY ./arm64/packages/ros2_src/lytbot2_msg_srv ${SAR_WS}/src/lytbot2_msg_srv
+
+# Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
+# Building nav2 dependencies required as .deb packages for humble not available for bionic.
+RUN git clone --branch 1.1.9 --depth=1 https://github.com/ros-planning/navigation2.git src/navigation2 \
+    && source /opt/ros/$ROS_DISTRO/install/setup.sh \
+    && apt-get update \
+    && apt-get install -y \
+               avahi-utils \
+# Install avahi-utils (without the --no-install-recommends option) for resolving mDNS addresses
+    # && colcon build --packages-select \
+            #   nav2_common \
+            #   nav2_msgs \
+            #   lytbot2_msg_srv \
+    # && source "$SAR_WS/install/setup.bash" \
+    && colcon build --packages-select \
+              yolov8_trt_bed_detect_opt \
+    # && cp build/yolov8_trt_bed_detect/libmyplugins.so /usr/lib/ \
+    # Remove src/ later
+    && rm -rf log/ build/ src/ \
+    && apt-get autoremove -y \
+    && apt-get autoclean -y \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ./sar_entrypoint.bash /sar_entrypoint.bash
+RUN chmod +x /sar_entrypoint.bash
+
+ENTRYPOINT ["/sar_entrypoint.bash"]
+CMD ["bash"]
