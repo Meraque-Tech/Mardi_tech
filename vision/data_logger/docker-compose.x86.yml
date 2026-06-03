@@ -1,0 +1,23 @@
+# x86_64  Ubuntu 22.04
+# Usage: docker compose -f docker-compose.x86.yml up --build
+
+services:
+  data_logger:
+    build:
+      context: .
+      dockerfile: Dockerfile.x86
+    image: meraquetech/race_nav:data-logger-x86
+    container_name: data_logger_x86
+    restart: always
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+    group_add:
+      - video
+    environment:
+      - PYTHONUNBUFFERED=1

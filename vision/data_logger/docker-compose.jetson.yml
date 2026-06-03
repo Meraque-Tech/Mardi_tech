@@ -1,0 +1,30 @@
+# Jetson Nano  JetPack 4.6  (ARM64)
+# Usage: docker compose -f docker-compose.jetson.yml up --build
+#
+# Requires nvidia-container-runtime on the Nano:
+#   sudo apt install nvidia-container-runtime
+#   sudo systemctl restart docker
+
+services:
+  data_logger:
+    build:
+      context: .
+      dockerfile: Dockerfile.jetson
+    image: meraquetech/race_nav:data-logger-jetson
+    container_name: data_logger_jetson
+    restart: always
+    runtime: nvidia                 # enables GPU + V4L2 access
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+    group_add:
+      - video
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility

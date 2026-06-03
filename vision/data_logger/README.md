@@ -45,9 +45,87 @@ cmake --build build -j$(nproc)
 
 ---
 
+## Docker
+
+Two platform-specific Dockerfiles — both compile C++ binaries inside the image.
+
+### x86_64  Ubuntu 22.04
+
+```bash
+cd vision/data_logger
+
+docker compose -f docker-compose.x86.yml up --build       # foreground
+docker compose -f docker-compose.x86.yml up --build -d    # background
+docker compose -f docker-compose.x86.yml down
+```
+
+### Jetson Nano  JetPack 4.6 (ARM64)
+
+Install the NVIDIA container runtime on the Nano first:
+```bash
+sudo apt install nvidia-container-runtime
+sudo systemctl restart docker
+```
+
+Then:
+```bash
+docker compose -f docker-compose.jetson.yml up --build
+docker compose -f docker-compose.jetson.yml down
+```
+
+### Image names
+
+| Platform | Image tag |
+|----------|-----------|
+| x86 | `meraquetech/race_nav:data-logger-x86` |
+| Jetson Nano | `meraquetech/race_nav:data-logger-jetson` |
+
+### Push to Docker Hub
+
+```bash
+# x86
+docker compose -f docker-compose.x86.yml build
+docker push meraquetech/race_nav:data-logger-x86
+
+# Jetson
+docker compose -f docker-compose.jetson.yml build
+docker push meraquetech/race_nav:data-logger-jetson
+```
+
+### Pull and run (no build needed)
+
+```bash
+# x86
+docker pull meraquetech/race_nav:data-logger-x86
+docker compose -f docker-compose.x86.yml up -d
+
+# Jetson
+docker pull meraquetech/race_nav:data-logger-jetson
+docker compose -f docker-compose.jetson.yml up -d
+```
+
+### File reference
+
+| File | Platform |
+|------|----------|
+| `Dockerfile.x86` | x86_64 Ubuntu 22.04 |
+| `Dockerfile.jetson` | Jetson Nano JetPack 4.6 (L4T r32.7.1, ARM64) |
+| `docker-compose.x86.yml` | x86 compose |
+| `docker-compose.jetson.yml` | Jetson compose (nvidia runtime, GPU caps) |
+
+### Notes
+
+- Both containers use `restart: always` — auto-start on system boot
+- API and UI available at **http://localhost:5000**
+- Saved frames/videos written to `./logs/` on the host
+- Add or remove `/dev/videoN` entries in the compose file to match your cameras
+- Ensure Docker starts on boot: `sudo systemctl enable docker`
+
+---
+
 ## REST API
 
-Start the API server:
+Start the API server (without Docker):
 
 ```bash
 python3 api_server.py --port 5000

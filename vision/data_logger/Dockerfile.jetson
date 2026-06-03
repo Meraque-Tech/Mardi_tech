@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────
+# Target: Jetson Nano  JetPack 4.6  (ARM64 / L4T r32.7.1)
+# Build : docker compose -f docker-compose.jetson.yml up --build
+#
+# JetPack 4.6 ships OpenCV 4.5 pre-built with CUDA.
+# We install it from the L4T apt feed to keep CUDA linkage intact.
+# ─────────────────────────────────────────────
+FROM nvcr.io/nvidia/l4t-base:r32.7.1
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build tools + ffmpeg + Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    g++ \
+    cmake \
+    pkg-config \
+    ffmpeg \
+    python3 \
+    python3-pip \
+    # OpenCV 4 dev headers from NVIDIA L4T feed
+    libopencv-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir flask
+
+WORKDIR /app
+
+COPY CMakeLists.txt .
+COPY main.cpp .
+COPY frame_logger/ frame_logger/
+COPY video_logger/ video_logger/
+
+# Nano has 4 cores — limit to avoid OOM during build
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build build -j2
+
+COPY api_server.py .
+COPY ui/ ui/
+
+RUN mkdir -p logs/frames logs/videos
+
+EXPOSE 5000
+
+CMD ["python3", "api_server.py", "--host", "0.0.0.0", "--port", "5000"]

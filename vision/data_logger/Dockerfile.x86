@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────
+# Target: x86_64  Ubuntu 22.04
+# Build : docker compose -f docker-compose.x86.yml up --build
+# ─────────────────────────────────────────────
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    g++ \
+    cmake \
+    pkg-config \
+    libopencv-dev \
+    ffmpeg \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir flask
+
+WORKDIR /app
+
+COPY CMakeLists.txt .
+COPY main.cpp .
+COPY frame_logger/ frame_logger/
+COPY video_logger/ video_logger/
+
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build build -j$(nproc)
+
+COPY api_server.py .
+COPY ui/ ui/
+
+RUN mkdir -p logs/frames logs/videos
+
+EXPOSE 5000
+
+CMD ["python3", "api_server.py", "--host", "0.0.0.0", "--port", "5000"]
