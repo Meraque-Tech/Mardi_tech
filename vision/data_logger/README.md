@@ -304,3 +304,8 @@ Camera 640×480             YOLO 640×640
 pip install ultralytics
 yolo train data=pineapple.yaml model=yolov8n.pt imgsz=640
 ```
+
+# To change ownership from root to user dj:
+```
+    sudo chown dj:dj video_20260603_064527.mp4
+```
