@@ -1,5 +1,0 @@
-/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles/data_logger_ctrl.dir
-/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles/frame_logger.dir
-/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles/video_logger.dir
-/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles/edit_cache.dir
-/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles/rebuild_cache.dir
