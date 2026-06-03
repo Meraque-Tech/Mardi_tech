@@ -11,29 +11,29 @@ namespace fs = std::filesystem;
 
 static std::string timestamp() {
     auto now = std::chrono::system_clock::now();
-    auto ms  = std::chrono::duration_cast<std::chrono::microseconds>(
+    auto us  = std::chrono::duration_cast<std::chrono::microseconds>(
                    now.time_since_epoch()) % 1000000;
     std::time_t t = std::chrono::system_clock::to_time_t(now);
     std::ostringstream ss;
     ss << std::put_time(std::localtime(&t), "%Y%m%d_%H%M%S")
-       << "_" << std::setw(6) << std::setfill('0') << ms.count();
+       << "_" << std::setw(6) << std::setfill('0') << us.count();
     return ss.str();
 }
 
 int main(int argc, char** argv) {
-    int    device     = 0;
-    std::string outdir = "logs";
-    double fps        = 1.0;
-    int    max_frames = -1;
-    bool   show       = false;
+    int         device     = 0;
+    std::string outdir     = "logs/frames";
+    double      fps        = 1.0;
+    int         max_frames = -1;
+    bool        show       = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
-        if (a == "--device"     && i+1 < argc) device     = std::stoi(argv[++i]);
-        else if (a == "--output"&& i+1 < argc) outdir     = argv[++i];
-        else if (a == "--fps"   && i+1 < argc) fps        = std::stod(argv[++i]);
+        if      (a == "--device"     && i+1 < argc) device     = std::stoi(argv[++i]);
+        else if (a == "--output"     && i+1 < argc) outdir     = argv[++i];
+        else if (a == "--fps"        && i+1 < argc) fps        = std::stod(argv[++i]);
         else if (a == "--max-frames" && i+1 < argc) max_frames = std::stoi(argv[++i]);
-        else if (a == "--show")                show       = true;
+        else if (a == "--show")                     show       = true;
     }
 
     fs::create_directories(outdir);
@@ -44,11 +44,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    int interval_ms = static_cast<int>(1000.0 / fps);
     int frame_count = 0;
+    int interval_ms = static_cast<int>(1000.0 / fps);
 
-    std::cout << "Logging from /dev/video" << device
-              << " → " << outdir << "  (" << fps << " fps)\n";
+    std::cout << "Frame logger: /dev/video" << device
+              << " -> " << outdir << "  (" << fps << " fps)\n";
 
     cv::Mat frame;
     while (true) {
@@ -59,11 +59,11 @@ int main(int argc, char** argv) {
         }
 
         std::string filename = outdir + "/frame_" + timestamp() + ".jpg";
-        // cv::imwrite(filename, frame);
+        cv::imwrite(filename, frame);
         std::cout << "[" << ++frame_count << "] Saved " << filename << "\n";
 
         if (show) {
-            cv::imshow("data_logger", frame);
+            cv::imshow("frame_logger", frame);
             int key = cv::waitKey(1);
             if (key == 'q' || key == 27) break;
         }
@@ -75,6 +75,6 @@ int main(int argc, char** argv) {
 
     cap.release();
     if (show) cv::destroyAllWindows();
-    std::cout << "Total frames logged: " << frame_count << "\n";
+    std::cout << "Total frames saved: " << frame_count << "\n";
     return 0;
 }

@@ -1,18 +1,31 @@
 # data_logger
 
-Captures and saves frames from a camera device.
-C++ OpenCV backend called from a Python wrapper.
+Captures and saves frames or video from a camera device.
+Two C++ OpenCV tools built from a single CMakeLists.txt.
+
+---
+
+## Project Structure
+
+```
+data_logger/
+├── CMakeLists.txt
+├── frame_logger/
+│   └── frame_logger.cpp      # saves timestamped JPEGs
+├── video_logger/
+│   └── video_logger.cpp      # saves .avi video file
+├── build/                    # generated after cmake build
+│   ├── frame_logger
+│   └── video_logger
+└── README.md
+```
 
 ---
 
 ## Requirements
 
-- g++ with C++17
-- OpenCV 4.x (system install)
-- Python 3
-
 ```bash
-sudo apt install g++ libopencv-dev pkg-config
+sudo apt install g++ libopencv-dev pkg-config cmake
 ```
 
 ---
@@ -22,46 +35,60 @@ sudo apt install g++ libopencv-dev pkg-config
 ```bash
 cd vision/data_logger
 
-g++ -std=c++17 frame_logger.cpp -o frame_logger \
-    $(pkg-config --cflags --libs opencv4)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 ```
+
+Binaries will be at `build/frame_logger` and `build/video_logger`.
 
 ---
 
-## Run
+## frame_logger
 
-**Via Python:**
+Captures individual frames and saves them as timestamped JPEGs.
+
+**Run:**
 ```bash
-python3 data_logger.py --fps 5 --show
+./build/frame_logger --device 0 --fps 5 --output logs/frames --show
 ```
 
-**Direct C++ binary:**
-```bash
-./frame_logger --device 0 --fps 10 --show
-```
-
-**Save 50 frames then stop:**
-```bash
-python3 data_logger.py --fps 10 --max-frames 50
-```
-
----
-
-## Options
+**Options:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--device` | `/dev/video0` | Camera device path |
-| `--output` | `logs/` | Output directory for JPEGs |
+| `--device` | `0` | Camera index (`/dev/videoN`) |
+| `--output` | `logs/frames` | Output directory |
 | `--fps` | `1.0` | Capture rate (frames/sec) |
 | `--max-frames` | unlimited | Stop after N frames |
-| `--show` | off | Open live display window (press `q` to quit) |
+| `--show` | off | Display live window (press `q` to quit) |
+
+**Output:**
+```
+logs/frames/frame_20260603_121500_123456.jpg
+```
 
 ---
 
-## Output
+## video_logger
 
-Frames saved as timestamped JPEGs:
+Records a continuous video and saves it as a single `.avi` file.
+
+**Run:**
+```bash
+./build/video_logger --device 0 --fps 30 --duration 10 --output logs/videos --show
 ```
-logs/frame_20260603_121500_123456.jpg
+
+**Options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--device` | `0` | Camera index (`/dev/videoN`) |
+| `--output` | `logs/videos` | Output directory |
+| `--fps` | `30.0` | Recording frame rate |
+| `--duration` | unlimited | Stop after N seconds |
+| `--show` | off | Display live window (press `q` to quit) |
+
+**Output:**
+```
+logs/videos/video_20260603_121500.avi
 ```
