@@ -14,6 +14,18 @@ set -e
 COMPOSE_X86="docker-compose.x86.yml"
 COMPOSE_JETSON="docker-compose.jetson.yml"
 
+# ── Detect docker compose command (v1 vs v2) ─
+if docker compose version &>/dev/null; then
+    DC="docker compose"
+elif command -v docker-compose &>/dev/null; then
+    DC="docker-compose"
+else
+    echo "[ERROR] docker compose not found. Install with:"
+    echo "  sudo apt install docker-compose-plugin"
+    exit 1
+fi
+echo "[run.sh] Using: $DC"
+
 # ── Detect platform ──────────────────────────
 detect_platform() {
     local arch
@@ -69,8 +81,8 @@ case "$PLATFORM" in
 
     stop)
         echo "[run.sh] Stopping all data_logger containers..."
-        docker compose -f "$COMPOSE_X86"    down 2>/dev/null || true
-        docker compose -f "$COMPOSE_JETSON" down 2>/dev/null || true
+        $DC -f "$COMPOSE_X86"    down 2>/dev/null || true
+        $DC -f "$COMPOSE_JETSON" down 2>/dev/null || true
         echo "[run.sh] Done."
         exit 0
         ;;
@@ -78,9 +90,9 @@ case "$PLATFORM" in
     logs)
         PLATFORM=$(detect_platform)
         if [[ "$PLATFORM" == "jetson" ]]; then
-            docker compose -f "$COMPOSE_JETSON" logs -f
+            $DC -f "$COMPOSE_JETSON" logs -f
         else
-            docker compose -f "$COMPOSE_X86" logs -f
+            $DC -f "$COMPOSE_X86" logs -f
         fi
         exit 0
         ;;
@@ -93,10 +105,10 @@ esac
 
 # ── Build + start ────────────────────────────
 # echo "[run.sh] Building image..."
-# docker compose -f "$COMPOSE_FILE" build
+# $DC -f "$COMPOSE_FILE" build
 
 echo "[run.sh] Starting container..."
-docker compose -f "$COMPOSE_FILE" up -d
+$DC -f "$COMPOSE_FILE" up -d
 
 echo ""
 echo "  ✔  API server running at http://localhost:5000"

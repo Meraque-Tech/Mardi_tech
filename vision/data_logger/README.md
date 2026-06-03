@@ -49,6 +49,23 @@ cmake --build build -j$(nproc)
 
 Two platform-specific Dockerfiles — both compile C++ binaries inside the image.
 
+### Prerequisites — Docker Compose version
+
+Check which version you have:
+```bash
+docker compose version        # v2 (plugin) — preferred
+docker-compose --version      # v1 (standalone)
+```
+
+Upgrade from v1 to v2:
+```bash
+sudo apt remove docker-compose -y
+sudo apt install docker-compose-plugin -y
+docker compose version        # should show v2.x
+```
+
+> `run.sh` auto-detects v1 vs v2 and uses the correct command automatically.
+
 ### x86_64  Ubuntu 22.04
 
 ```bash
@@ -71,6 +88,35 @@ Then:
 ```bash
 docker compose -f docker-compose.jetson.yml up --build
 docker compose -f docker-compose.jetson.yml down
+```
+
+### Building for Jetson Nano from x86
+
+**Option A — Build directly on the Jetson (easiest):**
+```bash
+# Copy project to Nano, then on the Nano:
+docker-compose -f docker-compose.jetson.yml up --build
+```
+
+**Option B — Cross-compile on x86 with buildx + QEMU:**
+```bash
+# Install QEMU
+sudo apt install qemu-user-static
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+# Create ARM64 builder
+docker buildx create --name multiarch --use
+docker buildx inspect --bootstrap
+
+# Build and push directly to Docker Hub
+docker buildx build \
+  --platform linux/arm64 \
+  -f Dockerfile.jetson \
+  -t meraquetech/race_nav:data-logger-jetson \
+  --push .
+
+# Then on the Jetson just pull and run:
+docker-compose -f docker-compose.jetson.yml up -d
 ```
 
 ### Image names
