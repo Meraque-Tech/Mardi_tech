@@ -5,6 +5,11 @@
 #include <iomanip>
 #include <sstream>
 #include <filesystem>
+#include <csignal>
+#include <atomic>
+
+static std::atomic<bool> g_stop{false};
+static void on_signal(int) { g_stop = true; }
 
 namespace fs = std::filesystem;
 
@@ -69,11 +74,14 @@ int main(int argc, char** argv) {
     if (duration > 0)
         std::cout << "Duration: " << duration << "s\n";
 
+    std::signal(SIGINT,  on_signal);
+    std::signal(SIGTERM, on_signal);
+
     auto start = std::chrono::steady_clock::now();
     int  frame_count = 0;
     cv::Mat frame;
 
-    while (true) {
+    while (!g_stop) {
         if (!cap.read(frame) || frame.empty()) {
             std::cerr << "Frame read failed, skipping.\n";
             continue;
@@ -85,13 +93,13 @@ int main(int argc, char** argv) {
         if (show) {
             cv::imshow("video_logger", frame);
             int key = cv::waitKey(1);
-            if (key == 'q' || key == 27) break;
+            if (key == 'q' || key == 27) g_stop = true;
         }
 
         if (duration > 0) {
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                                std::chrono::steady_clock::now() - start).count();
-            if (elapsed >= duration) break;
+            if (elapsed >= duration) g_stop = true;
         }
     }
 
