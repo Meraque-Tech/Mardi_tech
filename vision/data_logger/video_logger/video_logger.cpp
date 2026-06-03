@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
     int         duration = -1;
     bool        show     = false;
     int         req_w    = 640;
-    int         req_h    = 480;
+    int         req_h    = 640;
     int         yolo_sz  = 0;
 
     for (int i = 1; i < argc; ++i) {

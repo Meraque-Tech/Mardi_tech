@@ -162,11 +162,67 @@ Records a continuous video and saves it as a single `.mp4` file.
 |------|---------|-------------|
 | `--device` | `0` | Camera index (`/dev/videoN`) |
 | `--output` | `logs/videos` | Output directory |
-| `--fps` | `30.0` | Recording frame rate |
+| `--fps` | `20.0` | Recording frame rate (Pi camera stable at 20) |
 | `--duration` | unlimited | Stop after N seconds |
+| `--width` | `640` | Capture width |
+| `--height` | `640` | Capture height |
+| `--yolo` | off | Letterbox to square YOLO format (`--yolo 640`) |
 | `--show` | off | Display live window (press `q` to quit) |
 
 **Output:**
 ```
 logs/videos/video_20260603_121500.mp4
+```
+
+---
+
+## YOLO Frame Size Guide — Agriculture / Pineapple Detection
+
+### Recommended: 640×640
+
+Best balance of accuracy and speed for pineapple crown detection. Default for YOLOv8/v5.
+
+```bash
+# Collect video dataset
+./build/video_logger --device 2 --fps 20 --yolo 640 --duration 60
+
+# Collect image dataset for labeling
+./build/frame_logger --device 2 --fps 2 --yolo 640 --output dataset/raw
+```
+
+### Size comparison
+
+| Size | Speed | Accuracy | Use case |
+|------|-------|----------|----------|
+| `320×320` | Very fast | Low | Edge device, far-away counting only |
+| `416×416` | Fast | Medium | Jetson Nano, RPi with limited RAM |
+| **`640×640`** | **Balanced** | **Good** | **Best for pineapple detection** |
+| `1280×1280` | Slow | High | Drone top-down, dense small crowns |
+
+### Why 640 for pineapples
+
+- Pineapple crowns are **medium-size objects** — 640 captures enough detail
+- Field lighting varies — resolution beyond 640 doesn't compensate for bad data
+- Shooting **top-down from a drone**: use `1280` (crowns become small objects)
+- Shooting **side view from ground**: `640` is sufficient
+
+### Letterbox explained
+
+The `--yolo` flag scales the frame to fit inside the target square and pads the remainder with grey (value 114), matching YOLO's internal preprocessing exactly:
+
+```
+Camera 640×480             YOLO 640×640
+┌──────────────────┐       ┌──────────────────┐
+│                  │  -->  │░░░░ padding ░░░░░│
+│   camera frame   │       │   camera frame   │
+│                  │       │░░░░ padding ░░░░░│
+└──────────────────┘       └──────────────────┘
+```
+
+### Training with YOLOv8
+
+```bash
+# Label frames with Roboflow or LabelImg, then:
+pip install ultralytics
+yolo train data=pineapple.yaml model=yolov8n.pt imgsz=640
 ```
