@@ -14,6 +14,22 @@ namespace fs = std::filesystem;
 static std::atomic<bool> g_stop{false};
 static void on_signal(int) { g_stop = true; }
 
+// Resize + pad to square YOLO format (letterbox with grey borders)
+static cv::Mat letterbox(const cv::Mat& src, int target) {
+    float scale = std::min(float(target) / src.cols, float(target) / src.rows);
+    int nw = int(src.cols * scale);
+    int nh = int(src.rows * scale);
+    int pad_x = (target - nw) / 2;
+    int pad_y = (target - nh) / 2;
+
+    cv::Mat resized;
+    cv::resize(src, resized, cv::Size(nw, nh));
+
+    cv::Mat out(target, target, src.type(), cv::Scalar(114, 114, 114));
+    resized.copyTo(out(cv::Rect(pad_x, pad_y, nw, nh)));
+    return out;
+}
+
 static std::string timestamp() {
     auto now = std::chrono::system_clock::now();
     std::time_t t = std::chrono::system_clock::to_time_t(now);
@@ -30,6 +46,7 @@ int main(int argc, char** argv) {
     bool        show     = false;
     int         req_w    = 640;
     int         req_h    = 480;
+    int         yolo_sz  = 0;   // 0 = disabled, e.g. 640 for YOLOv8
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -39,6 +56,8 @@ int main(int argc, char** argv) {
         else if (a == "--duration" && i+1 < argc) duration = std::stoi(argv[++i]);
         else if (a == "--width"    && i+1 < argc) req_w    = std::stoi(argv[++i]);
         else if (a == "--height"   && i+1 < argc) req_h    = std::stoi(argv[++i]);
+        else if (a == "--yolo"     && i+1 < argc) yolo_sz  = std::stoi(argv[++i]);
+        else if (a == "--yolo")                   yolo_sz  = 640;
         else if (a == "--show")                   show     = true;
     }
 
@@ -59,13 +78,16 @@ int main(int argc, char** argv) {
     int width  = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
     int height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
 
+    int out_w = (yolo_sz > 0) ? yolo_sz : width;
+    int out_h = (yolo_sz > 0) ? yolo_sz : height;
+
     std::string filename = outdir + "/video_" + timestamp() + ".mp4";
 
     // Pipe raw BGR24 frames into ffmpeg → H.264 mp4
     std::string cmd =
         "ffmpeg -y"
         " -f rawvideo -pixel_format bgr24"
-        " -video_size " + std::to_string(width) + "x" + std::to_string(height) +
+        " -video_size " + std::to_string(out_w) + "x" + std::to_string(out_h) +
         " -framerate " + std::to_string(fps) +
         " -i pipe:0"
         " -c:v libx264 -preset fast -crf 23"
@@ -82,7 +104,10 @@ int main(int argc, char** argv) {
 
     std::cout << "Video logger: /dev/video" << device
               << " -> " << filename
-              << "  (" << width << "x" << height << " @ " << fps << " fps)\n";
+              << "  (capture " << width << "x" << height
+              << " -> output " << out_w << "x" << out_h
+              << " @ " << fps << " fps)\n";
+    if (yolo_sz > 0) std::cout << "YOLO letterbox: " << yolo_sz << "x" << yolo_sz << "\n";
     if (duration > 0) std::cout << "Duration: " << duration << "s\n";
 
     auto start = std::chrono::steady_clock::now();
@@ -95,11 +120,10 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // Ensure frame is exactly the negotiated size
-        if (frame.cols != width || frame.rows != height)
-            cv::resize(frame, frame, cv::Size(width, height));
+        cv::Mat out = (yolo_sz > 0) ? letterbox(frame, yolo_sz)
+                                     : frame;
 
-        fwrite(frame.data, 1, frame.total() * frame.elemSize(), ffmpeg);
+        fwrite(out.data, 1, out.total() * out.elemSize(), ffmpeg);
         ++frame_count;
 
         if (show) {
