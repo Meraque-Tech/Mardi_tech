@@ -7,11 +7,12 @@
 #include <filesystem>
 #include <csignal>
 #include <atomic>
+#include <cstdio>
+
+namespace fs = std::filesystem;
 
 static std::atomic<bool> g_stop{false};
 static void on_signal(int) { g_stop = true; }
-
-namespace fs = std::filesystem;
 
 static std::string timestamp() {
     auto now = std::chrono::system_clock::now();
@@ -25,7 +26,7 @@ int main(int argc, char** argv) {
     int         device   = 0;
     std::string outdir   = "logs/videos";
     double      fps      = 30.0;
-    int         duration = -1;   // seconds, -1 = unlimited
+    int         duration = -1;
     bool        show     = false;
     int         req_w    = 640;
     int         req_h    = 480;
@@ -41,6 +42,9 @@ int main(int argc, char** argv) {
         else if (a == "--show")                   show     = true;
     }
 
+    std::signal(SIGINT,  on_signal);
+    std::signal(SIGTERM, on_signal);
+
     fs::create_directories(outdir);
 
     cv::VideoCapture cap(device);
@@ -49,33 +53,37 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Request resolution before first frame is read
-    if (req_w > 0) cap.set(cv::CAP_PROP_FRAME_WIDTH,  req_w);
-    if (req_h > 0) cap.set(cv::CAP_PROP_FRAME_HEIGHT, req_h);
+    cap.set(cv::CAP_PROP_FRAME_WIDTH,  req_w);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, req_h);
 
     int width  = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
     int height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
 
     std::string filename = outdir + "/video_" + timestamp() + ".mp4";
-    cv::VideoWriter writer(
-        filename,
-        cv::VideoWriter::fourcc('m','p','4','v'),
-        fps,
-        cv::Size(width, height)
-    );
-    if (!writer.isOpened()) {
-        std::cerr << "Cannot open output video: " << filename << "\n";
+
+    // Pipe raw BGR24 frames into ffmpeg → H.264 mp4
+    std::string cmd =
+        "ffmpeg -y"
+        " -f rawvideo -pixel_format bgr24"
+        " -video_size " + std::to_string(width) + "x" + std::to_string(height) +
+        " -framerate " + std::to_string(fps) +
+        " -i pipe:0"
+        " -c:v libx264 -preset fast -crf 23"
+        " -pix_fmt yuv420p"
+        " -movflags +faststart"
+        " " + filename +
+        " 2>/dev/null";
+
+    FILE* ffmpeg = popen(cmd.c_str(), "w");
+    if (!ffmpeg) {
+        std::cerr << "Failed to launch ffmpeg\n";
         return 1;
     }
 
     std::cout << "Video logger: /dev/video" << device
               << " -> " << filename
               << "  (" << width << "x" << height << " @ " << fps << " fps)\n";
-    if (duration > 0)
-        std::cout << "Duration: " << duration << "s\n";
-
-    std::signal(SIGINT,  on_signal);
-    std::signal(SIGTERM, on_signal);
+    if (duration > 0) std::cout << "Duration: " << duration << "s\n";
 
     auto start = std::chrono::steady_clock::now();
     int  frame_count = 0;
@@ -87,7 +95,11 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        writer.write(frame);
+        // Ensure frame is exactly the negotiated size
+        if (frame.cols != width || frame.rows != height)
+            cv::resize(frame, frame, cv::Size(width, height));
+
+        fwrite(frame.data, 1, frame.total() * frame.elemSize(), ffmpeg);
         ++frame_count;
 
         if (show) {
@@ -104,7 +116,7 @@ int main(int argc, char** argv) {
     }
 
     cap.release();
-    writer.release();
+    pclose(ffmpeg);   // flushes + finalizes the mp4 properly
     if (show) cv::destroyAllWindows();
     std::cout << "Saved " << frame_count << " frames to " << filename << "\n";
     return 0;
