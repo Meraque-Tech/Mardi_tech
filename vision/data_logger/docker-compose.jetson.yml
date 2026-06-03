@@ -23,8 +23,6 @@ services:
       - /dev/video0:/dev/video0
       - /dev/video1:/dev/video1
       - /dev/video2:/dev/video2
-    group_add:
-      - video
     environment:
       - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all

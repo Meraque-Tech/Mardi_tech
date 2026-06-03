@@ -19,7 +19,5 @@ services:
       - /dev/video0:/dev/video0
       - /dev/video2:/dev/video2
       - /dev/video3:/dev/video3
-    group_add:
-      - video
     environment:
       - PYTHONUNBUFFERED=1
