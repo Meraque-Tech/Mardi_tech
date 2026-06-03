@@ -34,8 +34,7 @@ COPY frame_logger/ frame_logger/
 COPY video_logger/ video_logger/
 
 # Nano has 4 cores — limit to avoid OOM during build
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
- && cmake --build build -j2
+RUN mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j2
 
 COPY api_server.py .
 COPY ui/ ui/
