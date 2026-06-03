@@ -90,5 +90,5 @@ Records a continuous video and saves it as a single `.avi` file.
 
 **Output:**
 ```
-logs/videos/video_20260603_121500.avi
+logs/videos/video_20260603_121500.mp4
 ```

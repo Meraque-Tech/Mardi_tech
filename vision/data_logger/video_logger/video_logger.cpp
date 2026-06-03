@@ -43,10 +43,10 @@ int main(int argc, char** argv) {
     int width  = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
     int height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
 
-    std::string filename = outdir + "/video_" + timestamp() + ".avi";
+    std::string filename = outdir + "/video_" + timestamp() + ".mp4";
     cv::VideoWriter writer(
         filename,
-        cv::VideoWriter::fourcc('M','J','P','G'),
+        cv::VideoWriter::fourcc('m','p','4','v'),
         fps,
         cv::Size(width, height)
     );
