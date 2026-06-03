@@ -1,7 +1,7 @@
 # data_logger
 
 Captures and saves frames or video from a camera device.
-Two C++ OpenCV tools built from a single CMakeLists.txt.
+Two C++ OpenCV tools built from a single CMakeLists.txt, with a REST API and interactive controller.
 
 ---
 
@@ -10,11 +10,14 @@ Two C++ OpenCV tools built from a single CMakeLists.txt.
 ```
 data_logger/
 ├── CMakeLists.txt
+├── main.cpp                  # interactive terminal controller
+├── api_server.py             # Flask REST API
 ├── frame_logger/
 │   └── frame_logger.cpp      # saves timestamped JPEGs
 ├── video_logger/
-│   └── video_logger.cpp      # saves .avi video file
+│   └── video_logger.cpp      # saves .mp4 video file
 ├── build/                    # generated after cmake build
+│   ├── data_logger_ctrl
 │   ├── frame_logger
 │   └── video_logger
 └── README.md
@@ -26,6 +29,7 @@ data_logger/
 
 ```bash
 sudo apt install g++ libopencv-dev pkg-config cmake
+pip install flask
 ```
 
 ---
@@ -39,7 +43,81 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
 
-Binaries will be at `build/frame_logger` and `build/video_logger`.
+---
+
+## REST API
+
+Start the API server:
+
+```bash
+python3 api_server.py --port 5000
+```
+
+### Endpoints
+
+#### `GET /status`
+Returns current logger state.
+```json
+{ "running": true, "type": "frame", "pid": 12345 }
+```
+
+#### `POST /start/frame`
+Start the frame logger. Body (all optional):
+```json
+{
+  "device": 0,
+  "output": "logs/frames",
+  "fps": 5.0,
+  "max_frames": 100,
+  "show": false
+}
+```
+
+#### `POST /start/video`
+Start the video logger. Body (all optional):
+```json
+{
+  "device": 2,
+  "output": "logs/videos",
+  "fps": 30.0,
+  "duration": 60,
+  "show": false
+}
+```
+
+#### `POST /stop`
+Stop the running logger.
+
+### Example with curl
+
+```bash
+# Start frame logger
+curl -X POST http://localhost:5000/start/frame \
+     -H "Content-Type: application/json" \
+     -d '{"device": 0, "fps": 5}'
+
+# Check status
+curl http://localhost:5000/status
+
+# Stop
+curl -X POST http://localhost:5000/stop
+```
+
+---
+
+## Interactive Controller
+
+```bash
+./build/data_logger_ctrl
+```
+
+```
+=== Data Logger Control ===
+  1 - Start frame logger
+  2 - Start video logger
+  3 - Stop logger
+  q - Quit
+```
 
 ---
 
@@ -71,11 +149,11 @@ logs/frames/frame_20260603_121500_123456.jpg
 
 ## video_logger
 
-Records a continuous video and saves it as a single `.avi` file.
+Records a continuous video and saves it as a single `.mp4` file.
 
 **Run:**
 ```bash
-./build/video_logger --device 2 --fps 30 --duration -1 --output logs/videos --show
+./build/video_logger --device 2 --fps 30 --duration 60 --output logs/videos --show
 ```
 
 **Options:**

@@ -248,8 +248,19 @@ CMakeFiles/data_logger_ctrl.dir/main.cpp.o: ../main.cpp \
   /usr/include/c++/11/bits/refwrap.h \
   /usr/include/c++/11/ext/aligned_buffer.h \
   /usr/include/c++/11/bits/fs_dir.h \
-  /usr/include/c++/11/bits/fs_ops.h
+  /usr/include/c++/11/bits/fs_ops.h \
+  /usr/include/c++/11/vector \
+  /usr/include/c++/11/bits/stl_uninitialized.h \
+  /usr/include/c++/11/bits/stl_vector.h \
+  /usr/include/c++/11/bits/stl_bvector.h \
+  /usr/include/c++/11/bits/vector.tcc
 
+
+/usr/include/c++/11/bits/vector.tcc:
+
+/usr/include/c++/11/bits/stl_bvector.h:
+
+/usr/include/c++/11/bits/stl_uninitialized.h:
 
 /usr/include/c++/11/bits/fs_ops.h:
 
@@ -290,6 +301,8 @@ CMakeFiles/data_logger_ctrl.dir/main.cpp.o: ../main.cpp \
 /usr/include/c++/11/bits/locale_facets_nonio.h:
 
 /usr/include/x86_64-linux-gnu/bits/unistd_ext.h:
+
+/usr/include/c++/11/vector:
 
 /usr/include/x86_64-linux-gnu/bits/getopt_core.h:
 
@@ -342,6 +355,8 @@ CMakeFiles/data_logger_ctrl.dir/main.cpp.o: ../main.cpp \
 /usr/include/c++/11/stdexcept:
 
 /usr/include/x86_64-linux-gnu/c++/11/bits/error_constants.h:
+
+/usr/include/c++/11/bits/stl_vector.h:
 
 /usr/include/c++/11/system_error:
 
