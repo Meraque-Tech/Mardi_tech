@@ -23,7 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir flask
+RUN pip3 install --no-cache-dir setuptools wheel && \
+    pip3 install --no-cache-dir flask
 
 WORKDIR /app
 
