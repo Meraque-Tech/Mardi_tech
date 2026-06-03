@@ -307,5 +307,5 @@ yolo train data=pineapple.yaml model=yolov8n.pt imgsz=640
 
 # To change ownership from root to user dj:
 ```
-    sudo chown dj:dj video_20260603_064527.mp4
+    sudo chown $USER:$USER *
 ```

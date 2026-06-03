@@ -92,8 +92,8 @@ case "$PLATFORM" in
 esac
 
 # ── Build + start ────────────────────────────
-echo "[run.sh] Building image..."
-docker compose -f "$COMPOSE_FILE" build
+# echo "[run.sh] Building image..."
+# docker compose -f "$COMPOSE_FILE" build
 
 echo "[run.sh] Starting container..."
 docker compose -f "$COMPOSE_FILE" up -d
