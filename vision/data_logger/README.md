@@ -212,6 +212,30 @@ Start the video logger. Body (all optional):
 #### `POST /stop`
 Stop the running logger.
 
+#### `GET /files?type=videos|frames`
+List saved files with name, size, and download URL.
+```json
+{
+  "type": "videos",
+  "files": [
+    { "name": "video_20260603_121500.mp4", "size_mb": 12.4, "url": "/download/videos/video_20260603_121500.mp4" }
+  ]
+}
+```
+
+#### `GET /download/<type>/<filename>`
+Download a saved file directly.
+```bash
+curl -OJ http://localhost:5000/download/videos/video_20260603_121500.mp4
+curl -OJ http://localhost:5000/download/frames/frame_20260603_121500_123456.jpg
+```
+
+#### `DELETE /files/<type>/<filename>`
+Delete a saved file.
+```bash
+curl -X DELETE http://localhost:5000/files/videos/video_20260603_121500.mp4
+```
+
 ### Example with curl
 
 ```bash

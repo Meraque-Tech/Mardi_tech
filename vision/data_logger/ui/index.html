@@ -238,6 +238,32 @@
       overflow-y: auto;
     }
 
+    /* ── File list ── */
+    .file-tabs { display: flex; gap: 4px; margin-bottom: 14px; }
+    .file-tab {
+      padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border);
+      background: transparent; color: var(--muted); font-size: .8rem;
+      font-weight: 600; cursor: pointer; transition: all .2s;
+    }
+    .file-tab.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+
+    .file-list { display: flex; flex-direction: column; gap: 7px; max-height: 260px; overflow-y: auto; }
+    .file-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 9px 12px; gap: 10px;
+    }
+    .file-name { font-size: .78rem; font-family: monospace; color: var(--text); flex: 1; word-break: break-all; }
+    .file-size { font-size: .72rem; color: var(--muted); flex-shrink: 0; }
+    .file-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .btn-dl {
+      padding: 5px 10px; border-radius: 6px; border: none; font-size: .75rem;
+      font-weight: 600; cursor: pointer; transition: opacity .15s;
+    }
+    .btn-dl.down  { background: var(--accent);  color: #fff; }
+    .btn-dl.del   { background: var(--danger);  color: #fff; }
+    .file-empty   { font-size: .8rem; color: var(--muted); text-align: center; padding: 20px 0; }
+
     /* ── Scrollbar ── */
     ::-webkit-scrollbar { width: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -367,6 +393,22 @@
                 onclick="clearLog()">Clear</button>
       </div>
       <div id="log"></div>
+    </div>
+
+    <!-- ── Downloads ── -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+        <div class="card-title" style="margin:0">Saved Files</div>
+        <button class="btn btn-muted" style="width:auto;padding:5px 12px;font-size:.75rem"
+                onclick="refreshFiles()">↻ Refresh</button>
+      </div>
+      <div class="file-tabs">
+        <button class="file-tab active" id="ftab-videos" onclick="switchFileTab('videos', this)">Videos</button>
+        <button class="file-tab"        id="ftab-frames" onclick="switchFileTab('frames', this)">Frames</button>
+      </div>
+      <div id="file-list" class="file-list">
+        <div class="file-empty">Click Refresh to load files.</div>
+      </div>
     </div>
 
   </div>
@@ -536,11 +578,49 @@
     }
   }
 
+  // ── File browser ──────────────────────────────────────────────────────────
+  let currentFileTab = 'videos';
+
+  function switchFileTab(type, el) {
+    currentFileTab = type;
+    document.querySelectorAll('.file-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    refreshFiles();
+  }
+
+  async function refreshFiles() {
+    const data = await apiFetch(`/files?type=${currentFileTab}`);
+    const el = document.getElementById('file-list');
+    if (!data || !data.files) { el.innerHTML = '<div class="file-empty">Failed to load.</div>'; return; }
+    if (data.files.length === 0) { el.innerHTML = '<div class="file-empty">No files yet.</div>'; return; }
+    el.innerHTML = data.files.map(f => `
+      <div class="file-row" id="row-${CSS.escape(f.name)}">
+        <span class="file-name">${f.name}</span>
+        <span class="file-size">${f.size_mb} MB</span>
+        <div class="file-actions">
+          <a href="${f.url}" download="${f.name}">
+            <button class="btn-dl down">⬇ Download</button>
+          </a>
+          <button class="btn-dl del" onclick="deleteFile('${currentFileTab}','${f.name}')">✕</button>
+        </div>
+      </div>`).join('');
+  }
+
+  async function deleteFile(type, name) {
+    if (!confirm(`Delete ${name}?`)) return;
+    const data = await apiFetch(`/files/${type}/${name}`, { method: 'DELETE' });
+    if (data && data.deleted) {
+      log(`Deleted ${name}`, 'warn');
+      refreshFiles();
+    }
+  }
+
   // ── Init ──────────────────────────────────────────────────────────────────
   log('UI ready. Waiting for commands.', 'info');
   setStatus(false);
   pollStatus();
   setInterval(pollStatus, 3000);
+  refreshFiles();
 </script>
 </body>
 </html>

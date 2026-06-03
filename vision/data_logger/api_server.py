@@ -2,16 +2,19 @@
 REST API to start / stop frame_logger and video_logger C++ binaries.
 
 Endpoints:
-  POST /start/frame   body: { device, output, fps, max_frames, show }
-  POST /start/video   body: { device, output, fps, duration, show }
+  POST /start/frame         body: { device, output, fps, max_frames, show }
+  POST /start/video         body: { device, output, fps, duration, show }
   POST /stop
   GET  /status
+  GET  /files?type=frames|videos   list saved files
+  GET  /download/<type>/<filename> download a file
+  DELETE /files/<type>/<filename>  delete a file
 """
 
 import os
 import signal
 import subprocess
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file, abort
 
 app = Flask(__name__, static_folder="ui")
 
@@ -106,6 +109,57 @@ def stop():
     _proc = None
     _logger_type = None
     return jsonify({"stopped": True, "pid": pid})
+
+
+LOGS = {
+    "frames": os.path.join(BASE, "logs", "frames"),
+    "videos": os.path.join(BASE, "logs", "videos"),
+}
+
+
+@app.get("/files")
+def list_files():
+    ftype = request.args.get("type", "videos")
+    if ftype not in LOGS:
+        return jsonify({"error": "type must be 'frames' or 'videos'"}), 400
+    folder = LOGS[ftype]
+    if not os.path.isdir(folder):
+        return jsonify({"type": ftype, "files": []})
+    files = sorted(os.listdir(folder), reverse=True)
+    result = []
+    for f in files:
+        path = os.path.join(folder, f)
+        result.append({
+            "name": f,
+            "size_mb": round(os.path.getsize(path) / 1024 / 1024, 2),
+            "url": f"/download/{ftype}/{f}",
+        })
+    return jsonify({"type": ftype, "files": result})
+
+
+@app.get("/download/<ftype>/<filename>")
+def download_file(ftype, filename):
+    if ftype not in LOGS:
+        abort(404)
+    folder = LOGS[ftype]
+    safe = os.path.basename(filename)   # prevent path traversal
+    path = os.path.join(folder, safe)
+    if not os.path.isfile(path):
+        abort(404)
+    return send_file(path, as_attachment=True, download_name=safe)
+
+
+@app.delete("/files/<ftype>/<filename>")
+def delete_file(ftype, filename):
+    if ftype not in LOGS:
+        abort(404)
+    folder = LOGS[ftype]
+    safe = os.path.basename(filename)
+    path = os.path.join(folder, safe)
+    if not os.path.isfile(path):
+        abort(404)
+    os.remove(path)
+    return jsonify({"deleted": safe})
 
 
 if __name__ == "__main__":
