@@ -15,7 +15,6 @@ services:
     image: meraquetech/race_nav:data-logger-jetson
     container_name: data_logger_jetson
     restart: always
-    runtime: nvidia                 # enables GPU + V4L2 access
     ports:
       - "5000:5000"
     volumes:
