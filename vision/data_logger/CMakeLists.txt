@@ -8,6 +8,11 @@ find_package(OpenCV REQUIRED)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 
+# --- controller ---
+add_executable(data_logger_ctrl
+    main.cpp
+)
+
 # --- frame_logger ---
 add_executable(frame_logger
     frame_logger/frame_logger.cpp

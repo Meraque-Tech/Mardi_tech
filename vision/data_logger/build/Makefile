@@ -117,6 +117,19 @@ depend:
 .PHONY : depend
 
 #=============================================================================
+# Target rules for targets named data_logger_ctrl
+
+# Build rule for target.
+data_logger_ctrl: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 data_logger_ctrl
+.PHONY : data_logger_ctrl
+
+# fast build rule for target.
+data_logger_ctrl/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/data_logger_ctrl.dir/build.make CMakeFiles/data_logger_ctrl.dir/build
+.PHONY : data_logger_ctrl/fast
+
+#=============================================================================
 # Target rules for targets named frame_logger
 
 # Build rule for target.
@@ -166,6 +179,30 @@ frame_logger/frame_logger.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/frame_logger.dir/build.make CMakeFiles/frame_logger.dir/frame_logger/frame_logger.cpp.s
 .PHONY : frame_logger/frame_logger.cpp.s
 
+main.o: main.cpp.o
+.PHONY : main.o
+
+# target to build an object file
+main.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/data_logger_ctrl.dir/build.make CMakeFiles/data_logger_ctrl.dir/main.cpp.o
+.PHONY : main.cpp.o
+
+main.i: main.cpp.i
+.PHONY : main.i
+
+# target to preprocess a source file
+main.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/data_logger_ctrl.dir/build.make CMakeFiles/data_logger_ctrl.dir/main.cpp.i
+.PHONY : main.cpp.i
+
+main.s: main.cpp.s
+.PHONY : main.s
+
+# target to generate assembly for a file
+main.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/data_logger_ctrl.dir/build.make CMakeFiles/data_logger_ctrl.dir/main.cpp.s
+.PHONY : main.cpp.s
+
 video_logger/video_logger.o: video_logger/video_logger.cpp.o
 .PHONY : video_logger/video_logger.o
 
@@ -198,11 +235,15 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... data_logger_ctrl"
 	@echo "... frame_logger"
 	@echo "... video_logger"
 	@echo "... frame_logger/frame_logger.o"
 	@echo "... frame_logger/frame_logger.i"
 	@echo "... frame_logger/frame_logger.s"
+	@echo "... main.o"
+	@echo "... main.i"
+	@echo "... main.s"
 	@echo "... video_logger/video_logger.o"
 	@echo "... video_logger/video_logger.i"
 	@echo "... video_logger/video_logger.s"

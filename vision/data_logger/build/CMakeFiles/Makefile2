@@ -63,6 +63,7 @@ CMAKE_BINARY_DIR = /home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build
 # Directory level rules for the build root directory
 
 # The main recursive "all" target.
+all: CMakeFiles/data_logger_ctrl.dir/all
 all: CMakeFiles/frame_logger.dir/all
 all: CMakeFiles/video_logger.dir/all
 .PHONY : all
@@ -72,9 +73,36 @@ preinstall:
 .PHONY : preinstall
 
 # The main recursive "clean" target.
+clean: CMakeFiles/data_logger_ctrl.dir/clean
 clean: CMakeFiles/frame_logger.dir/clean
 clean: CMakeFiles/video_logger.dir/clean
 .PHONY : clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/data_logger_ctrl.dir
+
+# All Build rule for target.
+CMakeFiles/data_logger_ctrl.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/data_logger_ctrl.dir/build.make CMakeFiles/data_logger_ctrl.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/data_logger_ctrl.dir/build.make CMakeFiles/data_logger_ctrl.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles --progress-num=1,2 "Built target data_logger_ctrl"
+.PHONY : CMakeFiles/data_logger_ctrl.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/data_logger_ctrl.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles 2
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/data_logger_ctrl.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles 0
+.PHONY : CMakeFiles/data_logger_ctrl.dir/rule
+
+# Convenience name for target.
+data_logger_ctrl: CMakeFiles/data_logger_ctrl.dir/rule
+.PHONY : data_logger_ctrl
+
+# clean rule for target.
+CMakeFiles/data_logger_ctrl.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/data_logger_ctrl.dir/build.make CMakeFiles/data_logger_ctrl.dir/clean
+.PHONY : CMakeFiles/data_logger_ctrl.dir/clean
 
 #=============================================================================
 # Target rules for target CMakeFiles/frame_logger.dir
@@ -83,7 +111,7 @@ clean: CMakeFiles/video_logger.dir/clean
 CMakeFiles/frame_logger.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/frame_logger.dir/build.make CMakeFiles/frame_logger.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/frame_logger.dir/build.make CMakeFiles/frame_logger.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles --progress-num=1,2 "Built target frame_logger"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles --progress-num=3,4 "Built target frame_logger"
 .PHONY : CMakeFiles/frame_logger.dir/all
 
 # Build rule for subdir invocation for target.
@@ -109,7 +137,7 @@ CMakeFiles/frame_logger.dir/clean:
 CMakeFiles/video_logger.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/video_logger.dir/build.make CMakeFiles/video_logger.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/video_logger.dir/build.make CMakeFiles/video_logger.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles --progress-num=3,4 "Built target video_logger"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/dj/robotics/Meraque/Mardi_tech/vision/data_logger/build/CMakeFiles --progress-num=5,6 "Built target video_logger"
 .PHONY : CMakeFiles/video_logger.dir/all
 
 # Build rule for subdir invocation for target.

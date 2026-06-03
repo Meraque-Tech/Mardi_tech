@@ -75,7 +75,7 @@ Records a continuous video and saves it as a single `.avi` file.
 
 **Run:**
 ```bash
-./build/video_logger --device 0 --fps 30 --duration 10 --output logs/videos --show
+./build/video_logger --device 2 --fps 30 --duration -1 --output logs/videos --show
 ```
 
 **Options:**

@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/data_logger_ctrl.dir/main.cpp.o -o data_logger_ctrl 
