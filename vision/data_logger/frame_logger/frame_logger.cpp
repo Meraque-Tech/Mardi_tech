@@ -26,6 +26,8 @@ int main(int argc, char** argv) {
     double      fps        = 1.0;
     int         max_frames = -1;
     bool        show       = false;
+    int         req_w      = 640;
+    int         req_h      = 480;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -33,6 +35,8 @@ int main(int argc, char** argv) {
         else if (a == "--output"     && i+1 < argc) outdir     = argv[++i];
         else if (a == "--fps"        && i+1 < argc) fps        = std::stod(argv[++i]);
         else if (a == "--max-frames" && i+1 < argc) max_frames = std::stoi(argv[++i]);
+        else if (a == "--width"      && i+1 < argc) req_w      = std::stoi(argv[++i]);
+        else if (a == "--height"     && i+1 < argc) req_h      = std::stoi(argv[++i]);
         else if (a == "--show")                     show       = true;
     }
 
@@ -44,11 +48,17 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (req_w > 0) cap.set(cv::CAP_PROP_FRAME_WIDTH,  req_w);
+    if (req_h > 0) cap.set(cv::CAP_PROP_FRAME_HEIGHT, req_h);
+
+    int actual_w = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    int actual_h = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
     int frame_count = 0;
     int interval_ms = static_cast<int>(1000.0 / fps);
 
     std::cout << "Frame logger: /dev/video" << device
-              << " -> " << outdir << "  (" << fps << " fps)\n";
+              << " -> " << outdir
+              << "  (" << actual_w << "x" << actual_h << " @ " << fps << " fps)\n";
 
     cv::Mat frame;
     while (true) {

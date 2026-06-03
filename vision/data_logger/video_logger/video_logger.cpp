@@ -22,6 +22,8 @@ int main(int argc, char** argv) {
     double      fps      = 30.0;
     int         duration = -1;   // seconds, -1 = unlimited
     bool        show     = false;
+    int         req_w    = 640;
+    int         req_h    = 480;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -29,6 +31,8 @@ int main(int argc, char** argv) {
         else if (a == "--output"   && i+1 < argc) outdir   = argv[++i];
         else if (a == "--fps"      && i+1 < argc) fps      = std::stod(argv[++i]);
         else if (a == "--duration" && i+1 < argc) duration = std::stoi(argv[++i]);
+        else if (a == "--width"    && i+1 < argc) req_w    = std::stoi(argv[++i]);
+        else if (a == "--height"   && i+1 < argc) req_h    = std::stoi(argv[++i]);
         else if (a == "--show")                   show     = true;
     }
 
@@ -39,6 +43,10 @@ int main(int argc, char** argv) {
         std::cerr << "Cannot open /dev/video" << device << "\n";
         return 1;
     }
+
+    // Request resolution before first frame is read
+    if (req_w > 0) cap.set(cv::CAP_PROP_FRAME_WIDTH,  req_w);
+    if (req_h > 0) cap.set(cv::CAP_PROP_FRAME_HEIGHT, req_h);
 
     int width  = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
     int height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
