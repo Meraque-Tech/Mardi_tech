@@ -11,9 +11,9 @@ Endpoints:
 import os
 import signal
 import subprocess
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="ui")
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 BINS = {
@@ -32,6 +32,11 @@ def _status():
         "type": _logger_type if running else None,
         "pid": _proc.pid if running else None,
     }
+
+
+@app.get("/")
+def index():
+    return send_from_directory("ui", "index.html")
 
 
 @app.get("/status")

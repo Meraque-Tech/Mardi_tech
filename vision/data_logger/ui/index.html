@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data Logger</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d0f14;
+      --surface:   #151821;
+      --border:    #232737;
+      --accent:    #4f8ef7;
+      --accent2:   #7c3aed;
+      --success:   #22c55e;
+      --danger:    #ef4444;
+      --warn:      #f59e0b;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --radius:    10px;
+      --font:      'Inter', system-ui, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 32px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo svg { color: var(--accent); }
+    .logo h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: .03em; }
+    .logo span { color: var(--muted); font-weight: 400; }
+
+    #status-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: .8rem;
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      border: 1px solid var(--border);
+      transition: all .3s;
+    }
+    #status-pill.idle    { color: var(--muted);   border-color: var(--border); }
+    #status-pill.running { color: var(--success);  border-color: var(--success); background: #052e16; }
+    #status-pill.error   { color: var(--danger);   border-color: var(--danger);  background: #2a0707; }
+
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: currentColor;
+    }
+    .dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: .4; transform: scale(.7); }
+    }
+
+    /* ── Layout ── */
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      grid-template-rows: auto 1fr;
+      gap: 24px;
+      padding: 28px 32px;
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px;
+    }
+    .card-title {
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 18px;
+    }
+
+    /* ── Tab strip ── */
+    .tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+    .tab {
+      flex: 1;
+      padding: 9px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      font-size: .85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .tab.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .tab:not(.active):hover { border-color: var(--accent); color: var(--text); }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Form ── */
+    .field { margin-bottom: 14px; }
+    label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 5px; font-weight: 500; }
+    input[type=number], input[type=text] {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      padding: 9px 12px;
+      font-size: .88rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+    input:focus { border-color: var(--accent); }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .toggle-label { font-size: .85rem; color: var(--text); }
+
+    .toggle {
+      position: relative; width: 38px; height: 22px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0;
+      background: var(--border);
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .slider::before {
+      content: '';
+      position: absolute;
+      width: 16px; height: 16px;
+      left: 3px; top: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform .2s;
+    }
+    .toggle input:checked + .slider { background: var(--accent); }
+    .toggle input:checked + .slider::before { transform: translateX(16px); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      width: 100%; padding: 11px;
+      border-radius: 8px; border: none;
+      font-size: .88rem; font-weight: 600;
+      cursor: pointer; transition: opacity .15s, transform .1s;
+    }
+    .btn:active { transform: scale(.98); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-primary  { background: var(--accent);  color: #fff; }
+    .btn-danger   { background: var(--danger);  color: #fff; }
+    .btn-muted    { background: var(--border);  color: var(--text); margin-top: 8px; }
+
+    /* ── Stats row ── */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .stat {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      text-align: center;
+    }
+    .stat-val { font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+    .stat-key { font-size: .7rem; color: var(--muted); margin-top: 3px; text-transform: uppercase; letter-spacing: .06em; }
+
+    /* ── Log console ── */
+    #log {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: .78rem;
+      height: 320px;
+      overflow-y: auto;
+      line-height: 1.7;
+    }
+    .log-line { display: flex; gap: 10px; }
+    .log-time { color: var(--muted); flex-shrink: 0; }
+    .log-msg.ok   { color: var(--success); }
+    .log-msg.err  { color: var(--danger); }
+    .log-msg.info { color: var(--text); }
+    .log-msg.warn { color: var(--warn); }
+
+    /* ── Response panel ── */
+    #response-box {
+      margin-top: 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-family: monospace;
+      font-size: .78rem;
+      color: var(--muted);
+      white-space: pre-wrap;
+      min-height: 48px;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"
+         viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/>
+      <line x1="12" y1="3"  x2="12" y2="1"/>
+      <line x1="12" y1="23" x2="12" y2="21"/>
+      <line x1="3"  y1="12" x2="1"  y2="12"/>
+      <line x1="23" y1="12" x2="21" y2="12"/>
+    </svg>
+    <h1>Data Logger <span>/ Vision</span></h1>
+  </div>
+  <div id="status-pill" class="idle">
+    <span class="dot"></span>
+    <span id="status-text">Idle</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── Left panel ── -->
+  <div style="display:flex; flex-direction:column; gap:16px;">
+
+    <div class="card">
+      <div class="card-title">Logger Control</div>
+
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('frame', this)">Frame</button>
+        <button class="tab"        onclick="switchTab('video', this)">Video</button>
+      </div>
+
+      <!-- Frame tab -->
+      <div id="tab-frame" class="tab-panel active">
+        <div class="field">
+          <label>Device  <span style="color:var(--muted)">/dev/video<b id="dev-preview-f">0</b></span></label>
+          <input id="f-device" type="number" value="0" min="0" max="9"
+                 oninput="document.getElementById('dev-preview-f').textContent=this.value" />
+        </div>
+        <div class="field">
+          <label>Output directory</label>
+          <input id="f-output" type="text" value="logs/frames" />
+        </div>
+        <div class="field">
+          <label>FPS</label>
+          <input id="f-fps" type="number" value="5" min="0.1" step="0.5" />
+        </div>
+        <div class="field">
+          <label>Max frames  <span style="color:var(--muted)">(0 = unlimited)</span></label>
+          <input id="f-maxframes" type="number" value="0" min="0" />
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Show window</span>
+          <label class="toggle"><input id="f-show" type="checkbox" /><span class="slider"></span></label>
+        </div>
+        <button class="btn btn-primary" id="btn-start-frame" onclick="startFrame()">
+          ▶ Start Frame Logger
+        </button>
+      </div>
+
+      <!-- Video tab -->
+      <div id="tab-video" class="tab-panel">
+        <div class="field">
+          <label>Device  <span style="color:var(--muted)">/dev/video<b id="dev-preview-v">2</b></span></label>
+          <input id="v-device" type="number" value="2" min="0" max="9"
+                 oninput="document.getElementById('dev-preview-v').textContent=this.value" />
+        </div>
+        <div class="field">
+          <label>Output directory</label>
+          <input id="v-output" type="text" value="logs/videos" />
+        </div>
+        <div class="field">
+          <label>FPS</label>
+          <input id="v-fps" type="number" value="30" min="1" />
+        </div>
+        <div class="field">
+          <label>Duration (sec)  <span style="color:var(--muted)">(0 = unlimited)</span></label>
+          <input id="v-duration" type="number" value="0" min="0" />
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Show window</span>
+          <label class="toggle"><input id="v-show" type="checkbox" /><span class="slider"></span></label>
+        </div>
+        <button class="btn btn-primary" id="btn-start-video" onclick="startVideo()">
+          ▶ Start Video Logger
+        </button>
+      </div>
+
+      <button class="btn btn-danger" id="btn-stop" onclick="stopLogger()" disabled>
+        ■ Stop Logger
+      </button>
+
+      <div id="response-box">—</div>
+    </div>
+
+  </div>
+
+  <!-- ── Right panel ── -->
+  <div style="display:flex; flex-direction:column; gap:16px;">
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-val" id="stat-type">—</div>
+        <div class="stat-key">Mode</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" id="stat-pid">—</div>
+        <div class="stat-key">PID</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" id="stat-uptime">—</div>
+        <div class="stat-key">Uptime</div>
+      </div>
+    </div>
+
+    <div class="card" style="flex:1">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+        <div class="card-title" style="margin:0">Activity Log</div>
+        <button class="btn btn-muted" style="width:auto;padding:5px 12px;font-size:.75rem"
+                onclick="clearLog()">Clear</button>
+      </div>
+      <div id="log"></div>
+    </div>
+
+  </div>
+
+</main>
+
+<script>
+  const API = '';   // same origin — change to 'http://host:5000' if remote
+  let startedAt = null;
+  let uptimeTimer = null;
+
+  // ── Tabs ──────────────────────────────────────────────────────────────────
+  function switchTab(name, el) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+  }
+
+  // ── Log ───────────────────────────────────────────────────────────────────
+  function log(msg, type = 'info') {
+    const el = document.getElementById('log');
+    const now = new Date().toLocaleTimeString();
+    el.innerHTML += `<div class="log-line">
+      <span class="log-time">${now}</span>
+      <span class="log-msg ${type}">${msg}</span>
+    </div>`;
+    el.scrollTop = el.scrollHeight;
+  }
+  function clearLog() { document.getElementById('log').innerHTML = ''; }
+
+  // ── Status ────────────────────────────────────────────────────────────────
+  function setStatus(running, type, pid) {
+    const pill = document.getElementById('status-pill');
+    const dot  = pill.querySelector('.dot');
+    const txt  = document.getElementById('status-text');
+
+    if (running) {
+      pill.className = 'running';
+      dot.classList.add('pulse');
+      txt.textContent = type + ' running';
+      document.getElementById('stat-type').textContent = type;
+      document.getElementById('stat-pid').textContent  = pid;
+      document.getElementById('btn-stop').disabled = false;
+      document.getElementById('btn-start-frame').disabled = true;
+      document.getElementById('btn-start-video').disabled = true;
+    } else {
+      pill.className = 'idle';
+      dot.classList.remove('pulse');
+      txt.textContent = 'Idle';
+      document.getElementById('stat-type').textContent = '—';
+      document.getElementById('stat-pid').textContent  = '—';
+      document.getElementById('stat-uptime').textContent = '—';
+      document.getElementById('btn-stop').disabled = true;
+      document.getElementById('btn-start-frame').disabled = false;
+      document.getElementById('btn-start-video').disabled = false;
+      if (uptimeTimer) { clearInterval(uptimeTimer); uptimeTimer = null; }
+      startedAt = null;
+    }
+  }
+
+  function startUptime() {
+    startedAt = Date.now();
+    if (uptimeTimer) clearInterval(uptimeTimer);
+    uptimeTimer = setInterval(() => {
+      const s = Math.floor((Date.now() - startedAt) / 1000);
+      const h = String(Math.floor(s / 3600)).padStart(2,'0');
+      const m = String(Math.floor((s % 3600) / 60)).padStart(2,'0');
+      const sec = String(s % 60).padStart(2,'0');
+      document.getElementById('stat-uptime').textContent = `${h}:${m}:${sec}`;
+    }, 1000);
+  }
+
+  function showResponse(data) {
+    document.getElementById('response-box').textContent = JSON.stringify(data, null, 2);
+  }
+
+  // ── API calls ─────────────────────────────────────────────────────────────
+  async function apiFetch(path, options = {}) {
+    try {
+      const res = await fetch(API + path, options);
+      return await res.json();
+    } catch (e) {
+      log('API error: ' + e.message, 'err');
+      return null;
+    }
+  }
+
+  async function startFrame() {
+    const maxf = parseInt(document.getElementById('f-maxframes').value);
+    const body = {
+      device:     parseInt(document.getElementById('f-device').value),
+      output:     document.getElementById('f-output').value,
+      fps:        parseFloat(document.getElementById('f-fps').value),
+      show:       document.getElementById('f-show').checked,
+    };
+    if (maxf > 0) body.max_frames = maxf;
+
+    log('Starting frame logger…', 'info');
+    const data = await apiFetch('/start/frame', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!data) return;
+    showResponse(data);
+    if (data.pid) {
+      log(`Frame logger started  pid=${data.pid}`, 'ok');
+      setStatus(true, 'frame', data.pid);
+      startUptime();
+    } else {
+      log(data.error || 'Failed to start', 'err');
+    }
+  }
+
+  async function startVideo() {
+    const dur = parseInt(document.getElementById('v-duration').value);
+    const body = {
+      device: parseInt(document.getElementById('v-device').value),
+      output: document.getElementById('v-output').value,
+      fps:    parseFloat(document.getElementById('v-fps').value),
+      show:   document.getElementById('v-show').checked,
+    };
+    if (dur > 0) body.duration = dur;
+
+    log('Starting video logger…', 'info');
+    const data = await apiFetch('/start/video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!data) return;
+    showResponse(data);
+    if (data.pid) {
+      log(`Video logger started  pid=${data.pid}`, 'ok');
+      setStatus(true, 'video', data.pid);
+      startUptime();
+    } else {
+      log(data.error || 'Failed to start', 'err');
+    }
+  }
+
+  async function stopLogger() {
+    log('Stopping logger…', 'warn');
+    const data = await apiFetch('/stop', { method: 'POST' });
+    if (!data) return;
+    showResponse(data);
+    if (data.stopped) {
+      log(`Logger stopped  pid=${data.pid}`, 'ok');
+    } else {
+      log(data.reason || 'Nothing to stop', 'warn');
+    }
+    setStatus(false);
+  }
+
+  // ── Poll status every 3 s ─────────────────────────────────────────────────
+  async function pollStatus() {
+    const data = await apiFetch('/status');
+    if (!data) return;
+    if (data.running && !startedAt) {
+      setStatus(true, data.type, data.pid);
+      startUptime();
+      log(`Reconnected — ${data.type} running  pid=${data.pid}`, 'info');
+    } else if (!data.running && startedAt) {
+      log('Logger stopped externally.', 'warn');
+      setStatus(false);
+    }
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  log('UI ready. Waiting for commands.', 'info');
+  setStatus(false);
+  pollStatus();
+  setInterval(pollStatus, 3000);
+</script>
+</body>
+</html>
