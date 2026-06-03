@@ -134,7 +134,7 @@ docker compose -f docker-compose.x86.yml build
 docker push meraquetech/race_nav:data-logger-x86
 
 # Jetson
-docker compose -f docker-compose.jetson.yml build
+docker-compose -f docker-compose.jetson.yml build
 docker push meraquetech/race_nav:data-logger-jetson
 ```
 
@@ -147,7 +147,7 @@ docker compose -f docker-compose.x86.yml up -d
 
 # Jetson
 docker pull meraquetech/race_nav:data-logger-jetson
-docker compose -f docker-compose.jetson.yml up -d
+docker-compose -f docker-compose.jetson.yml up -d
 ```
 
 ### File reference

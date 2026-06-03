@@ -15,9 +15,10 @@ services:
       - "5000:5000"
     volumes:
       - ./logs:/app/logs
-    devices:
-      - /dev/video0:/dev/video0
-      - /dev/video2:/dev/video2
-      - /dev/video3:/dev/video3
+    privileged: true
+    # devices:
+    #   - /dev/video0:/dev/video0
+    #   - /dev/video2:/dev/video2
+    #   - /dev/video3:/dev/video3
     environment:
       - PYTHONUNBUFFERED=1
