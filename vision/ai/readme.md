@@ -1,60 +1,91 @@
 
-# Nvidia container sertup
+# NVIDIA Container Setup (Jetson)
+
+> **Note:** On Jetson, use `--runtime nvidia` — **not** `--gpus all` (which is x86-only).
+> GPU access in `docker-compose` is handled via env vars; no `runtime:` or `deploy` key needed.
+
+## 1. Install NVIDIA Container Toolkit
+
+Skip if already on JetPack — it is pre-installed. Otherwise:
+
+```bash
+distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
+
+curl -s -L https://nvidia.github.io/libnvidia-container/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+sudo apt update
+sudo apt install -y nvidia-container-toolkit
 ```
-    1. Install NVIDIA Container Toolkit
 
-        If not already installed:
+## 2. Set NVIDIA as the Default Docker Runtime
 
-        distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
+sudo systemctl restart docker
 
-        curl -s -L https://nvidia.github.io/libnvidia-container/gpgkey | sudo apt-key add -
-
-        curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-
-        sudo apt update
-        sudo apt install -y nvidia-container-toolkit
-    
-
-    2. Configure Docker to Use NVIDIA Runtime
-
-    Edit Docker daemon config:
-
-    sudo nano /etc/docker/daemon.json
-
-    Add or modify like this:
-
-    {
-    # "default-runtime": "nvidia",
-    "runtimes": {
-        "nvidia": {
-        "path": "nvidia-container-runtime",
-        "runtimeArgs": []
-        }
-    }
-    }
-
-    👉 This is what people mean by “docker nvidia runtime true” — setting NVIDIA as default runtime.
-
-    ✅ 3. Restart Docker
-    sudo systemctl restart docker
-
-    ✅ 4. Test GPU Access
-
-    # Confirm CUDA toolchain is present
-    docker run --rm --runtime nvidia \
-      meraquetech/race_nav:r36.4.0 \
-      /usr/local/cuda/bin/nvcc --version
-
-    # Check CUDA libs are mounted in
-    docker run --rm --runtime nvidia \
-      meraquetech/race_nav:r36.4.0 \
-      ldconfig -p | grep libcuda
-    
-    <!-- docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi -->
-
-
-
+docker info | grep -i runtime
 ```
+
+Or edit `/etc/docker/daemon.json` manually:
+
+```json
+{
+  “default-runtime”: “nvidia”,
+  “runtimes”: {
+    “nvidia”: {
+      “path”: “nvidia-container-runtime”,
+      “runtimeArgs”: []
+    }
+  }
+}
+```
+
+Then restart Docker:
+
+```bash
+sudo systemctl restart docker
+```
+
+## 3. Verify
+
+```bash
+# Confirm nvidia is the default runtime
+docker info | grep -i runtime
+# Expected: Default Runtime: nvidia
+
+# Confirm GPU device nodes are visible inside container
+docker run --rm --runtime nvidia \
+  meraquetech/race_nav:r36.4.0 \
+  ls /dev/nvhost-ctrl /dev/nvmap
+
+# Confirm CUDA toolchain is present
+docker run --rm --runtime nvidia \
+  meraquetech/race_nav:r36.4.0 \
+  /usr/local/cuda/bin/nvcc --version
+
+# Confirm CUDA libs are mounted in
+docker run --rm --runtime nvidia \
+  meraquetech/race_nav:r36.4.0 \
+  ldconfig -p | grep libcuda
+```
+
+> **Why not `--gpus all` on Jetson?**
+> `--gpus all` requires the NVIDIA Container Toolkit's CDI driver, which is not supported on L4T/Jetson.
+> The `--runtime nvidia` flag (or setting it as default) is the correct Jetson approach.
+
+## 4. docker-compose GPU Access
+
+With `nvidia` set as the default runtime, `docker-compose` services get GPU access automatically via:
+
+```yaml
+environment:
+  - NVIDIA_VISIBLE_DEVICES=all
+  - NVIDIA_DRIVER_CAPABILITIES=all
+```
+
+No `runtime:` key or `deploy.resources` block is needed — both are unsupported in older `docker-compose` versions on Jetson.
 
 # NVIDIA L4T PyTorch
 ```
@@ -80,7 +111,7 @@
 
 
     docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
-    
+
 ```
 
 ---
