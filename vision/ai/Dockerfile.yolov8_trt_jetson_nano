@@ -1,0 +1,52 @@
+# YoloV8 TensorRT 8 — Jetson Nano (JetPack 4.6, L4T r32.7.1)
+# Source: https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano/tree/tensorrt8
+ARG BASE_DOCKER_REPO="meraquetech/race_nav"
+FROM ${BASE_DOCKER_REPO}:humble-pytorch-l4t-r32.7.1
+ARG DEBIAN_FRONTEND=noninteractive
+
+SHELL ["/bin/bash", "-c"]
+
+ENV OPENBLAS_CORETYPE=ARMV8
+
+WORKDIR /yolov8_ws
+
+# Refresh ROS GPG key and install build deps
+RUN apt-key del F42ED6FBAB17C654 || true \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+       | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && apt-get update && apt-get install -y \
+        build-essential \
+        cmake \
+        git \
+        libopencv-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone tensorrt8 branch
+RUN git clone --branch tensorrt8 --depth=1 \
+    https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano.git src
+
+# Build
+RUN cmake -S src -B src/build \
+        -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build src/build --parallel $(nproc)
+
+# Copy binary to workspace root
+RUN cp src/YoloV8rt /yolov8_ws/YoloV8rt
+
+# Models dir — mount your .engine file here at runtime
+RUN mkdir -p /yolov8_ws/models
+
+# Usage:
+#   Build engine from onnx first (run once on the Nano):
+#     /usr/src/tensorrt/bin/trtexec \
+#       --onnx=models/yolov8n.onnx \
+#       --saveEngine=models/yolov8n.engine \
+#       --fp16
+#
+#   Then run detection:
+#     docker run --rm --runtime nvidia \
+#       -v /path/to/models:/yolov8_ws/models \
+#       -v /path/to/images:/yolov8_ws/images \
+#       <image> \
+#       ./YoloV8rt models/yolov8n.engine images/test.jpg
+CMD ["bash"]
