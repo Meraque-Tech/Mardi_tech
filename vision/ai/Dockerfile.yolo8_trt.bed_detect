@@ -18,13 +18,16 @@ COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
 
 # Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
 # Building nav2 dependencies required as .deb packages for humble not available for bionic.
+RUN apt-key del F42ED6FBAB17C654 || true \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+      | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && apt-get update \
+    && apt-get install -y \
+               libnvinfer-dev \
+               libnvonnxparsers-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN source /opt/ros/$ROS_DISTRO/install/setup.sh \
-# Install avahi-utils (without the --no-install-recommends option) for resolving mDNS addresses
-    # && colcon build --packages-select \
-            #   nav2_common \
-            #   nav2_msgs \
-            #   lytbot2_msg_srv \
-    # && source "$SAR_WS/install/setup.bash" \
     && colcon build --packages-select \
               yolov8_trt_bed_detect_opt \
     # && cp build/yolov8_trt_bed_detect/libmyplugins.so /usr/lib/ \
