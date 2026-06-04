@@ -120,6 +120,38 @@ $ cmake ..
 $ make -j4
 ```
 
+### Usage
+```
+./YoloV8rt <model.engine> <source>
+```
+
+| Source | Example | Description |
+|--------|---------|-------------|
+| Camera index | `0`, `1` | Webcam or USB camera by index |
+| Device node | `/dev/video0` | Camera by device path |
+| Video file | `video.mp4` | Any OpenCV-supported video format |
+| Image file | `image.jpg` | Still image (runs in a loop; press ESC to exit) |
+
+**Examples:**
+```bash
+# Webcam (index 0)
+./YoloV8rt models/yolov8n.engine 0
+
+# Second USB camera
+./YoloV8rt models/yolov8n.engine 1
+
+# Camera by device node
+./YoloV8rt models/yolov8n.engine /dev/video0
+
+# Video file
+./YoloV8rt models/yolov8n.engine /path/to/video.mp4
+
+# Still image
+./YoloV8rt models/yolov8n.engine /path/to/image.jpg
+```
+
+Press **ESC** to quit.
+
 ------------
 
 ### Thanks.
