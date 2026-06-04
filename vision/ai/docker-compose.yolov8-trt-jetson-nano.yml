@@ -29,13 +29,6 @@ services:
     network_mode: host
     ipc: host
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     # Default: drop into a shell so you can run ./YoloV8rt manually.
     # Override at runtime — examples:
     #   Camera index 0:
@@ -47,6 +40,5 @@ services:
     #   Still image:
     #     command: ["./YoloV8rt", "models/yolov8n.engine", "images/test.jpg"]
     command: ["bash"]
-
 
 # docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
