@@ -9,5 +9,13 @@
 
     docker run -it --rm --runtime nvidia --network host -v /home/user/project:/location/in/container meraquetech/race_nav:humble-pytorch-l4t-r32.7.1
 
-    
+
+
+    # noetic-pytorch-l4t-r32.7.1
+
+    docker tag dustynv/ros:noetic-pytorch-l4t-r32.7.1 meraquetech/race_nav:noetic-pytorch-l4t-r32.7.1
+
+    docker run -it --rm --runtime nvidia --network host -v /home/user/project:/location/in/container meraquetech/race_nav:noetic-pytorch-l4t-r32.7.1
+
+    docker push meraquetech/race_nav:noetic-pytorch-l4t-r32.7.1
 ```
