@@ -21,9 +21,7 @@ RUN apt-key del F42ED6FBAB17C654 || true \
         libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone tensorrt8 branch
-RUN git clone --branch tensorrt8 --depth=1 \
-    https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano.git src
+COPY ./YoloV8-TensorRT-Jetson_Nano src
 
 # Build
 RUN cmake -S src -B src/build \
