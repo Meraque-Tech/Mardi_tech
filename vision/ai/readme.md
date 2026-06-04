@@ -39,7 +39,7 @@
     sudo systemctl restart docker
 
     ✅ 4. Test GPU Access
-    
+
     # Confirm CUDA toolchain is present
     docker run --rm --runtime nvidia \
       meraquetech/race_nav:r36.4.0 \
@@ -49,8 +49,6 @@
     docker run --rm --runtime nvidia \
       meraquetech/race_nav:r36.4.0 \
       ldconfig -p | grep libcuda
-
-    
     
     <!-- docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi -->
 
