@@ -34,8 +34,8 @@ target_link_libraries(${PROJECT_NAME}
     nvinfer
     nvonnxparser
     ${SPECIAL_OS_LIBS}
-    ${CUDA_CUDA_LIBRARY}
-    ${CUDA_CUDART_LIBRARY}
+    cuda
+    cudart
     ${OpenCV_LIBRARIES}
 )
 ament_target_dependencies(${PROJECT_NAME} ament_cmake rclcpp)
