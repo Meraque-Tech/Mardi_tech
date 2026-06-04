@@ -9,25 +9,38 @@ SHELL ["/bin/bash", "-c"]
 
 # Build tools + OpenCV + spdlog + fmt
 RUN apt-get update && apt-get install -y \
-        build-essential git pkg-config cmake ninja-build ccache \
+        build-essential git pkg-config cmake ninja-build ccache wget \
         libopencv-dev \
         libspdlog-dev \
         libfmt-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install TensorRT 10.x from NVIDIA apt repo (JetPack 6 / aarch64)
+RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && rm cuda-keyring_1.1-1_all.deb \
+    && apt-get update && apt-get install -y \
+        libnvinfer10 \
+        libnvinfer-dev \
+        libnvinfer-headers-dev \
+        libnvinfer-plugin-dev \
+        libnvinfer-headers-plugin-dev \
+        libnvonnxparsers10 \
+        libnvonnxparsers-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY . /app
 
-# Patch FindTensorRT.cmake to also search aarch64 paths (in addition to x86 paths already there)
+# Patch FindTensorRT.cmake to search aarch64 paths
 RUN sed -i \
     's|PATHS /usr/include/x86_64-linux-gnu /usr/include /usr/local/include /usr/local/tensorrt/include|PATHS /usr/include/aarch64-linux-gnu /usr/include/x86_64-linux-gnu /usr/include /usr/local/include /usr/local/tensorrt/include|g' \
     libs/tensorrt-cpp-api/cmake/FindTensorRT.cmake \
+    cmake/FindTensorRT.cmake \
     && sed -i \
     's|PATHS /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib|PATHS /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib|g' \
     libs/tensorrt-cpp-api/cmake/FindTensorRT.cmake \
-    && sed -i \
-    's|PATHS /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib|PATHS /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib|g' \
     cmake/FindTensorRT.cmake
 
 RUN cmake -B build -G Ninja \
