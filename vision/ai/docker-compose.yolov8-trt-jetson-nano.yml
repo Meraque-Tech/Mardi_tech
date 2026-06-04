@@ -6,7 +6,6 @@ services:
       context: .
       dockerfile: Dockerfile.yolov8_trt_jetson_nano
     image: meraquetech/race_nav:yolov8-trt8-jetson-nano
-    runtime: nvidia
     environment:
       # - DISPLAY=${DISPLAY}
       - NVIDIA_VISIBLE_DEVICES=all

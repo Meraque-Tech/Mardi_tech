@@ -1,4 +1,52 @@
 
+# Nvidia container sertup
+```
+    1. Install NVIDIA Container Toolkit
+
+        If not already installed:
+
+        distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+
+        curl -s -L https://nvidia.github.io/libnvidia-container/gpgkey | sudo apt-key add -
+
+        curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+        sudo apt update
+        sudo apt install -y nvidia-container-toolkit
+    
+
+    2. Configure Docker to Use NVIDIA Runtime
+
+    Edit Docker daemon config:
+
+    sudo nano /etc/docker/daemon.json
+
+    Add or modify like this:
+
+    {
+    # "default-runtime": "nvidia",
+    "runtimes": {
+        "nvidia": {
+        "path": "nvidia-container-runtime",
+        "runtimeArgs": []
+        }
+    }
+    }
+
+    👉 This is what people mean by “docker nvidia runtime true” — setting NVIDIA as default runtime.
+
+    ✅ 3. Restart Docker
+    sudo systemctl restart docker
+    ✅ 4. Test GPU Access
+    docker run --rm --runtime nvidia \
+      meraquetech/race_nav:r36.4.0 \
+      tegrastats
+    <!-- docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi -->
+
+
+
+```
+
 # NVIDIA L4T PyTorch
 ```
     https://catalog.ngc.nvidia.com/orgs/nvidia/containers/l4t-pytorch?version=r35.2.1-pth2.0-py3
