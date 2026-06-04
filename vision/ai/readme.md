@@ -248,6 +248,28 @@ Base image: `nvcr.io/nvidia/l4t-jetpack:r36.4.0` (JetPack 6.1, TRT 10.x)
 
 > **Note:** Requires Jetson Orin / AGX Orin / Orin NX. Not compatible with Jetson Nano (JetPack 4.6).
 
+> **Troubleshooting — `CUDA driver version is insufficient for CUDA runtime version`:**
+> This error means the host JetPack version does not match what the container expects.
+> Verify your host JetPack version:
+> ```bash
+> cat /etc/nv_tegra_release
+> # R32 → JetPack 4.x (Jetson Nano, CUDA 10.2) — cannot run this image
+> # R35 → JetPack 5.x (Orin, CUDA 11.4)
+> # R36 → JetPack 6.x (Orin, CUDA 12.x) ← required for this image
+> ```
+> This image uses TensorRT 10.x / CUDA 12.x (JetPack 6.x packages). Running it on a Jetson Nano
+> (R32, CUDA 10.2) will always fail — use the `yolov8-trt8-jetson-nano` image instead.
+> Also confirm the container is started with `--runtime nvidia`; without it the CUDA stub driver
+> is used and produces the same error even on a compatible host.
+
+docker run -it --rm --runtime nvidia   -v $(pwd)/models:/yolov8_ws/models   nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime   bash
+
+/usr/src/tensorrt/bin/trtexec \
+    --onnx=models/yolov8n.onnx \
+    --saveEngine=models/yolov8n.engine \
+    --fp16
+
+
 ### Build image
 
 ```bash
