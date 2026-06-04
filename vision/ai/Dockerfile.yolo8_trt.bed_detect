@@ -18,9 +18,8 @@ COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
 
 # Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
 # Building nav2 dependencies required as .deb packages for humble not available for bionic.
-RUN apt-key del F42ED6FBAB17C654 || true \
-    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-      | apt-key add - \
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+      | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg \
     && git clone --branch 1.1.9 --depth=1 https://github.com/ros-planning/navigation2.git src/navigation2 \
     && source /opt/ros/$ROS_DISTRO/install/setup.sh \
     && apt-get update \
