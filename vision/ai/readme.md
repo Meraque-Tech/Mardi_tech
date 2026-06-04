@@ -266,6 +266,7 @@ Base image: `nvcr.io/nvidia/l4t-jetpack:r36.4.0` (JetPack 6.1, TRT 10.x)
 docker run -it --rm --runtime nvidia \
   -v $(pwd)/models:/yolov8_ws/models \
   nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime bash
+  
 
 /usr/src/tensorrt/bin/trtexec \
     --onnx=models/yolov8n.onnx \
