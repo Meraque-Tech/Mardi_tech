@@ -51,6 +51,9 @@ add_executable(${PROJECT_NAME}
 
 target_link_directories(${PROJECT_NAME} PUBLIC ${ALL_LIBS})
 target_link_libraries(${PROJECT_NAME} PRIVATE nvinfer nvinfer_plugin cudart ${OpenCV_LIBS})
+# libnvdla_compiler and libcudla symbols are only present on Jetson hardware at runtime;
+# allow the build container (which lacks those libs) to link successfully.
+target_link_options(${PROJECT_NAME} PRIVATE -Wl,--allow-shlib-undefined)
 
 #place exe in parent folder
 set(EXECUTABLE_OUTPUT_PATH "../")
