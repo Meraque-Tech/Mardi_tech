@@ -6,19 +6,36 @@ services:
       context: .
       dockerfile: Dockerfile.yolov8_trt_jetson_nano
     image: meraquetech/race_nav:yolov8-trt8-jetson-nano
+    env_file:
+      - .env
     environment:
-      # - DISPLAY=${DISPLAY}
+      - DISPLAY=${DISPLAY}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
+    devices:
+      - /dev/video0:/dev/video0             # webcam (add /dev/video1 etc. as needed)
     volumes:
       - ./models:/yolov8_ws/models          # .engine and .onnx files
       - ./images:/yolov8_ws/images          # input images / videos
-      # - /tmp/.X11-unix:/tmp/.X11-unix       # X11 display for imshow
-    devices:
-      - /dev/video0:/dev/video0             # webcam (add /dev/video1 etc. as needed)
-    network_mode: host
-    stdin_open: true
+      - /tmp/.X11-unix:/tmp/.X11-unix       # X11 display for imshow
+      - /etc/enctune.conf:/etc/enctune.conf
+      - /etc/nv_tegra_release:/etc/nv_tegra_release
+      - /tmp/argus_socket:/tmp/argus_socket
+      - /tmp/nv_jetson_model:/tmp/nv_jetson_model
     tty: true
+    stdin_open: true
+    hostname: vision-yolov8-trt
+    privileged: true
+    network_mode: host
+    ipc: host
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     # Default: drop into a shell so you can run ./YoloV8rt manually.
     # Override at runtime — examples:
     #   Camera index 0:
