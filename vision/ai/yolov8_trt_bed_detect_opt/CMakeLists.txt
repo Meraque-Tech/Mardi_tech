@@ -14,13 +14,19 @@ IF(NOT WIN32)
     add_definitions(-Wno-write-strings)
 ENDIF()
 
-include_directories(${OpenCV_INCLUDE_DIRS})
-include_directories(${CUDA_INCLUDE_DIRS})
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
-include_directories(/usr/local/cuda/include)
+# Locate NvInfer.h — try common L4T/JetPack install paths
+find_path(TRT_INCLUDE_DIR NvInfer.h
+    PATHS
+        /usr/include
+        /usr/include/aarch64-linux-gnu
+        /usr/local/cuda/include
+    REQUIRED
+)
+message(STATUS "TRT include dir: ${TRT_INCLUDE_DIR}")
+
 link_directories(/usr/local/cuda/lib64)
-include_directories(/usr/include/aarch64-linux-gnu/)
-link_directories(/usr/lib/aarch64-linux-gnu/)
+link_directories(/usr/lib/aarch64-linux-gnu)
+link_directories(/usr/lib)
 
 set(SRC_FILES
     src/main.cpp
@@ -29,6 +35,14 @@ set(SRC_FILES
 
 cuda_add_executable(${PROJECT_NAME} ${SRC_FILES})
 add_definitions(-O3 -D_MWAITXINTRIN_H_INCLUDED -Wno-deprecated-declarations)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
+    ${CUDA_INCLUDE_DIRS}
+    ${TRT_INCLUDE_DIR}
+    /usr/local/cuda/include
+)
 
 target_link_libraries(${PROJECT_NAME}
     nvinfer
