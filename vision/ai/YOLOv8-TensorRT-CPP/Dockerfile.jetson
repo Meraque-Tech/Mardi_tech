@@ -1,0 +1,44 @@
+# JetPack 6.1 (L4T r36.4.0) — CUDA 12.6 + TensorRT 10.3
+# Compatible with Jetson Orin / AGX Orin / Orin NX / Orin Nano
+# NOTE: NOT compatible with Jetson Nano (l4t-r32) — use a JetPack 4.6 image for that.
+ARG BASE="nvcr.io/nvidia/l4t-jetpack:r36.4.0"
+FROM ${BASE} AS yolov8-trt-cpp-jetson
+
+ARG DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-c"]
+
+# Build tools + OpenCV + spdlog + fmt
+RUN apt-get update && apt-get install -y \
+        build-essential git pkg-config cmake ninja-build ccache \
+        libopencv-dev \
+        libspdlog-dev \
+        libfmt-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY . /app
+
+# Patch FindTensorRT.cmake to also search aarch64 paths (in addition to x86 paths already there)
+RUN sed -i \
+    's|PATHS /usr/include/x86_64-linux-gnu /usr/include /usr/local/include /usr/local/tensorrt/include|PATHS /usr/include/aarch64-linux-gnu /usr/include/x86_64-linux-gnu /usr/include /usr/local/include /usr/local/tensorrt/include|g' \
+    libs/tensorrt-cpp-api/cmake/FindTensorRT.cmake \
+    && sed -i \
+    's|PATHS /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib|PATHS /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib|g' \
+    libs/tensorrt-cpp-api/cmake/FindTensorRT.cmake \
+    && sed -i \
+    's|PATHS /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib|PATHS /usr/lib/aarch64-linux-gnu /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib|g' \
+    cmake/FindTensorRT.cmake
+
+RUN cmake -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DENABLE_BENCHMARKS=OFF \
+    && cmake --build build --parallel $(nproc)
+
+# Run detection on camera 0 (v4l2):
+#   docker run --rm --runtime nvidia -it \
+#     --device /dev/video0 \
+#     -v /path/to/models:/app/models \
+#     yolov8-trt-cpp-jetson \
+#     ./build/detect_object_video --model models/yolov8n.onnx --input 0
+ENTRYPOINT ["/bin/bash"]
