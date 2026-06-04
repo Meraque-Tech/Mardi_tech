@@ -138,7 +138,7 @@ int Yolo::build_engine(std::string onnx_path, std::string engine_path, OptimDim 
         // Create engine (onnx)
         std::cout << "Creating engine from onnx model" << std::endl;
 
-        gLogger.setReportableSeverity(Severity::kINFO);
+        gLogger.setReportableSeverity(nvinfer1::ILogger::Severity::kINFO);
         auto builder = nvinfer1::createInferBuilder(gLogger);
         if (!builder) {
             std::cerr << "createInferBuilder failed" << std::endl;
