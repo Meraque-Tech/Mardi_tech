@@ -35,15 +35,21 @@ int main(int argc, char** argv)
     std::chrono::steady_clock::time_point Tbegin, Tend;
 
     if (argc < 3) {
-        fprintf(stderr, "Usage: ./YoloV8rt <model.engine> <source>\n"
-                        "  source: 0, 1, ...          camera index (webcam)\n"
-                        "          /dev/video0        device node\n"
-                        "          image.jpg          still image (loops)\n"
-                        "          video.mp4          video file\n");
+        fprintf(stderr, "Usage: ./YoloV8rt <model.engine> <source> [--display]\n"
+                        "  source:    0, 1, ...       camera index (webcam)\n"
+                        "             /dev/video0     device node\n"
+                        "             image.jpg       still image (loops)\n"
+                        "             video.mp4       video file\n"
+                        "  --display  show live window (requires X11; omit for headless)\n");
         return -1;
     }
     const string engine_file_path = argv[1];
     const string source           = argv[2];
+
+    bool show_display = false;
+    for (int a = 3; a < argc; a++) {
+        if (string(argv[a]) == "--display") show_display = true;
+    }
 
     for (i = 0; i < 16; i++) FPS[i] = 0.0;
 
@@ -114,12 +120,14 @@ int main(int argc, char** argv)
         putText(image, cv::format("FPS %0.2f", f / 16), cv::Point(10, 20),
                 cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 0, 255));
 
-        imshow("YOLOv8 TRT", image);
-        char esc = cv::waitKey(1);
-        if (esc == 27) break;
+        if (show_display) {
+            imshow("YOLOv8 TRT", image);
+            char esc = cv::waitKey(1);
+            if (esc == 27) break;
+        }
     }
 
-    cv::destroyAllWindows();
+    if (show_display) cv::destroyAllWindows();
     delete yolov8;
     return 0;
 }
