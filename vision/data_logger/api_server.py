@@ -162,6 +162,70 @@ def delete_file(ftype, filename):
     return jsonify({"deleted": safe})
 
 
+# ── Network endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/network/status")
+def network_status():
+    try:
+        devices = subprocess.check_output(
+            ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"],
+            text=True
+        ).strip()
+        ips = subprocess.check_output(["hostname", "-I"], text=True).strip()
+        return jsonify({"devices": devices, "ips": ips.split()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/network/wifi/list")
+def wifi_list():
+    try:
+        out = subprocess.check_output(
+            ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "device", "wifi", "list"],
+            text=True
+        ).strip()
+        networks = []
+        for line in out.splitlines():
+            parts = line.split(":")
+            if len(parts) >= 4 and parts[0]:
+                networks.append({
+                    "ssid":     parts[0],
+                    "signal":   parts[1],
+                    "security": parts[2],
+                    "in_use":   parts[3] == "*",
+                })
+        return jsonify({"networks": networks})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/network/wifi/connect")
+def wifi_connect():
+    body = request.get_json(silent=True) or {}
+    ssid     = body.get("ssid", "").strip()
+    password = body.get("password", "").strip()
+    if not ssid:
+        return jsonify({"error": "ssid is required"}), 400
+    try:
+        cmd = ["nmcli", "device", "wifi", "connect", ssid]
+        if password:
+            cmd += ["password", password]
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+        ips = subprocess.check_output(["hostname", "-I"], text=True).strip()
+        return jsonify({"connected": True, "ssid": ssid, "output": out.strip(), "ips": ips.split()})
+    except subprocess.CalledProcessError as e:
+        return jsonify({"connected": False, "error": e.output.strip()}), 500
+
+
+@app.post("/system/shutdown")
+def system_shutdown():
+    try:
+        subprocess.Popen(["shutdown", "-h", "now"])
+        return jsonify({"shutdown": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()

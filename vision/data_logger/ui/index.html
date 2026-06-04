@@ -268,6 +268,42 @@
     ::-webkit-scrollbar { width: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+    /* ── WiFi / Network ── */
+    .ip-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 12px; border-radius: 999px;
+      background: #0f2040; border: 1px solid #1e3a6e;
+      font-size: .78rem; font-family: monospace; color: var(--accent);
+    }
+    .wifi-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
+    .wifi-row {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 12px; cursor: pointer;
+      transition: border-color .15s;
+    }
+    .wifi-row:hover { border-color: var(--accent); }
+    .wifi-row.active { border-color: var(--success); background: #052e16; }
+    .wifi-ssid { flex: 1; font-size: .82rem; }
+    .wifi-signal { font-size: .72rem; color: var(--muted); }
+    .wifi-lock { font-size: .72rem; color: var(--warn); }
+    .wifi-pw { margin-top: 10px; display: none; }
+    .wifi-pw.show { display: block; }
+    .btn-sm {
+      padding: 7px 14px; border-radius: 7px; border: none;
+      font-size: .8rem; font-weight: 600; cursor: pointer;
+      transition: opacity .15s;
+    }
+    .btn-connect { background: var(--accent); color: #fff; width: 100%; margin-top: 8px; }
+    .btn-shutdown {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 999px;
+      background: transparent; border: 1px solid var(--danger);
+      color: var(--danger); font-size: .8rem; font-weight: 600;
+      cursor: pointer; transition: background .15s;
+    }
+    .btn-shutdown:hover { background: #2a0707; }
   </style>
 </head>
 <body>
@@ -284,9 +320,24 @@
     </svg>
     <h1>Data Logger <span>/ Vision</span></h1>
   </div>
-  <div id="status-pill" class="idle">
-    <span class="dot"></span>
-    <span id="status-text">Idle</span>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span class="ip-chip" id="ip-display" title="PC IP addresses">
+      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/>
+        <line x1="12" y1="17" x2="12" y2="21"/>
+      </svg>
+      <span id="ip-text">loading…</span>
+    </span>
+    <div id="status-pill" class="idle">
+      <span class="dot"></span>
+      <span id="status-text">Idle</span>
+    </div>
+    <button class="btn-shutdown" onclick="confirmShutdown()" title="Shutdown PC">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M12 2v10M5.636 5.636A9 9 0 1 0 18.364 5.636"/>
+      </svg>
+      Shutdown
+    </button>
   </div>
 </header>
 
@@ -364,6 +415,26 @@
       </button>
 
       <div id="response-box">—</div>
+    </div>
+
+    <!-- ── WiFi Card ── -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="card-title" style="margin:0">WiFi</div>
+        <button class="btn-sm btn-connect" style="width:auto;padding:5px 12px"
+                onclick="scanWifi()">↻ Scan</button>
+      </div>
+      <div id="wifi-list" class="wifi-list">
+        <div class="file-empty">Click Scan to find networks.</div>
+      </div>
+      <div class="wifi-pw" id="wifi-pw-section">
+        <div style="font-size:.75rem;color:var(--muted);margin-bottom:4px">
+          Connecting to: <b id="wifi-selected-ssid" style="color:var(--text)">—</b>
+        </div>
+        <input id="wifi-password" type="password" placeholder="Password (leave empty if open)" style="margin-bottom:6px" />
+        <button class="btn btn-connect" onclick="connectWifi()">Connect</button>
+      </div>
+      <div id="wifi-status" style="margin-top:8px;font-size:.78rem;color:var(--muted)"></div>
     </div>
 
   </div>
@@ -615,12 +686,84 @@
     }
   }
 
+  // ── WiFi ──────────────────────────────────────────────────────────────────
+  let selectedSsid = '';
+
+  async function scanWifi() {
+    document.getElementById('wifi-list').innerHTML = '<div class="file-empty">Scanning…</div>';
+    document.getElementById('wifi-pw-section').classList.remove('show');
+    const data = await apiFetch('/network/wifi/list');
+    const el = document.getElementById('wifi-list');
+    if (!data || data.error) {
+      el.innerHTML = `<div class="file-empty" style="color:var(--danger)">${data?.error || 'Scan failed'}</div>`;
+      return;
+    }
+    if (!data.networks.length) { el.innerHTML = '<div class="file-empty">No networks found.</div>'; return; }
+    el.innerHTML = data.networks.map(n => `
+      <div class="wifi-row ${n.in_use ? 'active' : ''}" onclick="selectWifi('${n.ssid.replace(/'/g,"\\'")}', ${!!n.security})">
+        <span class="wifi-ssid">${n.in_use ? '✓ ' : ''}${n.ssid}</span>
+        <span class="wifi-signal">${n.signal}%</span>
+        ${n.security ? '<span class="wifi-lock">🔒</span>' : ''}
+      </div>`).join('');
+  }
+
+  function selectWifi(ssid, secured) {
+    selectedSsid = ssid;
+    document.getElementById('wifi-selected-ssid').textContent = ssid;
+    const pw = document.getElementById('wifi-pw-section');
+    pw.classList.add('show');
+    document.getElementById('wifi-password').value = '';
+    document.getElementById('wifi-password').focus();
+    document.getElementById('wifi-status').textContent = '';
+  }
+
+  async function connectWifi() {
+    const password = document.getElementById('wifi-password').value;
+    const statusEl = document.getElementById('wifi-status');
+    statusEl.style.color = 'var(--muted)';
+    statusEl.textContent = `Connecting to "${selectedSsid}"…`;
+    const data = await apiFetch('/network/wifi/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ssid: selectedSsid, password }),
+    });
+    if (data && data.connected) {
+      statusEl.style.color = 'var(--success)';
+      statusEl.textContent = `Connected! IP: ${data.ips.join(', ')}`;
+      document.getElementById('ip-text').textContent = data.ips.join('  ');
+      log(`WiFi connected to ${selectedSsid}  IP: ${data.ips.join(', ')}`, 'ok');
+      document.getElementById('wifi-pw-section').classList.remove('show');
+      scanWifi();
+    } else {
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = data?.error || 'Connection failed';
+      log(`WiFi connect failed: ${data?.error || 'unknown error'}`, 'err');
+    }
+  }
+
+  // ── Network status / IP ───────────────────────────────────────────────────
+  async function refreshNetworkStatus() {
+    const data = await apiFetch('/network/status');
+    if (data && data.ips && data.ips.length) {
+      document.getElementById('ip-text').textContent = data.ips.join('  ');
+    }
+  }
+
+  // ── Shutdown ──────────────────────────────────────────────────────────────
+  async function confirmShutdown() {
+    if (!confirm('Shutdown this PC now?')) return;
+    log('Shutdown initiated…', 'warn');
+    await apiFetch('/system/shutdown', { method: 'POST' });
+  }
+
   // ── Init ──────────────────────────────────────────────────────────────────
   log('UI ready. Waiting for commands.', 'info');
   setStatus(false);
   pollStatus();
   setInterval(pollStatus, 3000);
   refreshFiles();
+  refreshNetworkStatus();
+  setInterval(refreshNetworkStatus, 15000);
 </script>
 </body>
 </html>
