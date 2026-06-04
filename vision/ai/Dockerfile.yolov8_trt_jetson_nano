@@ -16,7 +16,6 @@ RUN apt-get update && apt-get install -y \
         cmake \
         git \
         libopencv-dev \
-        nvidia-l4t-tools \
     && rm -rf /var/lib/apt/lists/*
 
 COPY ./YoloV8-TensorRT-Jetson_Nano src
