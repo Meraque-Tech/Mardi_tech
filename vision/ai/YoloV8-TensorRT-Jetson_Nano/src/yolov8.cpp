@@ -179,7 +179,7 @@ void YOLOv8::CopyFromMat(const cv::Mat& image)
     auto&    in_binding = this->input_bindings[0];
     auto     width      = in_binding.dims.d[3];
     auto     height     = in_binding.dims.d[2];
-    cv::Size size{width, height};
+    cv::Size size{(int)width, (int)height};
     this->Letterbox(image, nchw, size);
 
     this->context->setInputShape(this->input_bindings[0].name.c_str(), nvinfer1::Dims4{1, 3, (int)height, (int)width});
