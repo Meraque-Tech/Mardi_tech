@@ -1,7 +1,7 @@
 # YoloV8 TensorRT 8 — Jetson Nano (JetPack 4.6, L4T r32.7.1)
 # Source: https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano/tree/tensorrt8
 ARG BASE_DOCKER_REPO="meraquetech/race_nav"
-FROM ${BASE_DOCKER_REPO}:humble-pytorch-l4t-r32.7.1
+FROM ${BASE_DOCKER_REPO}:r36.4.0
 ARG DEBIAN_FRONTEND=noninteractive
 
 SHELL ["/bin/bash", "-c"]
@@ -11,10 +11,7 @@ ENV OPENBLAS_CORETYPE=ARMV8
 WORKDIR /yolov8_ws
 
 # Refresh ROS GPG key and install build deps
-RUN apt-key del F42ED6FBAB17C654 || true \
-    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-       | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg \
-    && apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y \
         build-essential \
         cmake \
         git \
