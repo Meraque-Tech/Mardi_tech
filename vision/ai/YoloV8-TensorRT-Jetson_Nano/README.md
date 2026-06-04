@@ -154,6 +154,59 @@ Press **ESC** to quit.
 
 ------------
 
+## Running with Docker Compose
+
+A `docker-compose.yolov8-trt-jetson-nano.yml` is provided at the root of the `vision/ai/` directory.
+
+**Prerequisites:**
+```bash
+# Allow Docker to access the host display (run once per session)
+xhost +local:docker
+```
+
+**Build the image:**
+```bash
+docker compose -f docker-compose.yolov8-trt-jetson-nano.yml build
+```
+
+**Run — drop into a shell:**
+```bash
+docker compose -f docker-compose.yolov8-trt-jetson-nano.yml run --rm yolov8-trt
+# then inside the container:
+./YoloV8rt models/yolov8n.engine 0
+```
+
+**Run directly with a source:**
+```bash
+# Webcam (index 0)
+docker compose -f docker-compose.yolov8-trt-jetson-nano.yml run --rm yolov8-trt \
+  ./YoloV8rt models/yolov8n.engine 0
+
+# USB camera device node
+docker compose -f docker-compose.yolov8-trt-jetson-nano.yml run --rm yolov8-trt \
+  ./YoloV8rt models/yolov8n.engine /dev/video0
+
+# Video file
+docker compose -f docker-compose.yolov8-trt-jetson-nano.yml run --rm yolov8-trt \
+  ./YoloV8rt models/yolov8n.engine images/video.mp4
+
+# Still image
+docker compose -f docker-compose.yolov8-trt-jetson-nano.yml run --rm yolov8-trt \
+  ./YoloV8rt models/yolov8n.engine images/test.jpg
+```
+
+**Volume mounts:**
+
+| Host path | Container path | Purpose |
+|-----------|---------------|---------|
+| `./models` | `/yolov8_ws/models` | `.engine` and `.onnx` model files |
+| `./images` | `/yolov8_ws/images` | Input images and video files |
+| `/dev/video0` | `/dev/video0` | Webcam / USB camera |
+
+To expose additional cameras, add them under `devices:` in the compose file (e.g. `/dev/video1:/dev/video1`).
+
+------------
+
 ### Thanks.
 A more than special thanks to [***triple-Mu***](https://github.com/triple-Mu).<br><br>
 ![TensorRTbusstop](https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano/assets/44409029/6a397012-9541-492a-8867-c24d06ebfbad)<br>
