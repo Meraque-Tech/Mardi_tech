@@ -2,7 +2,6 @@
 #define YOLO_HPP
 
 #include <NvInfer.h>
-#include <sl/Camera.hpp>
 #include <opencv2/opencv.hpp>
 
 #include "cuda_utils.h"
@@ -83,11 +82,7 @@ public:
     static int build_engine(std::string onnx_path, std::string engine_path, OptimDim dyn_dim_profile);
 
     int init(std::string engine_path);
-    std::vector<BBoxInfo> run(sl::Mat left_sl, int orig_image_h, int orig_image_w, float thres);
-
-    sl::Resolution getInferenceSize() {
-        return sl::Resolution(input_width, input_height);
-    }
+    std::vector<BBoxInfo> run(cv::Mat left_cv, int orig_image_h, int orig_image_w, float thres);
 
 private:
 
