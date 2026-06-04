@@ -136,6 +136,44 @@ docker build \
 
 ### Convert ONNX → TRT engine (run once on the Nano)
 
+The engine must be built **on the target Jetson** — it is not portable across different hardware or TensorRT versions.
+
+**Step 1 — place your `.onnx` file in the `models/` folder on the host:**
+
+```bash
+ls models/
+# yolov8n.onnx  ← must exist before running the container
+```
+
+**Step 2 — start the container with the models volume mounted:**
+
+```bash
+docker run -it --rm --runtime nvidia \
+  -v $(pwd)/models:/yolov8_ws/models \
+  meraquetech/race_nav:yolov8-trt8-jetson-nano \
+  bash
+```
+
+**Step 3 — inside the container, run trtexec to export:**
+
+```bash
+# FP16 (recommended — best speed/accuracy trade-off)
+/usr/src/tensorrt/bin/trtexec \
+  --onnx=models/yolov8n.onnx \
+  --saveEngine=models/yolov8n.engine \
+  --fp16
+
+# INT8 (smaller, faster, lower accuracy)
+/usr/src/tensorrt/bin/trtexec \
+  --onnx=models/yolov8n.onnx \
+  --saveEngine=models/yolov8n_int8.engine \
+  --int8
+```
+
+This takes several minutes. The resulting `models/yolov8n.engine` is written back to the **host** via the volume mount.
+
+**One-liner (no interactive shell):**
+
 ```bash
 docker run --rm --runtime nvidia \
   -v $(pwd)/models:/yolov8_ws/models \
