@@ -2,6 +2,8 @@ version: "3"
 
 # Jetson Nano  JetPack 4.6  (ARM64)
 # Usage: docker compose -f docker-compose.jetson.yml up --build
+# docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
+# docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml push
 #
 # Requires nvidia-container-runtime on the Nano:
 #   sudo apt install nvidia-container-runtime
@@ -28,3 +30,5 @@ services:
       - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
+
+
