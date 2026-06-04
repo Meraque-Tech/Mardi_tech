@@ -77,6 +77,10 @@
     docker run -it --rm --runtime nvidia --network host -v /home/user/project:/location/in/container meraquetech/race_nav:noetic-pytorch-l4t-r32.7.1
 
     docker push meraquetech/race_nav:noetic-pytorch-l4t-r32.7.1
+
+
+    docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
+    
 ```
 
 ---
