@@ -12,8 +12,8 @@ services:
       # - DISPLAY=${DISPLAY}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-    devices:
-      - /dev/video0:/dev/video0             # webcam (add /dev/video1 etc. as needed)
+    # devices:
+    #   - /dev/video0:/dev/video0             # webcam (add /dev/video1 etc. as needed)
     volumes:
       - ./models:/yolov8_ws/models          # .engine and .onnx files
       - ./images:/yolov8_ws/images          # input images / videos
