@@ -7,7 +7,7 @@
 
     docker tag dustynv/ros:humble-pytorch-l4t-r32.7.1 meraquetech/race_nav:humble-pytorch-l4t-r32.7.1
 
-    sudo docker run -it --rm --runtime nvidia --network host -v /home/user/project:/location/in/container meraquetech/race_nav:humble-pytorch-l4t-r32.7.1
+    docker run -it --rm --runtime nvidia --network host -v /home/user/project:/location/in/container meraquetech/race_nav:humble-pytorch-l4t-r32.7.1
 
     
 ```
