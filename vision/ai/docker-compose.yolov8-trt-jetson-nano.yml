@@ -47,3 +47,6 @@ services:
     #   Still image:
     #     command: ["./YoloV8rt", "models/yolov8n.engine", "images/test.jpg"]
     command: ["bash"]
+
+
+# docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
