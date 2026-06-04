@@ -41,13 +41,13 @@ services:
     #   Still image:
     #     command: ["./YoloV8rt", "models/yolov8n.engine", "images/test.jpg"]
     command: ["bash"]
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # runtime: nvidia
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
 # docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
