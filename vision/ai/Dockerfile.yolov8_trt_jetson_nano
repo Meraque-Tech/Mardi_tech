@@ -21,9 +21,8 @@ COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
 ENV CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.2
 ENV CUDA_HOME=/usr/local/cuda-10.2
 
-RUN mkdir -p /usr/local/cuda/lib64 && \
-    ln -sf /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so.10.2 \
-           /usr/local/cuda/lib64/libcudart.so
+RUN ln -sf /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so.10.2 \
+           /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so
 
 # Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
 # Building nav2 dependencies required as .deb packages for humble not available for bionic.
