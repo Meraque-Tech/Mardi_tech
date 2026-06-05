@@ -1,49 +1,39 @@
-ARG BASE_DOCKER_REPO="meraquetech/race_nav"
-FROM ${BASE_DOCKER_REPO}:bionic-humble-pytorch-l4t-r32.7.1-zed AS bionic-humble-pytorch-l4t-r32.7.1-zed-bed-detect-yolov8-trt
-ARG BASE_DOCKER_REPO
-ARG DEBIAN_FRONTEND=noninteractive
+FROM nvcr.io/nvidia/l4t-base:r32.7.1
 
-# Select bash as default shell
-SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CUDA_HOME=/usr/local/cuda
+ENV CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda
+ENV OPENBLAS_CORETYPE=ARMV8
 
-ENV SAR_WS="/sar_ws"
-
-WORKDIR ${SAR_WS}
-
-# export OPENBLAS_CORETYPE=ARMV8: https://forums.developer.nvidia.com/t/illegal-instruction-core-dumped-xavier/166278
-ENV OPENBLAS_CORETYPE="ARMV8"
-
-
-
-
-# COPY ./arm64/packages/ros2_src/lytbot2_msg_srv ${SAR_WS}/src/lytbot2_msg_srv
-
-ENV CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.2
-ENV CUDA_HOME=/usr/local/cuda-10.2
-
-RUN ln -sf /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so.10.2 \
-           /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so
-
-# Downgrade cmake — 3.26 (in base image) ignores CUDA_CUDART_LIBRARY set() and breaks FindCUDA on aarch64
-# RUN pip3 install cmake==3.18.4.post1
-
-COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
-# Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
-# Building nav2 dependencies required as .deb packages for humble not available for bionic.
-RUN . /opt/ros/$ROS_DISTRO/install/setup.bash && \
-    colcon build --parallel-workers $(nproc) \
-              --cmake-args ' -DCMAKE_BUILD_TYPE=Release' \
-              ' -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs' \
-              ' -DCUDA_CUDART_LIBRARY=/usr/local/cuda/lib64/stubs' \
-              ' -DCMAKE_CXX_FLAGS="-Wl,--allow-shlib-undefined"' \
-              ' --no-warn-unused-cli' \
-    && rm -rf log/ build/ src/ \
-    && apt-get autoremove -y \
-    && apt-get autoclean -y \
+RUN apt-get update && apt-get install -y \
+    git \
+    build-essential \
+    cmake \
+    wget \
+    unzip \
+    python3 \
+    python3-pip \
+    libopencv-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ./sar_entrypoint.bash /sar_entrypoint.bash
-RUN chmod +x /sar_entrypoint.bash
+# TensorRT headers/libs come from JetPack runtime
+RUN ln -sf /usr/local/cuda-10.2 /usr/local/cuda
 
-ENTRYPOINT ["/sar_entrypoint.bash"]
-CMD ["bash"]
+WORKDIR /workspace
+
+RUN git clone --depth=1 \
+    https://github.com/wang-xinyu/tensorrtx.git
+
+WORKDIR /workspace/tensorrtx/yolov8
+
+# Fix Jetson paths
+RUN sed -i 's/x86_64-linux-gnu/aarch64-linux-gnu/g' CMakeLists.txt || true
+
+RUN mkdir build && cd build && \
+    cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.2 && \
+    make -j4
+
+CMD ["/bin/bash"]
