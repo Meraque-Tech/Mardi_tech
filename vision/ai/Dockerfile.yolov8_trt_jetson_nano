@@ -30,9 +30,8 @@ RUN ln -sf /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so.10.2 \
 COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
 # Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
 # Building nav2 dependencies required as .deb packages for humble not available for bionic.
-RUN . /opt/ros/$ROS_DISTRO/setup.bash && \
+RUN . /opt/ros/$ROS_DISTRO/install/setup.bash && \
     colcon build --parallel-workers $(nproc) \
-              --event-handlers console_direct+ --base-paths src \
               --cmake-args ' -DCMAKE_BUILD_TYPE=Release' \
               ' -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs' \
               ' -DCUDA_CUDART_LIBRARY=/usr/local/cuda/lib64/stubs' \
