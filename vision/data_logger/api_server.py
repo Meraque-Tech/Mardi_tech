@@ -169,9 +169,9 @@ def network_status():
     try:
         devices = subprocess.check_output(
             ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"],
-            text=True
+            universal_newlines=True
         ).strip()
-        ips = subprocess.check_output(["hostname", "-I"], text=True).strip()
+        ips = subprocess.check_output(["hostname", "-I"], universal_newlines=True).strip()
         return jsonify({"devices": devices, "ips": ips.split()})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -182,7 +182,7 @@ def wifi_list():
     try:
         out = subprocess.check_output(
             ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "device", "wifi", "list"],
-            text=True
+            universal_newlines=True
         ).strip()
         networks = []
         for line in out.splitlines():
@@ -210,8 +210,8 @@ def wifi_connect():
         cmd = ["nmcli", "device", "wifi", "connect", ssid]
         if password:
             cmd += ["password", password]
-        out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
-        ips = subprocess.check_output(["hostname", "-I"], text=True).strip()
+        out = subprocess.check_output(cmd, universal_newlines=True, stderr=subprocess.STDOUT)
+        ips = subprocess.check_output(["hostname", "-I"], universal_newlines=True).strip()
         return jsonify({"connected": True, "ssid": ssid, "output": out.strip(), "ips": ips.split()})
     except subprocess.CalledProcessError as e:
         return jsonify({"connected": False, "error": e.output.strip()}), 500
