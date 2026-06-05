@@ -1,47 +1,45 @@
-# YoloV8 TensorRT 8 — Jetson Nano (JetPack 4.6, L4T r32.7.1)
-# Source: https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano/tree/tensorrt8
 ARG BASE_DOCKER_REPO="meraquetech/race_nav"
-FROM ${BASE_DOCKER_REPO}:r36.4.0
+FROM ${BASE_DOCKER_REPO}:bionic-humble-pytorch-l4t-r32.7.1-zed AS bionic-humble-pytorch-l4t-r32.7.1-zed-bed-detect-yolov8-trt
+ARG BASE_DOCKER_REPO
 ARG DEBIAN_FRONTEND=noninteractive
 
+# Select bash as default shell
 SHELL ["/bin/bash", "-c"]
 
-ENV OPENBLAS_CORETYPE=ARMV8
+ENV SAR_WS="/sar_ws"
 
-WORKDIR /yolov8_ws
+WORKDIR ${SAR_WS}
 
-# Refresh ROS GPG key and install build deps
-RUN apt-get update && apt-get install -y \
-        build-essential \
-        cmake \
-        git \
-        libopencv-dev \
+# export OPENBLAS_CORETYPE=ARMV8: https://forums.developer.nvidia.com/t/illegal-instruction-core-dumped-xavier/166278
+ENV OPENBLAS_CORETYPE="ARMV8"
+
+COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
+# COPY ./arm64/packages/ros2_src/lytbot2_msg_srv ${SAR_WS}/src/lytbot2_msg_srv
+
+# Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
+# Building nav2 dependencies required as .deb packages for humble not available for bionic.
+RUN git clone --branch 1.1.9 --depth=1 https://github.com/ros-planning/navigation2.git src/navigation2 \
+    && source /opt/ros/$ROS_DISTRO/install/setup.sh \
+    && apt-get update \
+    && apt-get install -y \
+               avahi-utils \
+# Install avahi-utils (without the --no-install-recommends option) for resolving mDNS addresses
+    # && colcon build --packages-select \
+            #   nav2_common \
+            #   nav2_msgs \
+            #   lytbot2_msg_srv \
+    # && source "$SAR_WS/install/setup.bash" \
+    && colcon build --packages-select \
+              yolov8_trt_bed_detect_opt \
+    # && cp build/yolov8_trt_bed_detect/libmyplugins.so /usr/lib/ \
+    # Remove src/ later
+    && rm -rf log/ build/ src/ \
+    && apt-get autoremove -y \
+    && apt-get autoclean -y \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ./YoloV8-TensorRT-Jetson_Nano src
+COPY ./sar_entrypoint.bash /sar_entrypoint.bash
+RUN chmod +x /sar_entrypoint.bash
 
-# Build
-RUN cmake -S src -B src/build \
-        -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build src/build --parallel $(nproc)
-
-# Copy binary to workspace root
-RUN cp src/YoloV8rt /yolov8_ws/YoloV8rt
-
-# Models dir — mount your .engine file here at runtime
-RUN mkdir -p /yolov8_ws/models
-
-# Usage:
-#   Build engine from onnx first (run once on the Nano):
-#     /usr/src/tensorrt/bin/trtexec \
-#       --onnx=models/yolov8n.onnx \
-#       --saveEngine=models/yolov8n.engine \
-#       --fp16
-#
-#   Then run detection:
-#     docker run --rm --runtime nvidia \
-#       -v /path/to/models:/yolov8_ws/models \
-#       -v /path/to/images:/yolov8_ws/images \
-#       <image> \
-#       ./YoloV8rt models/yolov8n.engine images/test.jpg
+ENTRYPOINT ["/sar_entrypoint.bash"]
 CMD ["bash"]
