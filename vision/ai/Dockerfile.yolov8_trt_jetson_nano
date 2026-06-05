@@ -25,8 +25,9 @@ RUN apt-get update && apt-get install -y \
 RUN ln -sf ${CUDA_HOME}/targets/aarch64-linux/lib/libcudart.so.10.2 \
            ${CUDA_HOME}/targets/aarch64-linux/lib/libcudart.so
 
-# Upgrade CMake — 3.10 (Ubuntu 18.04 default) has FindCUDA bugs on aarch64
-# RUN pip3 install --upgrade cmake
+# CMake 3.10 lacks target_link_directories (needs 3.13+); cmake 4.x breaks CUDA 10.2 arch detection
+# Pin to 3.28 — supports target_link_directories and works with CUDA 10.2
+RUN pip3 install cmake==3.28.4
 
 COPY ./YoloV8-TensorRT-Jetson_Nano src
 
