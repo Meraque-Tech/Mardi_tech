@@ -20,6 +20,15 @@ services:
     # ports: not needed with network_mode: host — port 5000 is directly on the host
     volumes:
       - ./logs:/app/logs
+      - /bin/systemctl:/bin/systemctl
+      - /run/systemd/system:/run/systemd/system
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      - /sys/fs/cgroup:/sys/fs/cgroup
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:rw  # Allow the container to control Docker on the host
+      - /var/run/dbus:/var/run/dbus
+      - /dev/mem:/dev/mem
     network_mode: host   # needed for nmcli to reach NetworkManager and for hostname -I to show host IPs
     privileged: true
     # devices:
