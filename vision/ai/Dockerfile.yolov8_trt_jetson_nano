@@ -1,52 +1,47 @@
 # YoloV8 TensorRT 8 — Jetson Nano (JetPack 4.6, L4T r32.7.1)
 # Source: https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano/tree/tensorrt8
-FROM nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime
+ARG BASE_DOCKER_REPO="meraquetech/race_nav"
+FROM ${BASE_DOCKER_REPO}:r36.4.0
 ARG DEBIAN_FRONTEND=noninteractive
 
 SHELL ["/bin/bash", "-c"]
 
 ENV OPENBLAS_CORETYPE=ARMV8
-ENV CUDA_HOME=/usr/local/cuda-10.2
-ENV PATH=${CUDA_HOME}/bin:${PATH}
-ENV LD_LIBRARY_PATH=${CUDA_HOME}/targets/aarch64-linux/lib:${LD_LIBRARY_PATH}
 
 WORKDIR /yolov8_ws
 
-# Install build deps
+# Refresh ROS GPG key and install build deps
 RUN apt-get update && apt-get install -y \
         build-essential \
+        cmake \
         git \
         libopencv-dev \
-        python3-pip \
     && rm -rf /var/lib/apt/lists/*
-
-# Create unversioned libcudart.so symlink — CMake FindCUDA requires it; only .so.10.2 exists in runtime image
-RUN ln -sf ${CUDA_HOME}/targets/aarch64-linux/lib/libcudart.so.10.2 \
-           ${CUDA_HOME}/targets/aarch64-linux/lib/libcudart.so
-
-# CMake 3.10 lacks target_link_directories (needs 3.13+); cmake 4.x breaks CUDA 10.2 arch detection
-# Pin to 3.28 — supports target_link_directories and works with CUDA 10.2
-RUN pip3 install cmake==3.18.4.post1
 
 COPY ./YoloV8-TensorRT-Jetson_Nano src
 
-# Patch CMakeLists.txt: replace hardcoded arch list (includes sm_86+ unsupported by CUDA 10.2) with sm_53 only
-RUN sed -i 's/set(CMAKE_CUDA_ARCHITECTURES 60 61 62 70 72 75 86 89 90)/set(CMAKE_CUDA_ARCHITECTURES 53)/' src/CMakeLists.txt
-
 # Build
-RUN mkdir -p src/build \
-    && cd src/build \
-    && cmake .. \
+RUN cmake -S src -B src/build \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCUDA_TOOLKIT_ROOT_DIR=${CUDA_HOME} \
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-        -DCMAKE_CUDA_ARCHITECTURES=53 \
-    && make -j$(nproc)
+    && cmake --build src/build --parallel $(nproc)
 
 # Copy binary to workspace root
-RUN cp src/build/YoloV8rt /yolov8_ws/YoloV8rt
+RUN cp src/YoloV8rt /yolov8_ws/YoloV8rt
 
 # Models dir — mount your .engine file here at runtime
 RUN mkdir -p /yolov8_ws/models
 
+# Usage:
+#   Build engine from onnx first (run once on the Nano):
+#     /usr/src/tensorrt/bin/trtexec \
+#       --onnx=models/yolov8n.onnx \
+#       --saveEngine=models/yolov8n.engine \
+#       --fp16
+#
+#   Then run detection:
+#     docker run --rm --runtime nvidia \
+#       -v /path/to/models:/yolov8_ws/models \
+#       -v /path/to/images:/yolov8_ws/images \
+#       <image> \
+#       ./YoloV8rt models/yolov8n.engine images/test.jpg
 CMD ["bash"]
