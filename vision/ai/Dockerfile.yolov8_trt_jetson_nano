@@ -1,47 +1,43 @@
 # YoloV8 TensorRT 8 — Jetson Nano (JetPack 4.6, L4T r32.7.1)
 # Source: https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano/tree/tensorrt8
-ARG BASE_DOCKER_REPO="meraquetech/race_nav"
-FROM ${BASE_DOCKER_REPO}:r36.4.0
+FROM nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime
 ARG DEBIAN_FRONTEND=noninteractive
 
 SHELL ["/bin/bash", "-c"]
 
 ENV OPENBLAS_CORETYPE=ARMV8
+ENV CUDA_HOME=/usr/local/cuda-10.2
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/targets/aarch64-linux/lib:${LD_LIBRARY_PATH}
 
 WORKDIR /yolov8_ws
 
-# Refresh ROS GPG key and install build deps
+# Install build deps + cuda-cudart-dev-10-2 (adds unversioned libcudart.so symlink needed by CMake)
 RUN apt-get update && apt-get install -y \
         build-essential \
-        cmake \
         git \
         libopencv-dev \
+        python3-pip \
+        cuda-cudart-dev-10-2 \
     && rm -rf /var/lib/apt/lists/*
+
+# Upgrade CMake — 3.10 (Ubuntu 18.04 default) has FindCUDA bugs on aarch64
+RUN pip3 install --upgrade cmake
 
 COPY ./YoloV8-TensorRT-Jetson_Nano src
 
 # Build
-RUN cmake -S src -B src/build \
+RUN mkdir -p src/build \
+    && cd src/build \
+    && cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build src/build --parallel $(nproc)
+        -DCUDA_TOOLKIT_ROOT_DIR=${CUDA_HOME} \
+    && make -j$(nproc)
 
 # Copy binary to workspace root
-RUN cp src/YoloV8rt /yolov8_ws/YoloV8rt
+RUN cp src/build/YoloV8rt /yolov8_ws/YoloV8rt
 
 # Models dir — mount your .engine file here at runtime
 RUN mkdir -p /yolov8_ws/models
 
-# Usage:
-#   Build engine from onnx first (run once on the Nano):
-#     /usr/src/tensorrt/bin/trtexec \
-#       --onnx=models/yolov8n.onnx \
-#       --saveEngine=models/yolov8n.engine \
-#       --fp16
-#
-#   Then run detection:
-#     docker run --rm --runtime nvidia \
-#       -v /path/to/models:/yolov8_ws/models \
-#       -v /path/to/images:/yolov8_ws/images \
-#       <image> \
-#       ./YoloV8rt models/yolov8n.engine images/test.jpg
 CMD ["bash"]
