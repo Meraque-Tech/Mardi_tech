@@ -18,6 +18,9 @@ IF (ENABLE_INT8_CALIBRATOR)
     ADD_DEFINITIONS(-DENABLE_INT8_CALIBRATOR)
 ENDIF()
 
+set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-10.2")
+set(CUDA_CUDART_LIBRARY "/usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so")
+
 find_package(ZED 4 REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(GLUT REQUIRED)
@@ -72,8 +75,13 @@ link_directories(${OpenCV_LIBRARY_DIRS})
 include_directories(/usr/local/cuda/include)
 link_directories(/usr/local/cuda/lib64)
 # tensorrt
-include_directories(/usr/include/x86_64-linux-gnu/)
-link_directories(/usr/lib/x86_64-linux-gnu/)
+# include_directories(/usr/include/x86_64-linux-gnu/)
+# link_directories(/usr/lib/x86_64-linux-gnu/)
+
+# tensorrt
+include_directories(/usr/include/aarch64-linux-gnu)
+link_directories(/usr/lib/aarch64-linux-gnu)
+
 
 FILE(GLOB_RECURSE SRC_FILES src/*.c*)
 FILE(GLOB_RECURSE HDR_FILES include/*.h*)
