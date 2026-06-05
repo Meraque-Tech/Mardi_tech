@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.1)
 
-set(CMAKE_CUDA_ARCHITECTURES 60 61 62 70 72 75 86 89 90)
+set(CMAKE_CUDA_ARCHITECTURES 53)
 set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
 
 project(YoloV8rt LANGUAGES CXX CUDA)
@@ -49,7 +49,8 @@ add_executable(${PROJECT_NAME}
         include/common.hpp
         )
 
-target_link_directories(${PROJECT_NAME} PUBLIC ${ALL_LIBS})
+# target_link_directories requires CMake 3.13+; use link_directories for compatibility with CMake 3.10
+link_directories(${ALL_LIBS})
 target_link_libraries(${PROJECT_NAME} PRIVATE nvinfer nvinfer_plugin cudart ${OpenCV_LIBS})
 # libnvdla_compiler and libcudla symbols are only present on Jetson hardware at runtime;
 # allow the build container (which lacks those libs) to link successfully.
