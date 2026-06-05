@@ -1,7 +1,7 @@
 # YoloV8 TensorRT 8 — Jetson Nano (JetPack 4.6, L4T r32.7.1)
 # Source: https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano/tree/tensorrt8
 ARG BASE_DOCKER_REPO="meraquetech/race_nav"
-FROM ${BASE_DOCKER_REPO}:r36.4.0
+FROM ${BASE_DOCKER_REPO}:r8.2.1-runtime
 ARG DEBIAN_FRONTEND=noninteractive
 
 SHELL ["/bin/bash", "-c"]
