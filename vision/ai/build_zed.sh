@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-docker rmi -f $(docker images -f "dangling=true" -q)
+# docker rmi -f $(docker images -f "dangling=true" -q)
 
 REPO="meraquetech/race_nav"
 TAG="bionic-humble-pytorch-l4t-r32.7.1-zed"
@@ -39,3 +39,6 @@ if [[ "${PUSH}" =~ ^[Yy]$ ]]; then
   docker push "${REPO}:${TAG}"
   echo "==> Pushed ${REPO}:${TAG}"
 fi
+
+
+docker rmi -f $(docker images -f "dangling=true" -q)
