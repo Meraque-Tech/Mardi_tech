@@ -23,13 +23,6 @@ ARG ZED_SDK_URL=https://download.stereolabs.com/zedsdk/${ZED_SDK_MAJOR}.${ZED_SD
 #This environment variable is needed to use the streaming features on Jetson inside a container
 ARG LOGNAME root
 
-# Refresh expired ROS2 GPG key before any apt-get update
-RUN apt-get update --allow-unauthenticated || true \
-    && apt-get install -y --no-install-recommends curl \
-    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-       | apt-key add - \
-    && rm -rf /var/lib/apt/lists/*
-
 RUN apt-get update && apt-get install --no-install-recommends -y \
             apt-transport-https \
             apt-utils \
