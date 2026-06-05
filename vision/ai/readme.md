@@ -285,6 +285,12 @@ docker run --rm -it --runtime nvidia \
     bash
 
 
+docker run --rm -it --runtime nvidia \
+    -v $(pwd)/models:/yolov8_ws/models \
+    meraquetech/race_nav:bionic-humble-pytorch-l4t-r32.7.1-zed \
+    bash
+
+
 
 
 /usr/src/tensorrt/bin/trtexec \
