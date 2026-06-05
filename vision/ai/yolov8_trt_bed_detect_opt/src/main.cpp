@@ -5,7 +5,7 @@
 #include "logging.h"
 #include "utils.h"
 
-// #include "GLViewer.hpp" // OpenGL viewer removed
+#include "GLViewer.hpp"
 #include "yolo.hpp"
 #include <string>
 

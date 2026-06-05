@@ -30,13 +30,13 @@ RUN pip3 install cmake==3.18.4.post1
 COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
 # Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
 # Building nav2 dependencies required as .deb packages for humble not available for bionic.
-RUN colcon build --packages-select \
-              yolov8_trt_bed_detect_opt \
-              --cmake-args \
-                -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.2 \
-                -DCUDA_CUDART_LIBRARY=/usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so \
-    # && cp build/yolov8_trt_bed_detect/libmyplugins.so /usr/lib/ \
-    # Remove src/ later
+RUN colcon build --parallel-workers $(nproc) \
+              --event-handlers console_direct+ --base-paths src \
+              --cmake-args ' -DCMAKE_BUILD_TYPE=Release' \
+              ' -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs' \
+              ' -DCUDA_CUDART_LIBRARY=/usr/local/cuda/lib64/stubs' \
+              ' -DCMAKE_CXX_FLAGS="-Wl,--allow-shlib-undefined"' \
+              ' --no-warn-unused-cli' \
     && rm -rf log/ build/ src/ \
     && apt-get autoremove -y \
     && apt-get autoclean -y \
