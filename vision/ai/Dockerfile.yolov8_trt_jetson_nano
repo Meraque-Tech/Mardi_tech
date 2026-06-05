@@ -20,8 +20,9 @@ RUN apt-get update && apt-get install -y \
 
 COPY ./YoloV8-TensorRT-Jetson_Nano src
 
-# Build
-RUN cmake -S src -B src/build \
+# Build (mkdir required — older CMake on JetPack 4.6 does not auto-create the build dir)
+RUN mkdir -p src/build \
+    && cmake -S src -B src/build \
         -DCMAKE_BUILD_TYPE=Release \
     && cmake --build src/build --parallel $(nproc)
 
