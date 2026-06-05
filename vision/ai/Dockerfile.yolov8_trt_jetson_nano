@@ -15,6 +15,11 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     libopencv-dev \
     pkg-config \
+    libnvinfer-dev \
+    libnvinfer7 \
+    libnvonnxparsers-dev \
+    libnvparsers-dev \
+    python3-libnvinfer-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # TensorRT headers/libs come from JetPack runtime
@@ -33,7 +38,9 @@ RUN sed -i 's/x86_64-linux-gnu/aarch64-linux-gnu/g' CMakeLists.txt || true
 RUN mkdir build && cd build && \
     cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.2 && \
+    -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.2 \
+    -DTENSORRT_ROOT=/usr \
+    -DCMAKE_INCLUDE_PATH=/usr/include/aarch64-linux-gnu && \
     make -j4
 
 CMD ["/bin/bash"]
