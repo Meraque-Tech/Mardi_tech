@@ -12,14 +12,17 @@ ENV LD_LIBRARY_PATH=${CUDA_HOME}/targets/aarch64-linux/lib:${LD_LIBRARY_PATH}
 
 WORKDIR /yolov8_ws
 
-# Install build deps + cuda-cudart-dev-10-2 (adds unversioned libcudart.so symlink needed by CMake)
+# Install build deps
 RUN apt-get update && apt-get install -y \
         build-essential \
         git \
         libopencv-dev \
         python3-pip \
-        cuda-cudart-dev-10-2 \
     && rm -rf /var/lib/apt/lists/*
+
+# Create unversioned libcudart.so symlink — CMake FindCUDA requires it; only .so.10.2 exists in runtime image
+RUN ln -sf ${CUDA_HOME}/targets/aarch64-linux/lib/libcudart.so.10.2 \
+           ${CUDA_HOME}/targets/aarch64-linux/lib/libcudart.so
 
 # Upgrade CMake — 3.10 (Ubuntu 18.04 default) has FindCUDA bugs on aarch64
 RUN pip3 install --upgrade cmake
