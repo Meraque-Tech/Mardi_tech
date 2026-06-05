@@ -43,13 +43,13 @@ RUN rm -f /etc/apt/sources.list.d/ros2.list && \
     && ./ZED_SDK_Linux.zstd.run -- silent \
     && rm -rf /usr/local/zed/resources/* \
     && rm -rf ZED_SDK_Linux.zstd.run \
+    && apt-get autoremove -y \
+    && apt-get autoclean -y \
+    && rm -rf /var/lib/apt/lists/*
     # ZED_Diagnostic needs to be optimized in future for smaller docker image
     # && /usr/local/zed/tools/ZED_Diagnostic -ais 0 \
     # && /usr/local/zed/tools/ZED_Diagnostic -ais 1 \
     # && /usr/local/zed/tools/ZED_Diagnostic -ais 2 \
-    && apt-get autoremove -y \
-    && apt-get autoclean -y \
-    && rm -rf /var/lib/apt/lists/*
 
 #This symbolic link is needed to use the streaming features on Jetson inside a container
 RUN ln -sf /usr/lib/aarch64-linux-gnu/tegra/libv4l2.so.0 /usr/lib/aarch64-linux-gnu/libv4l2.so
