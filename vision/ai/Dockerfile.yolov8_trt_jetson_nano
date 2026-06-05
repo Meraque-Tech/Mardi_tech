@@ -18,16 +18,17 @@ RUN apt-get update && apt-get install -y \
         libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ./YoloV8-TensorRT-Jetson_Nano src
+COPY ./YoloV8-TensorRT-Jetson_Nano YoloV8-TensorRT-Jetson_Nano
 
-# Build (mkdir required — older CMake on JetPack 4.6 does not auto-create the build dir)
-RUN mkdir -p src/build \
-    && cmake -S src -B src/build \
-        -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build src/build --parallel $(nproc)
+# Build
+RUN cd YoloV8-TensorRT-Jetson_Nano \
+    && mkdir -p build \
+    && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release \
+    && make -j$(nproc)
 
 # Copy binary to workspace root
-RUN cp src/YoloV8rt /yolov8_ws/YoloV8rt
+RUN cp YoloV8-TensorRT-Jetson_Nano/build/YoloV8rt /yolov8_ws/YoloV8rt
 
 # Models dir — mount your .engine file here at runtime
 RUN mkdir -p /yolov8_ws/models
