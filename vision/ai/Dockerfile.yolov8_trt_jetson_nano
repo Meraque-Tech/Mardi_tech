@@ -9,7 +9,7 @@ SHELL ["/bin/bash", "-c"]
 ENV OPENBLAS_CORETYPE=ARMV8
 ENV CUDA_HOME=/usr/local/cuda-10.2
 ENV PATH=${CUDA_HOME}/bin:${PATH}
-ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/targets/aarch64-linux/lib:${LD_LIBRARY_PATH}
 
 WORKDIR /yolov8_ws
 
@@ -30,7 +30,7 @@ RUN cd YoloV8-TensorRT-Jetson_Nano \
     && cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.2 \
-        -DCUDA_CUDART_LIBRARY=/usr/local/cuda-10.2/lib64/libcudart.so \
+        -DCUDA_CUDART_LIBRARY=/usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so \
     && make -j$(nproc)
 
 # Copy binary to workspace root
