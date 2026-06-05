@@ -14,6 +14,10 @@ WORKDIR ${SAR_WS}
 ENV OPENBLAS_CORETYPE="ARMV8"
 
 COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
+
+# Fix missing libcudart.so symlink — humble-pytorch base only has .so.10.2, CMake FindCUDA needs unversioned
+RUN ln -sf /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so.10.2 \
+           /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so
 # COPY ./arm64/packages/ros2_src/lytbot2_msg_srv ${SAR_WS}/src/lytbot2_msg_srv
 
 # Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
