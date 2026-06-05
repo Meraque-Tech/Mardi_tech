@@ -14,7 +14,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.jetson
-    image: meraquetech/race_nav:data-logger-jetson
+    image: meraquetech/race_nav:data-logger-jetson.v1
     container_name: data_logger_jetson
     restart: always
     # ports: not needed with network_mode: host — port 5000 is directly on the host
