@@ -30,6 +30,9 @@ RUN pip3 install cmake==3.18.4.post1
 
 COPY ./YoloV8-TensorRT-Jetson_Nano src
 
+# Patch CMakeLists.txt: replace hardcoded arch list (includes sm_86+ unsupported by CUDA 10.2) with sm_53 only
+RUN sed -i 's/set(CMAKE_CUDA_ARCHITECTURES 60 61 62 70 72 75 86 89 90)/set(CMAKE_CUDA_ARCHITECTURES 53)/' src/CMakeLists.txt
+
 # Build
 RUN mkdir -p src/build \
     && cd src/build \
