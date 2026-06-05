@@ -23,6 +23,9 @@ ARG ZED_SDK_URL=https://download.stereolabs.com/zedsdk/${ZED_SDK_MAJOR}.${ZED_SD
 #This environment variable is needed to use the streaming features on Jetson inside a container
 ARG LOGNAME root
 
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add - && \
+    echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list
+
 RUN apt-get update && apt-get install --no-install-recommends -y \
             apt-transport-https \
             apt-utils \
