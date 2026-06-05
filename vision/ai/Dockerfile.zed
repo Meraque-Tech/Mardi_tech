@@ -1,0 +1,50 @@
+
+ARG BASE_DOCKER_REPO="meraquetech/race_nav"
+FROM ${BASE_DOCKER_REPO}:humble-pytorch-l4t-r32.7.1 AS humble-pytorch-l4t-r32.7.1-zed
+ARG BASE_DOCKER_REPO
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Select bash as default shell
+SHELL ["/bin/bash", "-c"]
+
+# From Dockerfile at https://github.com/stereolabs/zed-docker/blob/master/3.X/l4t/runtime/Dockerfile
+# Sets default arguments for L4T version 32.7.1
+ARG L4T_MAJOR_VERSION=32
+ARG L4T_MINOR_VERSION=7
+ARG L4T_PATCH_VERSION=1
+
+# Sets default arguments for ZED SDK 4.0.7 (As on 2023-10-16T13:47:12Z, points to 4.0.7)
+ARG ZED_SDK_MAJOR=4
+ARG ZED_SDK_MINOR=0
+ARG ZED_SDK_PATCH=7
+
+ARG ZED_SDK_URL=https://download.stereolabs.com/zedsdk/${ZED_SDK_MAJOR}.${ZED_SDK_MINOR}/l4t${L4T_MAJOR_VERSION}.${L4T_MINOR_VERSION}/jetsons
+
+#This environment variable is needed to use the streaming features on Jetson inside a container
+ARG LOGNAME root
+RUN apt-get update && apt-get install --no-install-recommends -y \
+            apt-transport-https \
+            apt-utils \
+            dialog \
+            less \
+            lsb-release \
+            sudo \
+            udev \
+            wget \
+            zstd \
+    && echo "# R${L4T_MAJOR_VERSION} (release), REVISION: ${L4T_MINOR_VERSION}.${L4T_PATCH_VERSION}" > /etc/nv_tegra_release \
+    && wget -q --no-check-certificate -O ZED_SDK_Linux.zstd.run ${ZED_SDK_URL} \
+    && chmod +x ZED_SDK_Linux.zstd.run \
+    && ./ZED_SDK_Linux.zstd.run -- silent \
+    && rm -rf /usr/local/zed/resources/* \
+    && rm -rf ZED_SDK_Linux.zstd.run \
+    # ZED_Diagnostic needs to be optimized in future for smaller docker image
+    && /usr/local/zed/tools/ZED_Diagnostic -ais 0 \
+    && /usr/local/zed/tools/ZED_Diagnostic -ais 1 \
+    && /usr/local/zed/tools/ZED_Diagnostic -ais 2 \
+    && apt-get autoremove -y \
+    && apt-get autoclean -y \
+    && rm -rf /var/lib/apt/lists/*
+
+#This symbolic link is needed to use the streaming features on Jetson inside a container
+RUN ln -sf /usr/lib/aarch64-linux-gnu/tegra/libv4l2.so.0 /usr/lib/aarch64-linux-gnu/libv4l2.so
