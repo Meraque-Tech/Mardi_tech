@@ -15,14 +15,15 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     libopencv-dev \
     pkg-config \
-    libnvinfer-dev \
-    libnvinfer7 \
-    libnvonnxparsers-dev \
-    libnvparsers-dev \
-    python3-libnvinfer-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# TensorRT headers/libs come from JetPack runtime
+# Copy TensorRT headers and libs from the Jetson host (already installed via JetPack)
+# Run on host to find paths:
+#   find /usr -name "NvInfer.h"              -> usually /usr/include/aarch64-linux-gnu/
+#   find /usr -name "libnvinfer.so*"         -> usually /usr/lib/aarch64-linux-gnu/
+COPY trt_include/ /usr/include/aarch64-linux-gnu/
+COPY trt_lib/     /usr/lib/aarch64-linux-gnu/
+
 RUN ln -sf /usr/local/cuda-10.2 /usr/local/cuda
 
 WORKDIR /workspace
@@ -39,7 +40,6 @@ RUN mkdir build && cd build && \
     cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.2 \
-    -DTENSORRT_ROOT=/usr \
     -DCMAKE_INCLUDE_PATH=/usr/include/aarch64-linux-gnu && \
     make -j4
 
