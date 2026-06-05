@@ -44,9 +44,9 @@ RUN rm -f /etc/apt/sources.list.d/ros2.list && \
     && rm -rf /usr/local/zed/resources/* \
     && rm -rf ZED_SDK_Linux.zstd.run \
     # ZED_Diagnostic needs to be optimized in future for smaller docker image
-    && /usr/local/zed/tools/ZED_Diagnostic -ais 0 \
-    && /usr/local/zed/tools/ZED_Diagnostic -ais 1 \
-    && /usr/local/zed/tools/ZED_Diagnostic -ais 2 \
+    # && /usr/local/zed/tools/ZED_Diagnostic -ais 0 \
+    # && /usr/local/zed/tools/ZED_Diagnostic -ais 1 \
+    # && /usr/local/zed/tools/ZED_Diagnostic -ais 2 \
     && apt-get autoremove -y \
     && apt-get autoclean -y \
     && rm -rf /var/lib/apt/lists/*
