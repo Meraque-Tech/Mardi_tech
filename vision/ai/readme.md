@@ -279,6 +279,13 @@ docker run --rm -it --runtime nvidia \
     nvcr.io/nvidia/l4t-base:r32.7.1 \
     bash
 
+docker run --rm -it --runtime nvidia \
+    -v $(pwd)/models:/yolov8_ws/models \
+    dustynv/ros:humble-pytorch-l4t-r32.7.1 \
+    bash
+
+
+
 
 /usr/src/tensorrt/bin/trtexec \
     --onnx=models/yolov8n.onnx \
