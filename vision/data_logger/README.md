@@ -86,8 +86,10 @@ sudo systemctl restart docker
 
 Then:
 ```bash
-docker compose -f docker-compose.jetson.yml up --build
-docker compose -f docker-compose.jetson.yml down
+docker-compose -f docker-compose.jetson.yml build
+docker-compose -f docker-compose.jetson.yml push
+docker-compose -f docker-compose.jetson.yml up -d
+docker-compose -f docker-compose.jetson.yml down
 ```
 
 ### Building for Jetson Nano from x86
