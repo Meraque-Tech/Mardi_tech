@@ -43,6 +43,14 @@ RUN mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j
 COPY api_server.py .
 COPY ui/ ui/
 
+
+# Build tools + ffmpeg + Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    network-manager \
+    && rm -rf /var/lib/apt/lists/*
+
+
+
 RUN mkdir -p logs/frames logs/videos
 
 EXPOSE 5000
