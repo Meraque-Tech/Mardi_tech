@@ -1,0 +1,11 @@
+yolov8_trt_bed_detect_opt:
+  ros__parameters:
+    NMS_THRESH: 0.4
+    CONF_THRESH: 0.7
+    dis_thresh: 0.9
+    stride: 10.0
+    k_dis: 0.7
+    engine_name: "can_ggn_st_johns_hospital_bed_512_yolov8s_no_earlystop.engine"
+    engine_type: "-d"
+    onnx_path: "can_ggn_st_johns_hospital_bed_512_yolov8s_no_earlystop_test.onnx"
+    engine_path: "can_ggn_st_johns_hospital_bed_512_yolov8s_no_earlystop_test.engine"
