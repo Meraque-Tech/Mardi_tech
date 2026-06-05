@@ -179,24 +179,45 @@ def network_status():
 
 @app.get("/network/wifi/list")
 def wifi_list():
+    import time
     try:
-        # Force a fresh scan — required on Jetson/embedded; ignored gracefully if it fails
-        subprocess.call(["nmcli", "device", "wifi", "rescan"],
-                        stderr=subprocess.DEVNULL)
+        # Rescan required on Jetson — without it only the connected network appears
+        subprocess.call(["nmcli", "device", "wifi", "rescan"], stderr=subprocess.DEVNULL)
+        time.sleep(2)  # wait for scan results to populate
+
+        # Use | as separator to avoid splitting on colons inside SSIDs
         out = subprocess.check_output(
-            ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "device", "wifi", "list"],
+            ["nmcli", "--escape", "no", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY",
+             "device", "wifi", "list"],
             universal_newlines=True
         ).strip()
-        networks = []
+
+        seen = {}  # ssid -> best entry (deduplicate by keeping highest signal)
         for line in out.splitlines():
-            parts = line.split(":")
-            if len(parts) >= 4 and parts[0]:
-                networks.append({
-                    "ssid":     parts[0],
-                    "signal":   parts[1],
-                    "security": parts[2],
-                    "in_use":   parts[3] == "*",
-                })
+            # Fields: IN-USE:SSID:SIGNAL:SECURITY  (nmcli uses : even with --escape no)
+            # Split on first 3 colons only so SSID with colons is preserved
+            parts = line.split(":", 3)
+            if len(parts) < 4:
+                continue
+            in_use, ssid, signal, security = parts
+            if not ssid:
+                continue
+            try:
+                sig_int = int(signal)
+            except ValueError:
+                sig_int = 0
+            if ssid not in seen or sig_int > seen[ssid]["signal_int"]:
+                seen[ssid] = {
+                    "ssid":       ssid,
+                    "signal":     signal,
+                    "signal_int": sig_int,
+                    "security":   security,
+                    "in_use":     in_use.strip() == "*",
+                }
+
+        networks = sorted(seen.values(), key=lambda n: n["signal_int"], reverse=True)
+        for n in networks:
+            del n["signal_int"]
         return jsonify({"networks": networks})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
