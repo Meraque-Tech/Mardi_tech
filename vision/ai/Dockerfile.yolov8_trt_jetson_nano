@@ -25,7 +25,7 @@ RUN ln -sf /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so.10.2 \
            /usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so
 
 # Downgrade cmake — 3.26 (in base image) ignores CUDA_CUDART_LIBRARY set() and breaks FindCUDA on aarch64
-RUN pip3 install cmake==3.18.4.post1
+# RUN pip3 install cmake==3.18.4.post1
 
 COPY ./yolov8_trt_bed_detect_opt ${SAR_WS}/src/yolov8_trt_bed_detect_opt
 # Cloning tag 1.1.9 of nav2 source (latest for humble as on 2023-08-18).
