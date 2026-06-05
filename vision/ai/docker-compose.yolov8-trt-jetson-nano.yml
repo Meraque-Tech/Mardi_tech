@@ -40,7 +40,7 @@ services:
     #     command: ["./YoloV8rt", "models/yolov8n.engine", "images/video.mp4"]
     #   Still image:
     #     command: ["./YoloV8rt", "models/yolov8n.engine", "images/test.jpg"]
-    command: ["bash"]
+    command: ["./YoloV8rt", "models/yolov8n.engine", "0"]
     # runtime: nvidia
     # deploy:
     #   resources:
