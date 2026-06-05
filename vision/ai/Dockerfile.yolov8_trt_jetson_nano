@@ -1,11 +1,12 @@
 # YoloV8 TensorRT 8 — Jetson Nano (JetPack 4.6, L4T r32.7.1)
 # Source: https://github.com/Qengineering/YoloV8-TensorRT-Jetson_Nano/tree/tensorrt8
 ARG BASE_DOCKER_REPO="meraquetech/race_nav"
-FROM ${BASE_DOCKER_REPO}:r8.2.1-runtime
+FROM ${BASE_DOCKER_REPO}:r36.4.0
 ARG DEBIAN_FRONTEND=noninteractive
 
 SHELL ["/bin/bash", "-c"]
 
+ENV OPENBLAS_CORETYPE=ARMV8
 
 WORKDIR /yolov8_ws
 
@@ -17,29 +18,15 @@ RUN apt-get update && apt-get install -y \
         libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ./YoloV8-TensorRT-Jetson_Nano YoloV8-TensorRT-Jetson_Nano
+COPY ./YoloV8-TensorRT-Jetson_Nano src
 
-# Debug: show where libcudart lives in this base image
-RUN find / -name "libcudart.so*" 2>/dev/null | head -20
-
-ENV OPENBLAS_CORETYPE=ARMV8
-ENV CUDA_HOME=/usr/local/cuda-10.2
-ENV PATH=${CUDA_HOME}/bin:${PATH}
-ENV LD_LIBRARY_PATH=${CUDA_HOME}/targets/aarch64-linux/lib:${LD_LIBRARY_PATH}
-
-
-# Build (point CMake to JetPack 4.6 CUDA 10.2 location)
-RUN cd YoloV8-TensorRT-Jetson_Nano \
-    && mkdir -p build \
-    && cd build \
-    && cmake .. \
+# Build
+RUN cmake -S src -B src/build \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.2 \
-        -DCUDA_CUDART_LIBRARY=/usr/local/cuda-10.2/targets/aarch64-linux/lib/libcudart.so \
-    && make -j$(nproc)
+    && cmake --build src/build --parallel $(nproc)
 
 # Copy binary to workspace root
-RUN cp YoloV8-TensorRT-Jetson_Nano/build/YoloV8rt /yolov8_ws/YoloV8rt
+RUN cp src/YoloV8rt /yolov8_ws/YoloV8rt
 
 # Models dir — mount your .engine file here at runtime
 RUN mkdir -p /yolov8_ws/models

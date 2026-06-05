@@ -262,16 +262,26 @@ Base image: `nvcr.io/nvidia/l4t-jetpack:r36.4.0` (JetPack 6.1, TRT 10.x)
 > Also confirm the container is started with `--runtime nvidia`; without it the CUDA stub driver
 > is used and produces the same error even on a compatible host.
 
+# Tesing
 
+````
 docker run -it --rm --runtime nvidia \
   -v $(pwd)/models:/yolov8_ws/models \
   nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime bash
+
+
+docker run -it --rm --runtime nvidia \
+  -v $(pwd)/models:/yolov8_ws/models \
+  meraquetech/race_nav:humble-pytorch-l4t-r32.7.1 bash
+
+  
   
 
 /usr/src/tensorrt/bin/trtexec \
     --onnx=models/yolov8n.onnx \
     --saveEngine=models/yolov8n.engine \
     --fp16
+````
 
 
 ### Build image
