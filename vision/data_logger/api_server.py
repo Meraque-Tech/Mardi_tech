@@ -180,6 +180,9 @@ def network_status():
 @app.get("/network/wifi/list")
 def wifi_list():
     try:
+        # Force a fresh scan — required on Jetson/embedded; ignored gracefully if it fails
+        subprocess.call(["nmcli", "device", "wifi", "rescan"],
+                        stderr=subprocess.DEVNULL)
         out = subprocess.check_output(
             ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "device", "wifi", "list"],
             universal_newlines=True
