@@ -6,10 +6,6 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 SHELL ["/bin/bash", "-c"]
 
-ENV OPENBLAS_CORETYPE=ARMV8
-ENV CUDA_HOME=/usr/local/cuda-10.2
-ENV PATH=${CUDA_HOME}/bin:${PATH}
-ENV LD_LIBRARY_PATH=${CUDA_HOME}/targets/aarch64-linux/lib:${LD_LIBRARY_PATH}
 
 WORKDIR /yolov8_ws
 
@@ -22,6 +18,15 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY ./YoloV8-TensorRT-Jetson_Nano YoloV8-TensorRT-Jetson_Nano
+
+# Debug: show where libcudart lives in this base image
+RUN find / -name "libcudart.so*" 2>/dev/null | head -20
+
+ENV OPENBLAS_CORETYPE=ARMV8
+ENV CUDA_HOME=/usr/local/cuda-10.2
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/targets/aarch64-linux/lib:${LD_LIBRARY_PATH}
+
 
 # Build (point CMake to JetPack 4.6 CUDA 10.2 location)
 RUN cd YoloV8-TensorRT-Jetson_Nano \
