@@ -11,8 +11,9 @@ services:
     image: meraquetech/race_nav:data-logger-x86
     container_name: data_logger_x86
     restart: always
-    ports:
-      - "5000:5000"
+    network_mode: host
+    # ports:
+    #   - "5000:5000"
     volumes:
       - ./logs:/app/logs
     privileged: true

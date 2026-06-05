@@ -17,10 +17,10 @@ services:
     image: meraquetech/race_nav:data-logger-jetson
     container_name: data_logger_jetson
     restart: always
-    ports:
-      - "5000:5000"
+    # ports: not needed with network_mode: host — port 5000 is directly on the host
     volumes:
       - ./logs:/app/logs
+    network_mode: host   # needed for nmcli to reach NetworkManager and for hostname -I to show host IPs
     privileged: true
     # devices:
     #   - /dev/video0:/dev/video0
