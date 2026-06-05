@@ -27,7 +27,7 @@ RUN ln -sf ${CUDA_HOME}/targets/aarch64-linux/lib/libcudart.so.10.2 \
 
 # CMake 3.10 lacks target_link_directories (needs 3.13+); cmake 4.x breaks CUDA 10.2 arch detection
 # Pin to 3.28 — supports target_link_directories and works with CUDA 10.2
-RUN pip3 install cmake==3.28.4
+RUN pip3 install cmake==3.18.6
 
 COPY ./YoloV8-TensorRT-Jetson_Nano src
 
