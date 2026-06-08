@@ -12,12 +12,14 @@
     wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
     python3 gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
 
-    
+    xhost +local
     docker run -it --rm --net=host \
         --runtime nvidia \
         -e DISPLAY=$DISPLAY \
         -v /tmp/.X11-unix/:/tmp/.X11-unix \
         meraquetech/race_nav:yolov8-trt-x86
+    
+    <!-- -v ./yolov8:/yolov8 -->
     
 
     Serialize ->
