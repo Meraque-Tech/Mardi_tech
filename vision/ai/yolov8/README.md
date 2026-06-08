@@ -40,6 +40,11 @@ Currently, we support yolov8
 cp {tensorrtx}/yolov8/gen_wts.py {ultralytics}/ultralytics
 cd {ultralytics}/ultralytics
 python gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
+
+
+python gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
+
+
 // a file 'yolov8n.wts' will be generated.
 
 
@@ -55,7 +60,7 @@ cd {ultralytics}/ultralytics
 python gen_wts.py -w yolov5nu.pt -o yolov5nu.wts -t detect
 // a file 'yolov5nu.wts' will be generated.
 
-whget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
 
 ```
 
