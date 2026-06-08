@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.yolov8_trt_jetson_nano
-    image: meraquetech/race_nav:yolov8-trt8-jetson-nano
+    image: meraquetech/race_nav:yolov8-trt-nano.v1
     # env_file:
     #   - .env
     environment:
