@@ -23,3 +23,4 @@ if [[ "${PUSH}" =~ ^[Yy]$ ]]; then
 fi
 
 docker rmi -f $(docker images -f "dangling=true" -q) 2>/dev/null || true
+docker rm -f $(docker ps -aq) 2>/dev/null || true
