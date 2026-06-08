@@ -17,19 +17,15 @@ RUN echo "deb https://repo.download.nvidia.com/jetson/common r32.7 main" \
 
 # RUN echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf && ldconfig
 
-RUN apt-get update && apt-get install -y \
+RUN rm -f /etc/apt/sources.list.d/ros2.list && \
+    apt-get update && apt-get install -y \
     build-essential \
     cmake \
     git \
     wget \
     unzip \
     pkg-config \
-    libopencv-dev \
     tensorrt \
-    libnvinfer-dev \
-    libnvonnxparsers-dev \
-    libnvparsers-dev \
-    libnvinfer-plugin-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy local yolov8 C++ source (your package, not tensorrtx)
