@@ -69,6 +69,12 @@ docker run -it --rm --gpus all \
   -v ./yolov8:/yolov8
   meraquetech/tensorrt-yolov8:ultralytics
 
+Serialize ->
+./yolov8_det -s yolov8n.wts yolov8.engine n
+
+DeSerialize ->
+./yolov8_det -s yolov8n.wts yolov8.engine g
+
 
 ```
 
