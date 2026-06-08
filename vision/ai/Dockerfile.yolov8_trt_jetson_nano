@@ -16,6 +16,9 @@ RUN rm -f /etc/apt/sources.list.d/ros2.list \
     wget \
     unzip \
     pkg-config \
+    libnvinfer-dev \
+    libnvinfer-plugin-dev \
+    libnvonnxparsers-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy local yolov8 C++ source (your package, not tensorrtx)
