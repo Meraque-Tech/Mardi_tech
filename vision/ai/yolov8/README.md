@@ -55,6 +55,8 @@ cd {ultralytics}/ultralytics
 python gen_wts.py -w yolov5nu.pt -o yolov5nu.wts -t detect
 // a file 'yolov5nu.wts' will be generated.
 
+whget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+
 ```
 
 2. build tensorrtx/yolov8 and run
