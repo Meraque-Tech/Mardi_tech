@@ -1,5 +1,7 @@
-# Jetson Nano — JetPack 4.6.1 (L4T r32.7.1), CUDA 10.2, OpenCV 4.1.1
-FROM nvcr.io/nvidia/l4t-base:r32.7.1
+# Jetson Nano — JetPack 4.6.1 (L4T r32.7.1)
+# l4t-ml already ships: CUDA 10.2 + TensorRT 8.x + OpenCV 4.x + Python3
+# No manual header/lib copying needed.
+FROM nvcr.io/nvidia/l4t-ml:r32.7.1-py3
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CUDA_HOME=/usr/local/cuda
@@ -12,21 +14,8 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     unzip \
-    python3 \
-    python3-pip \
-    libopencv-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
-
-# TensorRT headers and libs copied from the Jetson host (installed via JetPack).
-# On the host, locate them with:
-#   find /usr -name "NvInfer.h"       -> /usr/include/aarch64-linux-gnu/
-#   find /usr -name "libnvinfer.so*"  -> /usr/lib/aarch64-linux-gnu/
-# Then run:  ./build_yolov8_trt_nano.sh   which calls this Dockerfile via docker build context.
-COPY trt_include/ /usr/include/aarch64-linux-gnu/
-COPY trt_lib/     /usr/lib/aarch64-linux-gnu/
-
-RUN ln -sf /usr/local/cuda-10.2 /usr/local/cuda
 
 # Copy local yolov8 C++ source (your package, not tensorrtx)
 WORKDIR /workspace/yolov8
