@@ -3,9 +3,12 @@
 FROM dustynv/ros:humble-pytorch-l4t-r32.7.1
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV CUDA_HOME=/usr/local/cuda
-ENV CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda
 ENV OPENBLAS_CORETYPE=ARMV8
+# ENV CUDA_HOME=/usr/local/cuda
+# ENV CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda
+# Select bash as default shell
+SHELL ["/bin/bash", "-c"]
+
 
 # Add JetPack 4.6.x apt repo (Jetson Nano = Tegra210/t210, L4T r32.7)
 RUN echo "deb https://repo.download.nvidia.com/jetson/common r32.7 main" \
@@ -27,6 +30,8 @@ RUN rm -f /etc/apt/sources.list.d/ros2.list && \
     pkg-config \
     tensorrt \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/lib/aarch64-linux-gnu/tegra/libv4l2.so.0 /usr/lib/aarch64-linux-gnu/libv4l2.so
 
 # Copy local yolov8 C++ source (your package, not tensorrtx)
 WORKDIR /workspace/yolov8
