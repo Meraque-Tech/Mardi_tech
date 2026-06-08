@@ -61,7 +61,7 @@ python gen_wts.py -w yolov5nu.pt -o yolov5nu.wts -t detect
 // a file 'yolov5nu.wts' will be generated.
 
 wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
-python gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
+python3 gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
 
 
 ```
