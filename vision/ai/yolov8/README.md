@@ -66,7 +66,7 @@ python3 gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
 docker run -it --rm --gpus all \
   --name yolo_export \
   -v ~/yolo_models:/workspace/models \
-  -v ./yolov8:/yolov8 \
+  -v ./yolov8:/yolov8
   meraquetech/tensorrt-yolov8:ultralytics
 
 
