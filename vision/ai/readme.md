@@ -204,6 +204,53 @@ docker run --rm --runtime nvidia \
 
 ---
 
+# YOLOv8 TensorRT — x86 (TRT 10, CUDA 12)
+
+Dockerfile: `Dockerfile.yolov8_trt_x86`
+Base image: `nvcr.io/nvidia/tensorrt:24.05-py3`
+
+> **Note:** Uses `--gpus all` (x86 NVIDIA Container Toolkit). Do **not** use `--runtime nvidia`.
+
+### Build image
+
+```bash
+cd vision/ai
+
+docker build \
+  -f Dockerfile.yolov8_trt_x86 \
+  -t meraquetech/race_nav:yolov8-trt-x86 \
+  .
+
+docker push meraquetech/race_nav:yolov8-trt-x86
+```
+
+### Convert ONNX → TRT engine
+
+```bash
+docker run -it --rm --gpus all \
+  -v $(pwd)/models:/workspace/yolov8/models \
+  meraquetech/race_nav:yolov8-trt-x86 \
+  bash
+
+# Inside container:
+trtexec \
+  --onnx=models/yolov8n.onnx \
+  --saveEngine=models/yolov8n.engine \
+  --fp16
+```
+
+### Run detection
+
+```bash
+docker run --rm --gpus all \
+  -v $(pwd)/models:/workspace/yolov8/models \
+  -v $(pwd)/images:/workspace/yolov8/images \
+  meraquetech/race_nav:yolov8-trt-x86 \
+  ./build/YoloV8rt models/yolov8n.engine images/test.jpg
+```
+
+---
+
 # YOLOv8 TensorRT — Bed Detection (ROS2 Humble, Jetson, OpenCV camera)
 
 Dockerfile: `Dockerfile.yolo8_trt.bed_detect`

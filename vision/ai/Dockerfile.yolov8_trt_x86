@@ -1,0 +1,33 @@
+# meraquetech/race_nav:yolov8-trt-x86
+# x86_64 — CUDA 12.x, TensorRT 10.x
+FROM nvcr.io/nvidia/tensorrt:24.05-py3
+
+LABEL maintainer="meraquetech" \
+      image="meraquetech/race_nav:yolov8-trt-x86"
+
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-c"]
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    libopencv-dev \
+    pkg-config \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify toolchain
+RUN nvcc --version
+RUN pkg-config --modversion opencv4
+RUN ls /usr/include/x86_64-linux-gnu/ | grep -E "NvInfer" || \
+    ls /usr/include/ | grep -E "NvInfer"
+
+WORKDIR /workspace/yolov8
+COPY yolov8/ .
+
+RUN mkdir -p build && cd build && \
+    cmake .. \
+    && make -j$(nproc)
+
+CMD ["/bin/bash"]
