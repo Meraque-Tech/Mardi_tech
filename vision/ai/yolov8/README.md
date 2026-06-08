@@ -1,4 +1,20 @@
 # YOLOv8
+```
+    wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+    python3 gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
+
+    docker run -it --rm --gpus all \
+    --name yolo_export \
+    -v ~/yolo_models:/workspace/models \
+    -v ./yolov8:/yolov8
+    meraquetech/tensorrt-yolov8:ultralytics
+
+    Serialize ->
+    ./yolov8_det -s yolov8n.wts yolov8.engine n
+
+    DeSerialize ->
+    ./yolov8_det -s yolov8n.wts yolov8.engine g
+```
 
 The Pytorch implementation is [ultralytics/yolov8](https://github.com/ultralytics/ultralytics/tree/main/ultralytics).
 
