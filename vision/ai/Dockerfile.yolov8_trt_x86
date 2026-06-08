@@ -1,6 +1,6 @@
 # meraquetech/race_nav:yolov8-trt-x86
-# x86_64 — CUDA 11.7, TensorRT 8.4
-FROM nvcr.io/nvidia/tensorrt:22.08-py3
+# x86_64 — CUDA 12.x, TensorRT 10.x (RTX 5060 Blackwell compatible)
+FROM nvcr.io/nvidia/tensorrt:24.05-py3
 
 LABEL maintainer="meraquetech" \
       image="meraquetech/race_nav:yolov8-trt-x86"
