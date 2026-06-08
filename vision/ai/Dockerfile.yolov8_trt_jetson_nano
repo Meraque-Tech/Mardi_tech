@@ -1,5 +1,6 @@
 # Jetson Nano — JetPack 4.6.1, CUDA 10.2, TensorRT 8.2.1
-FROM nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime
+# FROM nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime
+FROM dustynv/ros:humble-pytorch-l4t-r32.7.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CUDA_HOME=/usr/local/cuda
@@ -14,7 +15,7 @@ RUN echo "deb https://repo.download.nvidia.com/jetson/common r32.7 main" \
     wget -qO - https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
         | apt-key add -
 
-RUN echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf && ldconfig
+# RUN echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf && ldconfig
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -24,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     unzip \
     pkg-config \
     libopencv-dev \
+    tensorrt \
     libnvinfer-dev \
     libnvonnxparsers-dev \
     libnvparsers-dev \
