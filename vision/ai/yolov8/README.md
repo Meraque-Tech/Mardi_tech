@@ -21,8 +21,6 @@
         -v ./yolov8/yolov8n.wts:/workspace/yolov8/build/yolov8n.wts \
         meraquetech/race_nav:yolov8-trt-x86
     
-    <!-- -v ./yolov8:/yolov8 -->
-    
 
     Serialize ->
     ./yolov8_det -s yolov8n.wts yolov8.engine n
