@@ -17,6 +17,7 @@
         --runtime nvidia \
         -e DISPLAY=$DISPLAY \
         -v /tmp/.X11-unix/:/tmp/.X11-unix \
+        -v ./yolov8:/yolov8 \
         meraquetech/race_nav:yolov8-trt-x86
     
     <!-- -v ./yolov8:/yolov8 -->
