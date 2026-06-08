@@ -9,11 +9,21 @@
     -v ./yolov8:/yolov8
     meraquetech/tensorrt-yolov8:ultralytics
 
+    
+    docker run -it --rm --net=host \
+        --runtime nvidia \
+        -e DISPLAY=$DISPLAY \
+        -v /tmp/.X11-unix/:/tmp/.X11-unix \
+        meraquetech/race_nav:yolov8-trt-x86
+    
+    
     Serialize ->
     ./yolov8_det -s yolov8n.wts yolov8.engine n
 
     DeSerialize ->
     ./yolov8_det -s yolov8n.wts yolov8.engine g
+
+
 ```
 
 The Pytorch implementation is [ultralytics/yolov8](https://github.com/ultralytics/ultralytics/tree/main/ultralytics).
