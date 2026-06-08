@@ -1,24 +1,31 @@
-# Jetson Nano — JetPack 4.6.1 (L4T r32.7.1)
-# l4t-ml already ships: CUDA 10.2 + TensorRT 8.x + OpenCV 4.x + Python3
-# No manual header/lib copying needed.
-FROM dustynv/ros:humble-ros-core-l4t-r32.7.1
+# Jetson Nano — JetPack 4.6.1, CUDA 10.2, TensorRT 8.2.1
+FROM nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CUDA_HOME=/usr/local/cuda
 ENV CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda
 ENV OPENBLAS_CORETYPE=ARMV8
 
-RUN rm -f /etc/apt/sources.list.d/ros2.list \
-    && apt-get update && apt-get install -y \
+# Add JetPack 4.6.x apt repo (Jetson Nano = Tegra210/t210, L4T r32.7)
+RUN echo "deb https://repo.download.nvidia.com/jetson/common r32.7 main" \
+        > /etc/apt/sources.list.d/nvidia-l4t-apt-source.list && \
+    echo "deb https://repo.download.nvidia.com/jetson/t210 r32.7 main" \
+        >> /etc/apt/sources.list.d/nvidia-l4t-apt-source.list && \
+    wget -qO - https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
+        | apt-key add -
+
+RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     git \
     wget \
     unzip \
     pkg-config \
+    libopencv-dev \
     libnvinfer-dev \
-    libnvinfer-plugin-dev \
     libnvonnxparsers-dev \
+    libnvparsers-dev \
+    libnvinfer-plugin-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy local yolov8 C++ source (your package, not tensorrtx)
