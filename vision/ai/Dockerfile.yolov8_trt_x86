@@ -27,7 +27,7 @@ WORKDIR /workspace/yolov8
 COPY yolov8/ .
 
 RUN mkdir -p build && cd build && \
-    cmake .. \
+    cmake .. -DCMAKE_CXX_FLAGS="-DUSE_FP16" \
     && make -j$(nproc)
 
 CMD ["/bin/bash"]
