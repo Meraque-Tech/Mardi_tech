@@ -52,9 +52,17 @@
 // Run detection on a webcam or video device
 // Arguments: [.engine] [cam_id: 0/1/...] [c/g] [show: true/false]
 
+No imshow ->
+./yolov8_det_video ./weights/yolov8n.engine 0 g false
+
+imshow ->
 ./yolov8_det_video ./weights/yolov8n.engine 0 g true
+
 ./yolov8_det_video yolov8n.engine 0 g true    // webcam 0, GPU postprocess, showwindow
 ./yolov8_det_video yolov8n.engine 1 c false   // webcam 1, CPU postprocess, headless (no window)
+
+
+
 
 // Press ESC to exit when show=true
 // Press Ctrl+C to stop when running headless
