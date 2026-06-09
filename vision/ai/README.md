@@ -24,7 +24,7 @@
     
 
     Serialize ->
-    ./yolov8_det -s ./weights/yolov8n.wts yolov8.engine n
+    ./yolov8_det -s ./weights/yolov8n.wts yolov8n.engine n
 
     DeSerialize ->
     ./yolov8_det -d yolov8n.engine ./images g
