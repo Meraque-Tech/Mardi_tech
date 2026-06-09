@@ -12,15 +12,19 @@
     wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
     python3 gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
 
-    xhost +local
+    xhost +local:root
     docker run -it --rm --net=host \
         --runtime nvidia \
         --gpus all \
         --privileged \
         -e DISPLAY=$DISPLAY \
+        -e XAUTHORITY=/root/.Xauthority \
         -v /tmp/.X11-unix/:/tmp/.X11-unix \
+        -v $HOME/.Xauthority:/root/.Xauthority:ro \
         -v ./yolov8/images:/workspace/yolov8/build/images:ro \
         -v ./yolov8/weights:/workspace/yolov8/build/weights:ro \
+        --device /dev/video0 \
+        --device /dev/video1 \
         meraquetech/race_nav:yolov8-trt-x86
     
     
