@@ -50,6 +50,12 @@
 
 
 ```
+# Default: cam 0, GPU postprocess, show window
+./run_yolov8_det_video.sh
+
+# Custom args: cam_id, postprocess (c/g), show (true/false)
+./run_yolov8_det_video.sh 1 c false
+
 
 ### Detection (Webcam / Video Stream)
 ```
@@ -71,3 +77,4 @@ imshow ->
 // Press ESC to exit when show=true
 // Press Ctrl+C to stop when running headless
 ```
+
