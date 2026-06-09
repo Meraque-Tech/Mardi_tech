@@ -1,6 +1,6 @@
 # YOLOv8
 
-# Default: yolov8n, type n
+# Default: yolov8n, type n Buidling model
 ```
 ./engine_file_build.sh
 ```
@@ -18,7 +18,13 @@ Step 2 — runs meraquetech/race_nav:yolov8-trt-x86 to serialize .wts → .engin
 
 # Default: cam 0, GPU postprocess, show window
 ```
-./run_yolov8_det_video.sh
+./run_yolov8_det_video.sh [engine] [cam_id] [c/g] [show]
+
+./run_yolov8_det_video.sh                          # defaults: yolov8n.engine 0 g true
+
+./run_yolov8_det_video.sh yolov8s.engine 0 g true
+
+<!-- ./run_yolov8_det_video.sh yolov8s.engine 1 c false -->
 
 ```
 
