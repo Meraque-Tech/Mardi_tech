@@ -12,7 +12,7 @@ def parse_args():
     parser.add_argument(
         '-o', '--output', help='Output (.wts) file path (optional)')
     parser.add_argument(
-        '-t', '--type', type=str, default='detect', choices=['detect', 'cls', 'seg', 'pose', 'obb'],
+        '-t', '--type', type=str, default='detect', choices=['detect', 'cls', 'seg', 'pose'],
         help='determines the model is detection/classification')
     args = parser.parse_args()
     if not os.path.isfile(args.weights):
@@ -37,10 +37,9 @@ print(f'Loading {pt_file}')
 device = 'cpu'
 
 # Load model
-model = torch.load(pt_file, map_location=device, weights_only=False)  # Load FP32 weights
-model = model['ema' if model.get('ema') else 'model'].float()
+model = torch.load(pt_file, map_location=device, weights_only=False)['model'].float()  # load to FP32
 
-if m_type in ['detect', 'seg', 'pose', 'obb']:
+if m_type in ['detect', 'seg', 'pose']:
     anchor_grid = model.model[-1].anchors * model.model[-1].stride[..., None, None]
 
     delattr(model.model[-1], 'anchors')

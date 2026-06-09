@@ -4,20 +4,15 @@
 #include <fstream>
 #include <iostream>
 #include "config.h"
+#include "model.h"
 #include "yololayer.h"
-
-int calculateP(int ksize) {
-    return ksize / 3;
-}
 
 std::map<std::string, nvinfer1::Weights> loadWeights(const std::string file) {
     std::cout << "Loading weights: " << file << std::endl;
     std::map<std::string, nvinfer1::Weights> WeightMap;
 
     std::ifstream input(file);
-    assert(input.is_open() &&
-           "Unable to load weight file. please check if the "
-           ".wts file path is right!!!!!!");
+    assert(input.is_open() && "Unable to load weight file. please check if the .wts file path is right!!!!!!");
 
     int32_t count;
     input >> count;
@@ -42,9 +37,9 @@ std::map<std::string, nvinfer1::Weights> loadWeights(const std::string file) {
     return WeightMap;
 }
 
-static nvinfer1::IScaleLayer* addBatchNorm2d(nvinfer1::INetworkDefinition* network,
-                                             std::map<std::string, nvinfer1::Weights> weightMap,
-                                             nvinfer1::ITensor& input, std::string lname, float eps) {
+nvinfer1::IScaleLayer* addBatchNorm2d(nvinfer1::INetworkDefinition* network,
+                                      std::map<std::string, nvinfer1::Weights> weightMap, nvinfer1::ITensor& input,
+                                      std::string lname, float eps) {
     float* gamma = (float*)weightMap[lname + ".weight"].values;
     float* beta = (float*)weightMap[lname + ".bias"].values;
     float* mean = (float*)weightMap[lname + ".running_mean"].values;
@@ -109,20 +104,6 @@ nvinfer1::ILayer* bottleneck(nvinfer1::INetworkDefinition* network, std::map<std
     return conv2;
 }
 
-static nvinfer1::ILayer* bottleneck_c3(nvinfer1::INetworkDefinition* network,
-                                       std::map<std::string, nvinfer1::Weights>& weightMap, nvinfer1::ITensor& input,
-                                       int c1, int c2, bool shortcut, float e, std::string lname) {
-    nvinfer1::IElementWiseLayer* cv1 =
-            convBnSiLU(network, weightMap, input, (int)((float)c2 * e), 1, 1, calculateP(1), lname + ".cv1");
-    nvinfer1::IElementWiseLayer* cv2 =
-            convBnSiLU(network, weightMap, *cv1->getOutput(0), c2, 3, 1, calculateP(3), lname + ".cv2");
-    if (shortcut && c1 == c2) {
-        auto ew = network->addElementWise(input, *cv2->getOutput(0), nvinfer1::ElementWiseOperation::kSUM);
-        return ew;
-    }
-    return cv2;
-}
-
 nvinfer1::IElementWiseLayer* C2F(nvinfer1::INetworkDefinition* network,
                                  std::map<std::string, nvinfer1::Weights> weightMap, nvinfer1::ITensor& input, int c1,
                                  int c2, int n, bool shortcut, float e, std::string lname) {
@@ -132,11 +113,11 @@ nvinfer1::IElementWiseLayer* C2F(nvinfer1::INetworkDefinition* network,
     nvinfer1::Dims d = conv1->getOutput(0)->getDimensions();
 
     nvinfer1::ISliceLayer* split1 =
-            network->addSlice(*conv1->getOutput(0), nvinfer1::Dims3{0, 0, 0},
-                              nvinfer1::Dims3{d.d[0] / 2, d.d[1], d.d[2]}, nvinfer1::Dims3{1, 1, 1});
+            network->addSlice(*conv1->getOutput(0), nvinfer1::Dims4{0, 0, 0, 0},
+                              nvinfer1::Dims4{d.d[0], d.d[1] / 2, d.d[2], d.d[3]}, nvinfer1::Dims4{1, 1, 1, 1});
     nvinfer1::ISliceLayer* split2 =
-            network->addSlice(*conv1->getOutput(0), nvinfer1::Dims3{d.d[0] / 2, 0, 0},
-                              nvinfer1::Dims3{d.d[0] / 2, d.d[1], d.d[2]}, nvinfer1::Dims3{1, 1, 1});
+            network->addSlice(*conv1->getOutput(0), nvinfer1::Dims4{0, d.d[1] / 2, 0, 0},
+                              nvinfer1::Dims4{d.d[0], d.d[1] / 2, d.d[2], d.d[3]}, nvinfer1::Dims4{1, 1, 1, 1});
     nvinfer1::ITensor* inputTensor0[] = {split1->getOutput(0), split2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat = network->addConcatenation(inputTensor0, 2);
     nvinfer1::ITensor* y1 = split2->getOutput(0);
@@ -167,12 +148,12 @@ nvinfer1::IElementWiseLayer* C2(nvinfer1::INetworkDefinition* network,
 
     // Split the output of cv1 into two tensors
     nvinfer1::Dims dims = cv1_out->getDimensions();
-    nvinfer1::ISliceLayer* split1 =
-            network->addSlice(*cv1_out, nvinfer1::Dims3{0, 0, 0}, nvinfer1::Dims3{dims.d[0] / 2, dims.d[1], dims.d[2]},
-                              nvinfer1::Dims3{1, 1, 1});
-    nvinfer1::ISliceLayer* split2 =
-            network->addSlice(*cv1_out, nvinfer1::Dims3{dims.d[0] / 2, 0, 0},
-                              nvinfer1::Dims3{dims.d[0] / 2, dims.d[1], dims.d[2]}, nvinfer1::Dims3{1, 1, 1});
+    nvinfer1::ISliceLayer* split1 = network->addSlice(*cv1_out, nvinfer1::Dims4{0, 0, 0, 0},
+                                                      nvinfer1::Dims4{dims.d[0], dims.d[1] / 2, dims.d[2], dims.d[3]},
+                                                      nvinfer1::Dims4{1, 1, 1, 1});
+    nvinfer1::ISliceLayer* split2 = network->addSlice(*cv1_out, nvinfer1::Dims4{0, dims.d[1] / 2, 0, 0},
+                                                      nvinfer1::Dims4{dims.d[0], dims.d[1] / 2, dims.d[2], dims.d[3]},
+                                                      nvinfer1::Dims4{1, 1, 1, 1});
 
     // Create y1 bottleneck sequence
     nvinfer1::ITensor* y1 = split1->getOutput(0);
@@ -191,24 +172,6 @@ nvinfer1::IElementWiseLayer* C2(nvinfer1::INetworkDefinition* network,
             convBnSiLU(network, weightMap, *cat->getOutput(0), c2, 1, 1, 0, lname + ".cv2");
 
     return conv2;
-}
-
-nvinfer1::IElementWiseLayer* C3(nvinfer1::INetworkDefinition* network,
-                                std::map<std::string, nvinfer1::Weights> weightMap, nvinfer1::ITensor& input, int c1,
-                                int c2, int n, bool shortcut, float e, std::string lname) {
-    int c_ = (float)c2 * e;
-    nvinfer1::IElementWiseLayer* cv1 = convBnSiLU(network, weightMap, input, c_, 1, 1, calculateP(1), lname + ".cv1");
-    nvinfer1::IElementWiseLayer* cv2 = convBnSiLU(network, weightMap, input, c_, 1, 1, calculateP(1), lname + ".cv2");
-    nvinfer1::ITensor* y1 = cv1->getOutput(0);
-    for (int i = 0; i < n; i++) {
-        auto b = bottleneck_c3(network, weightMap, *y1, c_, c_, shortcut, 1.0, lname + ".m." + std::to_string(i));
-        y1 = b->getOutput(0);
-    }
-    nvinfer1::ITensor* inputTensors[] = {y1, cv2->getOutput(0)};
-    nvinfer1::IConcatenationLayer* cat = network->addConcatenation(inputTensors, 2);
-    nvinfer1::IElementWiseLayer* conv3 =
-            convBnSiLU(network, weightMap, *cat->getOutput(0), c2, 1, 1, calculateP(1), lname + ".cv3");
-    return conv3;
 }
 
 nvinfer1::IElementWiseLayer* SPPF(nvinfer1::INetworkDefinition* network,
@@ -240,9 +203,10 @@ nvinfer1::IShuffleLayer* DFL(nvinfer1::INetworkDefinition* network, std::map<std
                              nvinfer1::ITensor& input, int ch, int grid, int k, int s, int p, std::string lname) {
 
     nvinfer1::IShuffleLayer* shuffle1 = network->addShuffle(input);
-    shuffle1->setReshapeDimensions(nvinfer1::Dims3{4, 16, grid});
-    shuffle1->setSecondTranspose(nvinfer1::Permutation{1, 0, 2});
+    shuffle1->setReshapeDimensions(nvinfer1::Dims4{kBatchSize, 4, 16, grid});
+    shuffle1->setSecondTranspose(nvinfer1::Permutation{0, 2, 1, 3});
     nvinfer1::ISoftMaxLayer* softmax = network->addSoftMax(*shuffle1->getOutput(0));
+    softmax->setAxes(1 << 1);
 
     nvinfer1::Weights bias_empty{nvinfer1::DataType::kFLOAT, nullptr, 0};
     nvinfer1::IConvolutionLayer* conv =
@@ -251,22 +215,21 @@ nvinfer1::IShuffleLayer* DFL(nvinfer1::INetworkDefinition* network, std::map<std
     conv->setPaddingNd(nvinfer1::DimsHW{p, p});
 
     nvinfer1::IShuffleLayer* shuffle2 = network->addShuffle(*conv->getOutput(0));
-    shuffle2->setReshapeDimensions(nvinfer1::Dims2{4, grid});
+    shuffle2->setReshapeDimensions(nvinfer1::Dims3{kBatchSize, 4, grid});
 
     return shuffle2;
 }
 
 nvinfer1::IPluginV2Layer* addYoLoLayer(nvinfer1::INetworkDefinition* network,
                                        std::vector<nvinfer1::IConcatenationLayer*> dets, const int* px_arry,
-                                       int px_arry_num, int num_class, bool is_segmentation, bool is_pose,
-                                       bool is_obb) {
+                                       int px_arry_num, bool is_segmentation, bool is_pose) {
     auto creator = getPluginRegistry()->getPluginCreator("YoloLayer_TRT", "1");
-    const int netinfo_count = 9;  // Assuming the first 5 elements are for netinfo as per existing code.
+    const int netinfo_count = 8;  // Assuming the first 5 elements are for netinfo as per existing code.
     const int total_count = netinfo_count + px_arry_num;  // Total number of elements for netinfo and px_arry combined.
 
     std::vector<int> combinedInfo(total_count);
     // Fill in the first 5 elements as per existing netinfo.
-    combinedInfo[0] = num_class;
+    combinedInfo[0] = is_pose ? kPoseNumClass : kNumClass;
     combinedInfo[1] = kNumberOfPoints;
     combinedInfo[2] = kConfThreshKeypoints;
     combinedInfo[3] = kInputW;
@@ -274,10 +237,8 @@ nvinfer1::IPluginV2Layer* addYoLoLayer(nvinfer1::INetworkDefinition* network,
     combinedInfo[5] = kMaxNumOutputBbox;
     combinedInfo[6] = is_segmentation;
     combinedInfo[7] = is_pose;
-    combinedInfo[8] = is_obb;
 
-    // Copy the contents of px_arry into the combinedInfo vector after the initial
-    // 5 elements.
+    // Copy the contents of px_arry into the combinedInfo vector after the initial 5 elements.
     std::copy(px_arry, px_arry + px_arry_num, combinedInfo.begin() + netinfo_count);
 
     // Now let's create the PluginField object to hold this combined information.

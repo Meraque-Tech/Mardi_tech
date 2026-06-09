@@ -38,7 +38,7 @@ bool Int8EntropyCalibrator2::getBatch(void* bindings[], const char* names[], int
     std::vector<cv::Mat> input_imgs_;
     for (int i = img_idx_; i < img_idx_ + batchsize_; i++) {
         std::cout << img_files_[i] << "  " << i << std::endl;
-        cv::Mat temp = cv::imread(img_dir_ + img_files_[i]);
+        cv::Mat temp = cv::imread(img_dir_ + "/" + img_files_[i]);
         if (temp.empty()) {
             std::cerr << "Fatal error: image cannot open!" << std::endl;
             return false;

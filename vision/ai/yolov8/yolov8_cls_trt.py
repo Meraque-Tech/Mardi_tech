@@ -28,7 +28,7 @@ def get_img_path_batches(batch_size, img_dir):
     return ret
 
 
-with open("imagenet_classes.txt") as f:
+with open("build/imagenet_classes.txt") as f:
     classes = [line.strip() for line in f.readlines()]
 
 
@@ -53,39 +53,44 @@ class YoLov8TRT(object):
         cuda_inputs = []
         host_outputs = []
         cuda_outputs = []
-        bindings = []
-        self.mean = (0.485, 0.456, 0.406)
-        self.std = (0.229, 0.224, 0.225)
+        input_binding_names = []
+        output_binding_names = []
 
-        for binding in engine:
-            print('binding:', binding, engine.get_binding_shape(binding))
-            size = trt.volume(engine.get_binding_shape(
-                binding)) * engine.max_batch_size
-            dtype = trt.nptype(engine.get_binding_dtype(binding))
+        for binding_name in engine:
+            shape = engine.get_tensor_shape(binding_name)
+            print('binding_name:', binding_name, shape)
+            size = trt.volume(shape)
+            dtype = trt.nptype(engine.get_tensor_dtype(binding_name))
             # Allocate host and device buffers
             host_mem = cuda.pagelocked_empty(size, dtype)
             cuda_mem = cuda.mem_alloc(host_mem.nbytes)
             # Append the device buffer to device bindings.
-            bindings.append(int(cuda_mem))
             # Append to the appropriate list.
-            if engine.binding_is_input(binding):
-                self.input_w = engine.get_binding_shape(binding)[-1]
-                self.input_h = engine.get_binding_shape(binding)[-2]
+            if engine.get_tensor_mode(binding_name) == trt.TensorIOMode.INPUT:
+                input_binding_names.append(binding_name)
+                self.input_w = shape[-1]
+                self.input_h = shape[-2]
                 host_inputs.append(host_mem)
                 cuda_inputs.append(cuda_mem)
-            else:
+            elif engine.get_tensor_mode(binding_name) == trt.TensorIOMode.OUTPUT:
+                output_binding_names.append(binding_name)
                 host_outputs.append(host_mem)
                 cuda_outputs.append(cuda_mem)
+            else:
+                print('unknow:', binding_name)
 
         # Store
         self.stream = stream
         self.context = context
+        self.engine = engine
         self.host_inputs = host_inputs
         self.cuda_inputs = cuda_inputs
         self.host_outputs = host_outputs
         self.cuda_outputs = cuda_outputs
-        self.bindings = bindings
-        self.batch_size = engine.max_batch_size
+        self.input_binding_names = input_binding_names
+        self.output_binding_names = output_binding_names
+        self.batch_size = engine.get_tensor_shape(input_binding_names[0])[0]
+        print('batch_size:', self.batch_size)
 
     def infer(self, raw_image_generator):
         threading.Thread.__init__(self)
@@ -98,7 +103,8 @@ class YoLov8TRT(object):
         cuda_inputs = self.cuda_inputs
         host_outputs = self.host_outputs
         cuda_outputs = self.cuda_outputs
-        bindings = self.bindings
+        input_binding_names = self.input_binding_names
+        output_binding_names = self.output_binding_names
         # Do image preprocess
         batch_image_raw = []
         batch_input_image = np.empty(
@@ -115,8 +121,9 @@ class YoLov8TRT(object):
         # Transfer input data  to the GPU.
         cuda.memcpy_htod_async(cuda_inputs[0], host_inputs[0], stream)
         # Run inference.
-        context.execute_async(batch_size=self.batch_size,
-                              bindings=bindings, stream_handle=stream.handle)
+        context.set_tensor_address(input_binding_names[0], cuda_inputs[0])
+        context.set_tensor_address(output_binding_names[0], cuda_outputs[0])
+        context.execute_async_v3(stream_handle=stream.handle)
         # Transfer predictions back from the GPU.
         cuda.memcpy_dtoh_async(host_outputs[0], cuda_outputs[0], stream)
         # Synchronize the stream
@@ -262,7 +269,7 @@ if __name__ == "__main__":
     try:
         print('batch size is', yolov8_wrapper.batch_size)
 
-        image_dir = "samples/"
+        image_dir = "images/"
         image_path_batches = get_img_path_batches(
             yolov8_wrapper.batch_size, image_dir)
 

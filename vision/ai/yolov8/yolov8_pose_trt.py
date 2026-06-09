@@ -19,7 +19,6 @@ IOU_THRESHOLD = 0.4
 POSE_NUM = 17 * 3
 DET_NUM = 6
 SEG_NUM = 32
-OBB_NUM = 1
 keypoint_pairs = [
     (0, 1), (0, 2), (0, 5), (0, 6), (1, 2),
     (1, 3), (2, 4), (5, 6), (5, 7), (5, 11),
@@ -76,7 +75,7 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=None):
             [225, 255, 255],
             thickness=tf,
             lineType=cv2.LINE_AA,
-            )
+        )
 
 
 class YoLov8TRT(object):
@@ -100,26 +99,31 @@ class YoLov8TRT(object):
         cuda_inputs = []
         host_outputs = []
         cuda_outputs = []
-        bindings = []
+        input_binding_names = []
+        output_binding_names = []
 
-        for binding in engine:
-            print('bingding:', binding, engine.get_binding_shape(binding))
-            size = trt.volume(engine.get_binding_shape(binding)) * engine.max_batch_size
-            dtype = trt.nptype(engine.get_binding_dtype(binding))
+        for binding_name in engine:
+            shape = engine.get_tensor_shape(binding_name)
+            print('binding_name:', binding_name, shape)
+            size = trt.volume(shape)
+            dtype = trt.nptype(engine.get_tensor_dtype(binding_name))
             # Allocate host and device buffers
             host_mem = cuda.pagelocked_empty(size, dtype)
             cuda_mem = cuda.mem_alloc(host_mem.nbytes)
             # Append the device buffer to device bindings.
-            bindings.append(int(cuda_mem))
             # Append to the appropriate list.
-            if engine.binding_is_input(binding):
-                self.input_w = engine.get_binding_shape(binding)[-1]
-                self.input_h = engine.get_binding_shape(binding)[-2]
+            if engine.get_tensor_mode(binding_name) == trt.TensorIOMode.INPUT:
+                input_binding_names.append(binding_name)
+                self.input_w = shape[-1]
+                self.input_h = shape[-2]
                 host_inputs.append(host_mem)
                 cuda_inputs.append(cuda_mem)
-            else:
+            elif engine.get_tensor_mode(binding_name) == trt.TensorIOMode.OUTPUT:
+                output_binding_names.append(binding_name)
                 host_outputs.append(host_mem)
                 cuda_outputs.append(cuda_mem)
+            else:
+                print('unknow:', binding_name)
 
         # Store
         self.stream = stream
@@ -128,9 +132,11 @@ class YoLov8TRT(object):
         self.cuda_inputs = cuda_inputs
         self.host_outputs = host_outputs
         self.cuda_outputs = cuda_outputs
-        self.bindings = bindings
-        self.batch_size = engine.max_batch_size
+        self.input_binding_names = input_binding_names
+        self.output_binding_names = output_binding_names
+        self.batch_size = engine.get_tensor_shape(input_binding_names[0])[0]
         self.det_output_size = host_outputs[0].shape[0]
+        print('batch_size:', self.batch_size)
 
     def infer(self, raw_image_generator):
         threading.Thread.__init__(self)
@@ -143,7 +149,8 @@ class YoLov8TRT(object):
         cuda_inputs = self.cuda_inputs
         host_outputs = self.host_outputs
         cuda_outputs = self.cuda_outputs
-        bindings = self.bindings
+        input_binding_names = self.input_binding_names
+        output_binding_names = self.output_binding_names
         # Do image preprocess
         batch_image_raw = []
         batch_origin_h = []
@@ -164,7 +171,9 @@ class YoLov8TRT(object):
         # Transfer input data  to the GPU.
         cuda.memcpy_htod_async(cuda_inputs[0], host_inputs[0], stream)
         # Run inference.
-        context.execute_async(batch_size=self.batch_size, bindings=bindings, stream_handle=stream.handle)
+        context.set_tensor_address(input_binding_names[0], cuda_inputs[0])
+        context.set_tensor_address(output_binding_names[0], cuda_outputs[0])
+        context.execute_async_v3(stream_handle=stream.handle)
         # Transfer predictions back from the GPU.
         cuda.memcpy_dtoh_async(host_outputs[0], cuda_outputs[0], stream)
         # Synchronize the stream
@@ -330,8 +339,8 @@ class YoLov8TRT(object):
             result_keypoints: Final keypoints, a list of numpy arrays,
             each element represents keypoints for a box, shaped as (#keypoints, 3)
         """
-        # Number of values per detection: 38 base values + 17 keypoints * 3 values each + angle
-        num_values_per_detection = DET_NUM + SEG_NUM + POSE_NUM + OBB_NUM
+        # Number of values per detection: 38 base values + 17 keypoints * 3 values each
+        num_values_per_detection = DET_NUM + SEG_NUM + POSE_NUM
         # Get the number of boxes detected
         num = int(output[0])
         # Reshape to a two-dimensional ndarray with the full detection shape
@@ -346,7 +355,7 @@ class YoLov8TRT(object):
         result_boxes = boxes[:, :4] if len(boxes) else np.array([])
         result_scores = boxes[:, 4] if len(boxes) else np.array([])
         result_classid = boxes[:, 5] if len(boxes) else np.array([])
-        result_keypoints = boxes[:, -POSE_NUM-1:-1] if len(boxes) else np.array([])
+        result_keypoints = boxes[:, -POSE_NUM:] if len(boxes) else np.array([])
 
         # Return the post-processed results including keypoints
         return result_boxes, result_scores, result_classid, result_keypoints
@@ -406,11 +415,11 @@ class YoLov8TRT(object):
         # Trandform bbox from [center_x, center_y, w, h] to [x1, y1, x2, y2]
         res_array = np.copy(boxes)
         box_pred_deep_copy = np.copy(boxes[:, :4])
-        keypoints_pred_deep_copy = np.copy(boxes[:, -POSE_NUM-1:-1])
+        keypoints_pred_deep_copy = np.copy(boxes[:, -POSE_NUM:])
         res_box, res_keypoints = self.xywh2xyxy_with_keypoints(
             origin_h, origin_w, box_pred_deep_copy, keypoints_pred_deep_copy)
         res_array[:, :4] = res_box
-        res_array[:, -POSE_NUM-1:-1] = res_keypoints
+        res_array[:, -POSE_NUM:] = res_keypoints
         # clip the coordinates
         res_array[:, 0] = np.clip(res_array[:, 0], 0, origin_w - 1)
         res_array[:, 2] = np.clip(res_array[:, 2], 0, origin_w - 1)

@@ -11,7 +11,7 @@
 
 Logger gLogger;
 using namespace nvinfer1;
-const int kOutputSize = kMaxNumOutputBbox * sizeof(Detection) / sizeof(float) + 1;
+const int kOutputSize = kMaxNumOutputBbox * (sizeof(Detection) - sizeof(float) * 32) / sizeof(float) + 1;
 
 void serialize_engine(std::string& wts_name, std::string& engine_name, int& is_p, std::string& sub_type, float& gd,
                       float& gw, int& max_channels) {
@@ -68,13 +68,19 @@ void deserialize_engine(std::string& engine_name, IRuntime** runtime, ICudaEngin
 void prepare_buffer(ICudaEngine* engine, float** input_buffer_device, float** output_buffer_device,
                     float** output_buffer_host, float** decode_ptr_host, float** decode_ptr_device,
                     std::string cuda_post_process) {
-    assert(engine->getNbBindings() == 2);
+    assert(engine->getNbIOTensors() == 2);
     // In order to bind the buffers, we need to know the names of the input and output tensors.
     // Note that indices are guaranteed to be less than IEngine::getNbBindings()
-    const int inputIndex = engine->getBindingIndex(kInputTensorName);
-    const int outputIndex = engine->getBindingIndex(kOutputTensorName);
-    assert(inputIndex == 0);
-    assert(outputIndex == 1);
+    TensorIOMode input_mode = engine->getTensorIOMode(kInputTensorName);
+    if (input_mode != TensorIOMode::kINPUT) {
+        std::cerr << kInputTensorName << " should be input tensor" << std::endl;
+        assert(false);
+    }
+    TensorIOMode output_mode = engine->getTensorIOMode(kOutputTensorName);
+    if (output_mode != TensorIOMode::kOUTPUT) {
+        std::cerr << kOutputTensorName << " should be output tensor" << std::endl;
+        assert(false);
+    }
     // Create GPU buffers on device
     CUDA_CHECK(cudaMalloc((void**)input_buffer_device, kBatchSize * 3 * kInputH * kInputW * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)output_buffer_device, kBatchSize * kOutputSize * sizeof(float)));
@@ -95,7 +101,9 @@ void infer(IExecutionContext& context, cudaStream_t& stream, void** buffers, flo
            float* decode_ptr_host, float* decode_ptr_device, int model_bboxes, std::string cuda_post_process) {
     // infer on the batch asynchronously, and DMA output back to host
     auto start = std::chrono::system_clock::now();
-    context.enqueue(batchsize, buffers, stream, nullptr);
+    context.setInputTensorAddress(kInputTensorName, buffers[0]);
+    context.setOutputTensorAddress(kOutputTensorName, buffers[1]);
+    context.enqueueV3(stream);
     if (cuda_post_process == "c") {
         CUDA_CHECK(cudaMemcpyAsync(output, buffers[1], batchsize * kOutputSize * sizeof(float), cudaMemcpyDeviceToHost,
                                    stream));
@@ -166,6 +174,8 @@ bool parse_args(int argc, char** argv, std::string& wts, std::string& engine, in
 }
 
 int main(int argc, char** argv) {
+    // -s ../models/yolov8n-pose.wts ../models/yolov8n-pose.fp32.trt n
+    // -d ../models/yolov8n-pose.fp32.trt ../images c
     cudaSetDevice(kGpuId);
     std::string wts_name = "";
     std::string engine_name = "";
@@ -201,8 +211,8 @@ int main(int argc, char** argv) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
     cuda_preprocess_init(kMaxInputImageSize);
-    auto out_dims = engine->getBindingDimensions(1);
-    model_bboxes = out_dims.d[0];
+    auto out_dims = engine->getTensorShape(kOutputTensorName);
+    model_bboxes = out_dims.d[1];
     // Prepare cpu and gpu buffers
     float* device_buffers[2];
     float* output_buffer_host = nullptr;
@@ -248,6 +258,16 @@ int main(int argc, char** argv) {
         // Save images
         for (size_t j = 0; j < img_batch.size(); j++) {
             cv::imwrite("_" + img_name_batch[j], img_batch[j]);
+        }
+
+        // print results
+        for (size_t j = 0; j < res_batch.size(); j++) {
+            for (size_t k = 0; k < res_batch[j].size(); k++) {
+                std::cout << "image: " << img_name_batch[j] << ", bbox: " << res_batch[j][k].bbox[0] << ", "
+                          << res_batch[j][k].bbox[1] << ", " << res_batch[j][k].bbox[2] << ", "
+                          << res_batch[j][k].bbox[3] << ", conf: " << res_batch[j][k].conf
+                          << ", class_id: " << res_batch[j][k].class_id << std::endl;
+            }
         }
     }
 

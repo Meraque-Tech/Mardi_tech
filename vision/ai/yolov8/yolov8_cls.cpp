@@ -129,13 +129,19 @@ bool parse_args(int argc, char** argv, std::string& wts, std::string& engine, fl
 
 void prepare_buffers(ICudaEngine* engine, float** gpu_input_buffer, float** gpu_output_buffer, float** cpu_input_buffer,
                      float** output_buffer_host) {
-    assert(engine->getNbBindings() == 2);
+    assert(engine->getNbIOTensors() == 2);
     // In order to bind the buffers, we need to know the names of the input and output tensors.
     // Note that indices are guaranteed to be less than IEngine::getNbBindings()
-    const int inputIndex = engine->getBindingIndex(kInputTensorName);
-    const int outputIndex = engine->getBindingIndex(kOutputTensorName);
-    assert(inputIndex == 0);
-    assert(outputIndex == 1);
+    TensorIOMode input_mode = engine->getTensorIOMode(kInputTensorName);
+    if (input_mode != TensorIOMode::kINPUT) {
+        std::cerr << kInputTensorName << " should be input tensor" << std::endl;
+        assert(false);
+    }
+    TensorIOMode output_mode = engine->getTensorIOMode(kOutputTensorName);
+    if (output_mode != TensorIOMode::kOUTPUT) {
+        std::cerr << kOutputTensorName << " should be output tensor" << std::endl;
+        assert(false);
+    }
     // Create GPU buffers on device
     CUDA_CHECK(cudaMalloc((void**)gpu_input_buffer, kBatchSize * 3 * kClsInputH * kClsInputW * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)gpu_output_buffer, kBatchSize * kOutputSize * sizeof(float)));
@@ -148,7 +154,9 @@ void infer(IExecutionContext& context, cudaStream_t& stream, void** buffers, flo
            int batchSize) {
     CUDA_CHECK(cudaMemcpyAsync(buffers[0], input, batchSize * 3 * kClsInputH * kClsInputW * sizeof(float),
                                cudaMemcpyHostToDevice, stream));
-    context.enqueue(batchSize, buffers, stream, nullptr);
+    context.setInputTensorAddress(kInputTensorName, buffers[0]);
+    context.setOutputTensorAddress(kOutputTensorName, buffers[1]);
+    context.enqueueV3(stream);
     CUDA_CHECK(cudaMemcpyAsync(output, buffers[1], batchSize * kOutputSize * sizeof(float), cudaMemcpyDeviceToHost,
                                stream));
     cudaStreamSynchronize(stream);
@@ -204,6 +212,8 @@ void deserialize_engine(std::string& engine_name, IRuntime** runtime, ICudaEngin
 }
 
 int main(int argc, char** argv) {
+    // -s ../models/yolov8n-cls.wts ../models/yolov8n-cls.fp32.trt n
+    // -d ../models/yolov8n-cls.fp32.trt ../images
     cudaSetDevice(kGpuId);
 
     std::string wts_name = "";

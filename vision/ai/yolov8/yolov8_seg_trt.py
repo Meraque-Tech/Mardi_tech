@@ -19,7 +19,6 @@ IOU_THRESHOLD = 0.4
 POSE_NUM = 17 * 3
 DET_NUM = 6
 SEG_NUM = 32
-OBB_NUM = 1
 
 
 def get_img_path_batches(batch_size, img_dir):
@@ -70,7 +69,7 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=None):
             [225, 255, 255],
             thickness=tf,
             lineType=cv2.LINE_AA,
-            )
+        )
 
 
 class YoLov8TRT(object):
@@ -94,26 +93,31 @@ class YoLov8TRT(object):
         cuda_inputs = []
         host_outputs = []
         cuda_outputs = []
-        bindings = []
+        input_binding_names = []
+        output_binding_names = []
 
-        for binding in engine:
-            print('bingding:', binding, engine.get_binding_shape(binding))
-            size = trt.volume(engine.get_binding_shape(binding)) * engine.max_batch_size
-            dtype = trt.nptype(engine.get_binding_dtype(binding))
+        for binding_name in engine:
+            shape = engine.get_tensor_shape(binding_name)
+            print('binding_name:', binding_name, shape)
+            size = trt.volume(shape)
+            dtype = trt.nptype(engine.get_tensor_dtype(binding_name))
             # Allocate host and device buffers
             host_mem = cuda.pagelocked_empty(size, dtype)
             cuda_mem = cuda.mem_alloc(host_mem.nbytes)
             # Append the device buffer to device bindings.
-            bindings.append(int(cuda_mem))
             # Append to the appropriate list.
-            if engine.binding_is_input(binding):
-                self.input_w = engine.get_binding_shape(binding)[-1]
-                self.input_h = engine.get_binding_shape(binding)[-2]
+            if engine.get_tensor_mode(binding_name) == trt.TensorIOMode.INPUT:
+                input_binding_names.append(binding_name)
+                self.input_w = shape[-1]
+                self.input_h = shape[-2]
                 host_inputs.append(host_mem)
                 cuda_inputs.append(cuda_mem)
-            else:
+            elif engine.get_tensor_mode(binding_name) == trt.TensorIOMode.OUTPUT:
+                output_binding_names.append(binding_name)
                 host_outputs.append(host_mem)
                 cuda_outputs.append(cuda_mem)
+            else:
+                print('unknow:', binding_name)
 
         # Store
         self.stream = stream
@@ -123,8 +127,10 @@ class YoLov8TRT(object):
         self.cuda_inputs = cuda_inputs
         self.host_outputs = host_outputs
         self.cuda_outputs = cuda_outputs
-        self.bindings = bindings
-        self.batch_size = engine.max_batch_size
+        self.input_binding_names = input_binding_names
+        self.output_binding_names = output_binding_names
+        self.batch_size = engine.get_tensor_shape(input_binding_names[0])[0]
+        print('batch_size:', self.batch_size)
 
         # Data length
         self.det_output_length = host_outputs[0].shape[0]
@@ -132,7 +138,7 @@ class YoLov8TRT(object):
         self.seg_w = int(self.input_w / 4)
         self.seg_h = int(self.input_h / 4)
         self.seg_c = int(self.seg_output_length / (self.seg_w * self.seg_w))
-        self.det_row_output_length = self.seg_c + DET_NUM + POSE_NUM + OBB_NUM
+        self.det_row_output_length = self.seg_c + DET_NUM + POSE_NUM
 
         # Draw mask
         self.colors_obj = Colors()
@@ -148,7 +154,8 @@ class YoLov8TRT(object):
         cuda_inputs = self.cuda_inputs
         host_outputs = self.host_outputs
         cuda_outputs = self.cuda_outputs
-        bindings = self.bindings
+        input_binding_names = self.input_binding_names
+        output_binding_names = self.output_binding_names
         # Do image preprocess
         batch_image_raw = []
         batch_origin_h = []
@@ -168,7 +175,10 @@ class YoLov8TRT(object):
         # Transfer input data  to the GPU.
         cuda.memcpy_htod_async(cuda_inputs[0], host_inputs[0], stream)
         # Run inference.
-        context.execute_async(batch_size=self.batch_size, bindings=bindings, stream_handle=stream.handle)
+        context.set_tensor_address(input_binding_names[0], cuda_inputs[0])
+        context.set_tensor_address(output_binding_names[0], cuda_outputs[0])
+        context.set_tensor_address(output_binding_names[1], cuda_outputs[1])
+        context.execute_async_v3(stream_handle=stream.handle)
         # Transfer predictions back from the GPU.
         cuda.memcpy_dtoh_async(host_outputs[0], cuda_outputs[0], stream)
         cuda.memcpy_dtoh_async(host_outputs[1], cuda_outputs[1], stream)
@@ -527,7 +537,7 @@ class Colors:
 
 if __name__ == "__main__":
     # load custom plugin and engine
-    PLUGIN_LIBRARY = "./build/libmyplugins.so"
+    PLUGIN_LIBRARY = "build/libmyplugins.so"
     engine_file_path = "yolov8n-seg.engine"
 
     if len(sys.argv) > 1:
