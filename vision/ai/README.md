@@ -10,6 +10,7 @@
 
     cd /yolov8
     wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+    <!-- wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s.pt -->
     python3 gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
 
     xhost +local:root

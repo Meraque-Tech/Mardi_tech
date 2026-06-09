@@ -16,8 +16,23 @@ echo "Engine:  ${ENGINE_FILE}"
 echo "Type:    ${MODEL_TYPE}"
 echo ""
 
-# Step 1: Generate .wts from .pt
-echo "==> Step 1: Generating ${WTS_FILE} from ${MODEL_NAME}.pt ..."
+# Step 1: Download .pt weights if not present
+if [ ! -f "./yolov8/weights/${MODEL_NAME}.pt" ]; then
+    echo "==> Step 1: Downloading ${MODEL_NAME}.pt ..."
+    mkdir -p ./yolov8/weights
+    wget -P ./yolov8/weights \
+        "https://github.com/ultralytics/assets/releases/download/v8.3.0/${MODEL_NAME}.pt"
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Download failed."
+        exit 1
+    fi
+else
+    echo "==> Step 1: ${MODEL_NAME}.pt already exists, skipping download."
+fi
+echo ""
+
+# Step 2: Generate .wts from .pt
+echo "==> Step 2: Generating ${WTS_FILE} from ${MODEL_NAME}.pt ..."
 docker run --rm --net=host \
     --runtime nvidia \
     --gpus all \
@@ -34,8 +49,8 @@ fi
 echo "==> ${WTS_FILE} generated successfully."
 echo ""
 
-# Step 2: Serialize .wts to .engine and copy to weights/
-echo "==> Step 2: Serializing ${WTS_FILE} to ${ENGINE_FILE} ..."
+# Step 3: Serialize .wts to .engine and copy to weights/
+echo "==> Step 3: Serializing ${WTS_FILE} to ${ENGINE_FILE} ..."
 docker run --rm --net=host \
     --runtime nvidia \
     --gpus all \
