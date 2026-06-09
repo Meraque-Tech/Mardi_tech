@@ -22,9 +22,22 @@
         -v ./yolov8/weights:/workspace/yolov8/build/weights:ro \
         meraquetech/race_nav:yolov8-trt-x86
     
+    
 
     Serialize ->
     ./yolov8_det -s ./weights/yolov8n.wts yolov8n.engine n
+
+    Serialize Engine Using Docker container ->
+    docker run --rm --net=host \
+        --runtime nvidia \
+        --gpus all \
+        -v /tmp/.X11-unix/:/tmp/.X11-unix \
+        -v ./yolov8/images:/workspace/yolov8/build/images:ro \
+        -v ./yolov8/weights:/workspace/yolov8/build/weights:ro \
+        -v ./yolov8/weights:/output \
+        meraquetech/race_nav:yolov8-trt-x86 \
+        bash -c "cd /workspace/yolov8/build && ./yolov8_det -s ./weights/yolov8n.wts yolov8n.engine n && cp yolov8n.engine /output/"
+
 
     DeSerialize ->
     ./yolov8_det -d yolov8n.engine ./images g
