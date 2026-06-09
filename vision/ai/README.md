@@ -24,7 +24,7 @@ Step 2 — runs meraquetech/race_nav:yolov8-trt-x86 to serialize .wts → .engin
 
 ./run_yolov8_det_video.sh yolov8s.engine 0 g true
 
-<!-- ./run_yolov8_det_video.sh yolov8s.engine 1 c false -->
+<!-- ./run_yolov8_det_video.sh yolov8s.engine 0 g true -->
 
 ```
 
