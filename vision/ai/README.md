@@ -1,4 +1,34 @@
 # YOLOv8
+
+# Default: yolov8n, type n
+```
+./engine_file_build.sh
+```
+
+
+# Custom model
+```
+./engine_file_build.sh yolov8s s
+
+Two-step process:
+Step 1 — runs meraquetech/tensorrt-yolov8:ultralytics to convert .pt → .wts via gen_wts.py
+Step 2 — runs meraquetech/race_nav:yolov8-trt-x86 to serialize .wts → .engine and copies it back to ./yolov8/weights/
+
+```
+
+# Default: cam 0, GPU postprocess, show window
+```
+./run_yolov8_det_video.sh
+
+```
+
+# Custom args: cam_id, postprocess (c/g), show (true/false)
+```
+./run_yolov8_det_video.sh 1 c false
+```
+
+
+# Yolov8 model building Step by step with example yolo nano model ->
 ```
     
 
@@ -76,31 +106,4 @@ imshow ->
 // Press Ctrl+C to stop when running headless
 ```
 
-
-# Default: yolov8n, type n
-```
-./engine_file_build.sh
-```
-
-
-# Custom model
-```
-./engine_file_build.sh yolov8s s
-
-Two-step process:
-Step 1 — runs meraquetech/tensorrt-yolov8:ultralytics to convert .pt → .wts via gen_wts.py
-Step 2 — runs meraquetech/race_nav:yolov8-trt-x86 to serialize .wts → .engine and copies it back to ./yolov8/weights/
-
-```
-
-# Default: cam 0, GPU postprocess, show window
-```
-./run_yolov8_det_video.sh
-
-```
-
-# Custom args: cam_id, postprocess (c/g), show (true/false)
-```
-./run_yolov8_det_video.sh 1 c false
-```
 
