@@ -18,6 +18,7 @@
         --gpus all \
         -e DISPLAY=$DISPLAY \
         -v /tmp/.X11-unix/:/tmp/.X11-unix \
+        -v ./images:/workspace/yolov8/build/images:ro \
         -v ./yolov8/weights:/workspace/yolov8/build/weights:ro \
         meraquetech/race_nav:yolov8-trt-x86
     
