@@ -5,7 +5,7 @@
     docker run -it --rm --gpus all --privileged \
     --name yolo_export \
     -v ~/yolo_models:/workspace/models \
-    -v ./yolov8:/yolov8
+    -v ./yolov8:/yolov8 \
     meraquetech/tensorrt-yolov8:ultralytics
 
     cd /yolov8

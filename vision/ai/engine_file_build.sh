@@ -23,6 +23,7 @@ docker run --rm --net=host \
     --gpus all \
     --privileged \
     -v ./yolov8/weights:/workspace/yolov8/build/weights \
+    -v ./yolov8:/yolov8 \
     meraquetech/tensorrt-yolov8:ultralytics \
     bash -c "cd /yolov8 && python3 gen_wts.py -w /workspace/yolov8/build/weights/${MODEL_NAME}.pt -o /workspace/yolov8/build/weights/${WTS_FILE} -t detect"
 
