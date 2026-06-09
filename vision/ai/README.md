@@ -1,4 +1,36 @@
 # YOLOv8
+```
+    
+
+    docker run -it --rm --gpus all \
+    --name yolo_export \
+    -v ~/yolo_models:/workspace/models \
+    -v ./yolov8:/yolov8
+    meraquetech/tensorrt-yolov8:ultralytics
+
+    cd /yolov8
+    wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+    python3 gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
+
+    xhost +local
+    docker run -it --rm --net=host \
+        --runtime nvidia \
+        --gpus all \
+        -e DISPLAY=$DISPLAY \
+        -v /tmp/.X11-unix/:/tmp/.X11-unix \
+        -v ./yolov8/yolov8n.pt:/workspace/yolov8/build/yolov8n.pt \
+        -v ./yolov8/yolov8n.wts:/workspace/yolov8/build/yolov8n.wts \
+        meraquetech/race_nav:yolov8-trt-x86
+    
+
+    Serialize ->
+    ./yolov8_det -s yolov8n.wts yolov8.engine n
+
+    DeSerialize ->
+    ./yolov8_det -s yolov8n.wts yolov8.engine g
+
+
+```
 
 The Pytorch implementation is [ultralytics/yolov8](https://github.com/ultralytics/ultralytics/tree/main/ultralytics).
 
@@ -40,6 +72,11 @@ Currently, we support yolov8
 cp {tensorrtx}/yolov8/gen_wts.py {ultralytics}/ultralytics
 cd {ultralytics}/ultralytics
 python gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
+
+
+python gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
+
+
 // a file 'yolov8n.wts' will be generated.
 
 
@@ -54,6 +91,22 @@ python gen_wts.py -w VisDrone_train_yolov8x_p2_bs1_epochs_100_imgsz_1280_last.pt
 cd {ultralytics}/ultralytics
 python gen_wts.py -w yolov5nu.pt -o yolov5nu.wts -t detect
 // a file 'yolov5nu.wts' will be generated.
+
+wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+python3 gen_wts.py -w yolov8n.pt -o yolov8n.wts -t detect
+
+docker run -it --rm --gpus all \
+  --name yolo_export \
+  -v ~/yolo_models:/workspace/models \
+  -v ./yolov8:/yolov8
+  meraquetech/tensorrt-yolov8:ultralytics
+
+Serialize ->
+./yolov8_det -s yolov8n.wts yolov8.engine n
+
+DeSerialize ->
+./yolov8_det -s yolov8n.wts yolov8.engine g
+
 
 ```
 

@@ -145,7 +145,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Det(nvinfer1::IBuilder* builder, nvinfer
     float scale[] = {1.0, 2.0, 2.0};
     nvinfer1::IResizeLayer* upsample10 = network->addResize(*conv9->getOutput(0));
     assert(upsample10);
-    upsample10->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample10->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample10->setScales(scale, 3);
 
     nvinfer1::ITensor* inputTensor11[] = {upsample10->getOutput(0), conv6->getOutput(0)};
@@ -157,7 +157,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Det(nvinfer1::IBuilder* builder, nvinfer
 
     nvinfer1::IResizeLayer* upsample13 = network->addResize(*conv12->getOutput(0));
     assert(upsample13);
-    upsample13->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample13->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample13->setScales(scale, 3);
 
     nvinfer1::ITensor* inputTensor14[] = {upsample13->getOutput(0), conv4->getOutput(0)};
@@ -205,8 +205,8 @@ nvinfer1::IHostMemory* buildEngineYolov8Det(nvinfer1::IBuilder* builder, nvinfer
     nvinfer1::IConvolutionLayer* conv22_cv3_0_2 =
             network->addConvolutionNd(*conv22_cv3_0_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.22.cv3.0.2.weight"], weightMap["model.22.cv3.0.2.bias"]);
-    conv22_cv3_0_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv22_cv3_0_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv22_cv3_0_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv22_cv3_0_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor22_0[] = {conv22_cv2_0_2->getOutput(0), conv22_cv3_0_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat22_0 = network->addConcatenation(inputTensor22_0, 2);
 
@@ -238,14 +238,14 @@ nvinfer1::IHostMemory* buildEngineYolov8Det(nvinfer1::IBuilder* builder, nvinfer
     nvinfer1::IElementWiseLayer* conv22_cv2_2_1 =
             convBnSiLU(network, weightMap, *conv22_cv2_2_0->getOutput(0), base_in_channel, 3, 1, 1, "model.22.cv2.2.1");
     nvinfer1::IConvolutionLayer* conv22_cv2_2_2 =
-            network->addConvolutionNd(*conv22_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv22_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.22.cv2.2.2.weight"], weightMap["model.22.cv2.2.2.bias"]);
     nvinfer1::IElementWiseLayer* conv22_cv3_2_0 =
             convBnSiLU(network, weightMap, *conv21->getOutput(0), base_out_channel, 3, 1, 1, "model.22.cv3.2.0");
     nvinfer1::IElementWiseLayer* conv22_cv3_2_1 = convBnSiLU(network, weightMap, *conv22_cv3_2_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.22.cv3.2.1");
     nvinfer1::IConvolutionLayer* conv22_cv3_2_2 =
-            network->addConvolutionNd(*conv22_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv22_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.22.cv3.2.2.weight"], weightMap["model.22.cv3.2.2.bias"]);
     nvinfer1::ITensor* inputTensor22_2[] = {conv22_cv2_2_2->getOutput(0), conv22_cv3_2_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat22_2 = network->addConcatenation(inputTensor22_2, 2);
@@ -309,8 +309,8 @@ nvinfer1::IHostMemory* buildEngineYolov8Det(nvinfer1::IBuilder* builder, nvinfer
     yolo->getOutput(0)->setName(kOutputTensorName);
     network->markOutput(*yolo->getOutput(0));
 
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
 #if defined(USE_FP16)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
@@ -392,7 +392,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinf
 
     // P5
     nvinfer1::IResizeLayer* upsample12 = network->addResize(*conv11->getOutput(0));
-    upsample12->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample12->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample12->setScales(scale, 3);
     nvinfer1::ITensor* concat13_inputs[] = {upsample12->getOutput(0), conv8->getOutput(0)};
     nvinfer1::IConcatenationLayer* concat13 = network->addConcatenation(concat13_inputs, 2);
@@ -402,7 +402,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinf
 
     // P4
     nvinfer1::IResizeLayer* upsample15 = network->addResize(*conv14->getOutput(0));
-    upsample15->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample15->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample15->setScales(scale, 3);
     nvinfer1::ITensor* concat16_inputs[] = {upsample15->getOutput(0), conv6->getOutput(0)};
     nvinfer1::IConcatenationLayer* concat16 = network->addConcatenation(concat16_inputs, 2);
@@ -412,7 +412,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinf
 
     // P3
     nvinfer1::IResizeLayer* upsample18 = network->addResize(*conv17->getOutput(0));
-    upsample18->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample18->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample18->setScales(scale, 3);
     nvinfer1::ITensor* concat19_inputs[] = {upsample18->getOutput(0), conv4->getOutput(0)};
     nvinfer1::IConcatenationLayer* concat19 = network->addConcatenation(concat19_inputs, 2);
@@ -475,8 +475,8 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IConvolutionLayer* conv30_cv3_0_2 =
             network->addConvolutionNd(*conv30_cv3_0_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.30.cv3.0.2.weight"], weightMap["model.30.cv3.0.2.bias"]);
-    conv30_cv3_0_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv30_cv3_0_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv30_cv3_0_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv30_cv3_0_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor30_0[] = {conv30_cv2_0_2->getOutput(0), conv30_cv3_0_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat30_0 = network->addConcatenation(inputTensor30_0, 2);
 
@@ -508,7 +508,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IElementWiseLayer* conv30_cv2_2_1 =
             convBnSiLU(network, weightMap, *conv30_cv2_2_0->getOutput(0), base_in_channel, 3, 1, 1, "model.30.cv2.2.1");
     nvinfer1::IConvolutionLayer* conv30_cv2_2_2 =
-            network->addConvolutionNd(*conv30_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv30_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.30.cv2.2.2.weight"], weightMap["model.30.cv2.2.2.bias"]);
     conv30_cv2_2_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv30_cv2_2_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -517,7 +517,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IElementWiseLayer* conv30_cv3_2_1 = convBnSiLU(network, weightMap, *conv30_cv3_2_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.30.cv3.2.1");
     nvinfer1::IConvolutionLayer* conv30_cv3_2_2 =
-            network->addConvolutionNd(*conv30_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv30_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.30.cv3.2.2.weight"], weightMap["model.30.cv3.2.2.bias"]);
     conv30_cv3_2_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv30_cv3_2_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -530,7 +530,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IElementWiseLayer* conv30_cv2_3_1 =
             convBnSiLU(network, weightMap, *conv30_cv2_3_0->getOutput(0), base_in_channel, 3, 1, 1, "model.30.cv2.3.1");
     nvinfer1::IConvolutionLayer* conv30_cv2_3_2 =
-            network->addConvolutionNd(*conv30_cv2_3_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv30_cv2_3_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.30.cv2.3.2.weight"], weightMap["model.30.cv2.3.2.bias"]);
     conv30_cv2_3_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv30_cv2_3_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -539,7 +539,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IElementWiseLayer* conv30_cv3_3_1 = convBnSiLU(network, weightMap, *conv30_cv3_3_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.30.cv3.3.1");
     nvinfer1::IConvolutionLayer* conv30_cv3_3_2 =
-            network->addConvolutionNd(*conv30_cv3_3_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv30_cv3_3_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.30.cv3.3.2.weight"], weightMap["model.30.cv3.3.2.bias"]);
     conv30_cv3_3_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv30_cv3_3_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -624,8 +624,8 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinf
     yolo->getOutput(0)->setName(kOutputTensorName);
     network->markOutput(*yolo->getOutput(0));
 
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
 #if defined(USE_FP16)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
@@ -705,7 +705,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IResizeLayer* upsample10 =
             network->addResize(*conv9->getOutput(0));  // Assuming conv9 is the last layer of the backbone
                                                        // as per P5 in your first section.
-    upsample10->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample10->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample10->setScales(scale, 3);
     nvinfer1::ITensor* concat11_inputs[] = {upsample10->getOutput(0),
                                             conv6->getOutput(0)};  // Assuming conv6 corresponds to "backbone P4" as
@@ -717,7 +717,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder, nvinf
 
     // P3
     nvinfer1::IResizeLayer* upsample13 = network->addResize(*conv12->getOutput(0));
-    upsample13->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample13->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample13->setScales(scale, 3);
     nvinfer1::ITensor* concat14_inputs[] = {upsample13->getOutput(0),
                                             conv4->getOutput(0)};  // Assuming conv4 corresponds to "backbone P3"
@@ -728,7 +728,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder, nvinf
 
     // P2
     nvinfer1::IResizeLayer* upsample16 = network->addResize(*conv15->getOutput(0));
-    upsample16->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample16->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample16->setScales(scale, 3);
     nvinfer1::ITensor* concat17_inputs[] = {upsample16->getOutput(0),
                                             conv2->getOutput(0)};  // Assuming conv2 corresponds to "backbone P2"
@@ -792,8 +792,8 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IConvolutionLayer* conv28_cv3_0_2 =
             network->addConvolutionNd(*conv28_cv3_0_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.28.cv3.0.2.weight"], weightMap["model.28.cv3.0.2.bias"]);
-    conv28_cv3_0_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv28_cv3_0_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv28_cv3_0_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv28_cv3_0_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor28_0[] = {conv28_cv2_0_2->getOutput(0), conv28_cv3_0_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat28_0 = network->addConcatenation(inputTensor28_0, 2);
 
@@ -825,7 +825,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IElementWiseLayer* conv28_cv2_2_1 =
             convBnSiLU(network, weightMap, *conv28_cv2_2_0->getOutput(0), base_in_channel, 3, 1, 1, "model.28.cv2.2.1");
     nvinfer1::IConvolutionLayer* conv28_cv2_2_2 =
-            network->addConvolutionNd(*conv28_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv28_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.28.cv2.2.2.weight"], weightMap["model.28.cv2.2.2.bias"]);
     conv28_cv2_2_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv28_cv2_2_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -834,7 +834,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IElementWiseLayer* conv28_cv3_2_1 = convBnSiLU(network, weightMap, *conv28_cv3_2_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.28.cv3.2.1");
     nvinfer1::IConvolutionLayer* conv28_cv3_2_2 =
-            network->addConvolutionNd(*conv28_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv28_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.28.cv3.2.2.weight"], weightMap["model.28.cv3.2.2.bias"]);
     conv28_cv3_2_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv28_cv3_2_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -847,7 +847,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IElementWiseLayer* conv28_cv2_3_1 =
             convBnSiLU(network, weightMap, *conv28_cv2_3_0->getOutput(0), base_in_channel, 3, 1, 1, "model.28.cv2.3.1");
     nvinfer1::IConvolutionLayer* conv28_cv2_3_2 =
-            network->addConvolutionNd(*conv28_cv2_3_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv28_cv2_3_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.28.cv2.3.2.weight"], weightMap["model.28.cv2.3.2.bias"]);
     conv28_cv2_3_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv28_cv2_3_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -856,7 +856,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder, nvinf
     nvinfer1::IElementWiseLayer* conv28_cv3_3_1 = convBnSiLU(network, weightMap, *conv28_cv3_3_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.28.cv3.3.1");
     nvinfer1::IConvolutionLayer* conv28_cv3_3_2 =
-            network->addConvolutionNd(*conv28_cv3_3_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv28_cv3_3_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.28.cv3.3.2.weight"], weightMap["model.28.cv3.3.2.bias"]);
     conv28_cv3_3_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv28_cv3_3_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -940,8 +940,8 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder, nvinf
     yolo->getOutput(0)->setName(kOutputTensorName);
     network->markOutput(*yolo->getOutput(0));
 
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
 #if defined(USE_FP16)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
@@ -1015,25 +1015,9 @@ nvinfer1::IHostMemory* buildEngineYolov8Cls(nvinfer1::IBuilder* builder, nvinfer
                                                            nvinfer1::DimsHW{dims.d[1], dims.d[2]});
     assert(pool2);
 
-    // IFullyConnectedLayer removed in TRT10 — use Constant + MatrixMultiply + ElementWise
-    nvinfer1::Weights& fc_w = weightMap["model.9.linear.weight"];
-    nvinfer1::Weights& fc_b = weightMap["model.9.linear.bias"];
-    int fc_in = fc_w.count / kClsNumClass;
-
-    auto* reshape = network->addShuffle(*pool2->getOutput(0));
-    assert(reshape);
-    reshape->setReshapeDimensions(nvinfer1::Dims2{-1, fc_in});
-
-    auto* wt = network->addConstant(nvinfer1::Dims2{kClsNumClass, fc_in}, fc_w);
-    assert(wt);
-
-    auto* mm = network->addMatrixMultiply(*reshape->getOutput(0), nvinfer1::MatrixOperation::kNONE,
-                                          *wt->getOutput(0), nvinfer1::MatrixOperation::kTRANSPOSE);
-    assert(mm);
-
-    auto* bias = network->addConstant(nvinfer1::Dims2{1, kClsNumClass}, fc_b);
-    assert(bias);
-    auto* yolo = network->addElementWise(*mm->getOutput(0), *bias->getOutput(0), nvinfer1::ElementWiseOperation::kSUM);
+    // Fully connected layer declaration
+    nvinfer1::IFullyConnectedLayer* yolo = network->addFullyConnected(
+            *pool2->getOutput(0), kClsNumClass, weightMap["model.9.linear.weight"], weightMap["model.9.linear.bias"]);
     assert(yolo);
 
     // Set the name for the output tensor and mark it as network output
@@ -1041,8 +1025,8 @@ nvinfer1::IHostMemory* buildEngineYolov8Cls(nvinfer1::IBuilder* builder, nvinfer
     network->markOutput(*yolo->getOutput(0));
 
     // Set the maximum batch size and workspace size
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
     // Configuration according to the precision mode being used
 #if defined(USE_FP16)
@@ -1117,7 +1101,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Seg(nvinfer1::IBuilder* builder, nvinfer
     float scale[] = {1.0, 2.0, 2.0};
     nvinfer1::IResizeLayer* upsample10 = network->addResize(*conv9->getOutput(0));
     assert(upsample10);
-    upsample10->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample10->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample10->setScales(scale, 3);
 
     nvinfer1::ITensor* inputTensor11[] = {upsample10->getOutput(0), conv6->getOutput(0)};
@@ -1128,7 +1112,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Seg(nvinfer1::IBuilder* builder, nvinfer
 
     nvinfer1::IResizeLayer* upsample13 = network->addResize(*conv12->getOutput(0));
     assert(upsample13);
-    upsample13->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample13->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample13->setScales(scale, 3);
 
     nvinfer1::ITensor* inputTensor14[] = {upsample13->getOutput(0), conv4->getOutput(0)};
@@ -1175,8 +1159,8 @@ nvinfer1::IHostMemory* buildEngineYolov8Seg(nvinfer1::IBuilder* builder, nvinfer
     nvinfer1::IConvolutionLayer* conv22_cv3_0_2 =
             network->addConvolutionNd(*conv22_cv3_0_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.22.cv3.0.2.weight"], weightMap["model.22.cv3.0.2.bias"]);
-    conv22_cv3_0_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv22_cv3_0_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv22_cv3_0_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv22_cv3_0_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor22_0[] = {conv22_cv2_0_2->getOutput(0), conv22_cv3_0_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat22_0 = network->addConcatenation(inputTensor22_0, 2);
 
@@ -1208,14 +1192,14 @@ nvinfer1::IHostMemory* buildEngineYolov8Seg(nvinfer1::IBuilder* builder, nvinfer
     nvinfer1::IElementWiseLayer* conv22_cv2_2_1 =
             convBnSiLU(network, weightMap, *conv22_cv2_2_0->getOutput(0), base_in_channel, 3, 1, 1, "model.22.cv2.2.1");
     nvinfer1::IConvolutionLayer* conv22_cv2_2_2 =
-            network->addConvolutionNd(*conv22_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv22_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.22.cv2.2.2.weight"], weightMap["model.22.cv2.2.2.bias"]);
     nvinfer1::IElementWiseLayer* conv22_cv3_2_0 =
             convBnSiLU(network, weightMap, *conv21->getOutput(0), base_out_channel, 3, 1, 1, "model.22.cv3.2.0");
     nvinfer1::IElementWiseLayer* conv22_cv3_2_1 = convBnSiLU(network, weightMap, *conv22_cv3_2_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.22.cv3.2.1");
     nvinfer1::IConvolutionLayer* conv22_cv3_2_2 =
-            network->addConvolutionNd(*conv22_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv22_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.22.cv3.2.2.weight"], weightMap["model.22.cv3.2.2.bias"]);
     nvinfer1::ITensor* inputTensor22_2[] = {conv22_cv2_2_2->getOutput(0), conv22_cv3_2_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat22_2 = network->addConcatenation(inputTensor22_2, 2);
@@ -1297,8 +1281,8 @@ nvinfer1::IHostMemory* buildEngineYolov8Seg(nvinfer1::IBuilder* builder, nvinfer
     proto->getOutput(0)->setName("proto");
     network->markOutput(*proto->getOutput(0));
 
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
 #if defined(USE_FP16)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
@@ -1369,7 +1353,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Pose(nvinfer1::IBuilder* builder, nvinfe
     float scale[] = {1.0, 2.0, 2.0};
     nvinfer1::IResizeLayer* upsample10 = network->addResize(*conv9->getOutput(0));
     assert(upsample10);
-    upsample10->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample10->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample10->setScales(scale, 3);
 
     nvinfer1::ITensor* inputTensor11[] = {upsample10->getOutput(0), conv6->getOutput(0)};
@@ -1380,7 +1364,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Pose(nvinfer1::IBuilder* builder, nvinfe
 
     nvinfer1::IResizeLayer* upsample13 = network->addResize(*conv12->getOutput(0));
     assert(upsample13);
-    upsample13->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample13->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample13->setScales(scale, 3);
 
     nvinfer1::ITensor* inputTensor14[] = {upsample13->getOutput(0), conv4->getOutput(0)};
@@ -1427,8 +1411,8 @@ nvinfer1::IHostMemory* buildEngineYolov8Pose(nvinfer1::IBuilder* builder, nvinfe
     nvinfer1::IConvolutionLayer* conv22_cv3_0_2 =
             network->addConvolutionNd(*conv22_cv3_0_1->getOutput(0), kPoseNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.22.cv3.0.2.weight"], weightMap["model.22.cv3.0.2.bias"]);
-    conv22_cv3_0_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv22_cv3_0_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv22_cv3_0_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv22_cv3_0_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor22_0[] = {conv22_cv2_0_2->getOutput(0), conv22_cv3_0_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat22_0 = network->addConcatenation(inputTensor22_0, 2);
 
@@ -1460,14 +1444,14 @@ nvinfer1::IHostMemory* buildEngineYolov8Pose(nvinfer1::IBuilder* builder, nvinfe
     nvinfer1::IElementWiseLayer* conv22_cv2_2_1 =
             convBnSiLU(network, weightMap, *conv22_cv2_2_0->getOutput(0), base_in_channel, 3, 1, 1, "model.22.cv2.2.1");
     nvinfer1::IConvolutionLayer* conv22_cv2_2_2 =
-            network->addConvolutionNd(*conv22_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv22_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.22.cv2.2.2.weight"], weightMap["model.22.cv2.2.2.bias"]);
     nvinfer1::IElementWiseLayer* conv22_cv3_2_0 =
             convBnSiLU(network, weightMap, *conv21->getOutput(0), base_out_channel, 3, 1, 1, "model.22.cv3.2.0");
     nvinfer1::IElementWiseLayer* conv22_cv3_2_1 = convBnSiLU(network, weightMap, *conv22_cv3_2_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.22.cv3.2.1");
     nvinfer1::IConvolutionLayer* conv22_cv3_2_2 =
-            network->addConvolutionNd(*conv22_cv3_2_1->getOutput(0), kPoseNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv22_cv3_2_1->getOutput(0), kPoseNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.22.cv3.2.2.weight"], weightMap["model.22.cv3.2.2.bias"]);
     nvinfer1::ITensor* inputTensor22_2[] = {conv22_cv2_2_2->getOutput(0), conv22_cv3_2_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat22_2 = network->addConcatenation(inputTensor22_2, 2);
@@ -1552,8 +1536,8 @@ nvinfer1::IHostMemory* buildEngineYolov8Pose(nvinfer1::IBuilder* builder, nvinfe
     yolo->getOutput(0)->setName(kOutputTensorName);
     network->markOutput(*yolo->getOutput(0));
 
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
 #if defined(USE_FP16)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
@@ -1635,7 +1619,7 @@ nvinfer1::IHostMemory* buildEngineYolov8PoseP6(nvinfer1::IBuilder* builder, nvin
 
     // P5
     nvinfer1::IResizeLayer* upsample12 = network->addResize(*conv11->getOutput(0));
-    upsample12->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample12->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample12->setScales(scale, 3);
     nvinfer1::ITensor* concat13_inputs[] = {upsample12->getOutput(0), conv8->getOutput(0)};
     nvinfer1::IConcatenationLayer* concat13 = network->addConcatenation(concat13_inputs, 2);
@@ -1645,7 +1629,7 @@ nvinfer1::IHostMemory* buildEngineYolov8PoseP6(nvinfer1::IBuilder* builder, nvin
 
     // P4
     nvinfer1::IResizeLayer* upsample15 = network->addResize(*conv14->getOutput(0));
-    upsample15->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample15->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample15->setScales(scale, 3);
     nvinfer1::ITensor* concat16_inputs[] = {upsample15->getOutput(0), conv6->getOutput(0)};
     nvinfer1::IConcatenationLayer* concat16 = network->addConcatenation(concat16_inputs, 2);
@@ -1655,7 +1639,7 @@ nvinfer1::IHostMemory* buildEngineYolov8PoseP6(nvinfer1::IBuilder* builder, nvin
 
     // P3
     nvinfer1::IResizeLayer* upsample18 = network->addResize(*conv17->getOutput(0));
-    upsample18->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample18->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample18->setScales(scale, 3);
     nvinfer1::ITensor* concat19_inputs[] = {upsample18->getOutput(0), conv4->getOutput(0)};
     nvinfer1::IConcatenationLayer* concat19 = network->addConcatenation(concat19_inputs, 2);
@@ -1718,8 +1702,8 @@ nvinfer1::IHostMemory* buildEngineYolov8PoseP6(nvinfer1::IBuilder* builder, nvin
     nvinfer1::IConvolutionLayer* conv30_cv3_0_2 =
             network->addConvolutionNd(*conv30_cv3_0_1->getOutput(0), kPoseNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.30.cv3.0.2.weight"], weightMap["model.30.cv3.0.2.bias"]);
-    conv30_cv3_0_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv30_cv3_0_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv30_cv3_0_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv30_cv3_0_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor30_0[] = {conv30_cv2_0_2->getOutput(0), conv30_cv3_0_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat30_0 = network->addConcatenation(inputTensor30_0, 2);
 
@@ -1751,7 +1735,7 @@ nvinfer1::IHostMemory* buildEngineYolov8PoseP6(nvinfer1::IBuilder* builder, nvin
     nvinfer1::IElementWiseLayer* conv30_cv2_2_1 =
             convBnSiLU(network, weightMap, *conv30_cv2_2_0->getOutput(0), base_in_channel, 3, 1, 1, "model.30.cv2.2.1");
     nvinfer1::IConvolutionLayer* conv30_cv2_2_2 =
-            network->addConvolutionNd(*conv30_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv30_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.30.cv2.2.2.weight"], weightMap["model.30.cv2.2.2.bias"]);
     conv30_cv2_2_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv30_cv2_2_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -1760,7 +1744,7 @@ nvinfer1::IHostMemory* buildEngineYolov8PoseP6(nvinfer1::IBuilder* builder, nvin
     nvinfer1::IElementWiseLayer* conv30_cv3_2_1 = convBnSiLU(network, weightMap, *conv30_cv3_2_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.30.cv3.2.1");
     nvinfer1::IConvolutionLayer* conv30_cv3_2_2 =
-            network->addConvolutionNd(*conv30_cv3_2_1->getOutput(0), kPoseNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv30_cv3_2_1->getOutput(0), kPoseNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.30.cv3.2.2.weight"], weightMap["model.30.cv3.2.2.bias"]);
     conv30_cv3_2_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv30_cv3_2_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -1773,7 +1757,7 @@ nvinfer1::IHostMemory* buildEngineYolov8PoseP6(nvinfer1::IBuilder* builder, nvin
     nvinfer1::IElementWiseLayer* conv30_cv2_3_1 =
             convBnSiLU(network, weightMap, *conv30_cv2_3_0->getOutput(0), base_in_channel, 3, 1, 1, "model.30.cv2.3.1");
     nvinfer1::IConvolutionLayer* conv30_cv2_3_2 =
-            network->addConvolutionNd(*conv30_cv2_3_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv30_cv2_3_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.30.cv2.3.2.weight"], weightMap["model.30.cv2.3.2.bias"]);
     conv30_cv2_3_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv30_cv2_3_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -1782,7 +1766,7 @@ nvinfer1::IHostMemory* buildEngineYolov8PoseP6(nvinfer1::IBuilder* builder, nvin
     nvinfer1::IElementWiseLayer* conv30_cv3_3_1 = convBnSiLU(network, weightMap, *conv30_cv3_3_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.30.cv3.3.1");
     nvinfer1::IConvolutionLayer* conv30_cv3_3_2 =
-            network->addConvolutionNd(*conv30_cv3_3_1->getOutput(0), kPoseNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv30_cv3_3_1->getOutput(0), kPoseNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.30.cv3.3.2.weight"], weightMap["model.30.cv3.3.2.bias"]);
     conv30_cv3_3_2->setStrideNd(nvinfer1::DimsHW{1, 1});
     conv30_cv3_3_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
@@ -1891,8 +1875,8 @@ nvinfer1::IHostMemory* buildEngineYolov8PoseP6(nvinfer1::IBuilder* builder, nvin
     yolo->getOutput(0)->setName(kOutputTensorName);
     network->markOutput(*yolo->getOutput(0));
 
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
 #if defined(USE_FP16)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
@@ -1974,7 +1958,7 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDet(nvinfer1::IBuilder* builder, nvin
                                                      1, calculateP(1), "model.10");
     nvinfer1::IResizeLayer* upsample11 = network->addResize(*conv10->getOutput(0));
     assert(upsample11);
-    upsample11->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample11->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample11->setOutputDimensions(conv6->getOutput(0)->getDimensions());
     nvinfer1::ITensor* inputTensor12[] = {upsample11->getOutput(0), conv6->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat12 = network->addConcatenation(inputTensor12, 2);
@@ -1989,7 +1973,7 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDet(nvinfer1::IBuilder* builder, nvin
                                                      1, 1, calculateP(1), "model.14");
     nvinfer1::IResizeLayer* upsample15 = network->addResize(*conv14->getOutput(0));
     assert(upsample15);
-    upsample15->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample15->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample15->setOutputDimensions(conv4->getOutput(0)->getDimensions());
     nvinfer1::ITensor* inputTensor16[] = {upsample15->getOutput(0), conv4->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat16 = network->addConcatenation(inputTensor16, 2);
@@ -2044,8 +2028,8 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDet(nvinfer1::IBuilder* builder, nvin
     nvinfer1::IConvolutionLayer* conv24_cv3_0_2 =
             network->addConvolutionNd(*conv24_cv3_0_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.24.cv3.0.2.weight"], weightMap["model.24.cv3.0.2.bias"]);
-    conv24_cv3_0_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv24_cv3_0_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv24_cv3_0_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv24_cv3_0_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor24_0[] = {conv24_cv2_0_2->getOutput(0), conv24_cv3_0_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat24_0 = network->addConcatenation(inputTensor24_0, 2);
 
@@ -2066,8 +2050,8 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDet(nvinfer1::IBuilder* builder, nvin
     nvinfer1::IConvolutionLayer* conv24_cv3_1_2 =
             network->addConvolutionNd(*conv24_cv3_1_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.24.cv3.1.2.weight"], weightMap["model.24.cv3.1.2.bias"]);
-    conv24_cv3_1_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv24_cv3_1_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv24_cv3_1_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv24_cv3_1_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor24_1[] = {conv24_cv2_1_2->getOutput(0), conv24_cv3_1_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat24_1 = network->addConcatenation(inputTensor24_1, 2);
 
@@ -2088,8 +2072,8 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDet(nvinfer1::IBuilder* builder, nvin
     nvinfer1::IConvolutionLayer* conv24_cv3_2_2 =
             network->addConvolutionNd(*conv24_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.24.cv3.2.2.weight"], weightMap["model.24.cv3.2.2.bias"]);
-    conv24_cv3_2_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv24_cv3_2_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv24_cv3_2_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv24_cv3_2_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor24_2[] = {conv24_cv2_2_2->getOutput(0), conv24_cv3_2_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat24_2 = network->addConcatenation(inputTensor24_2, 2);
 
@@ -2155,8 +2139,8 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDet(nvinfer1::IBuilder* builder, nvin
     yolo->getOutput(0)->setName(kOutputTensorName);
     network->markOutput(*yolo->getOutput(0));
 
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
 #if defined(USE_FP16)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
@@ -2242,7 +2226,7 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDetP6(nvinfer1::IBuilder* builder, nv
                                                      1, 1, calculateP(1), "model.12");
     nvinfer1::IResizeLayer* upsample13 = network->addResize(*conv12->getOutput(0));
     assert(upsample13);
-    upsample13->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample13->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample13->setOutputDimensions(conv8->getOutput(0)->getDimensions());
     nvinfer1::ITensor* inputTensor14[] = {upsample13->getOutput(0), conv8->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat14 = network->addConcatenation(inputTensor14, 2);
@@ -2257,7 +2241,7 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDetP6(nvinfer1::IBuilder* builder, nv
                                                      1, 1, calculateP(1), "model.16");
     nvinfer1::IResizeLayer* upsample17 = network->addResize(*conv16->getOutput(0));
     assert(upsample17);
-    upsample17->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample17->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample17->setOutputDimensions(conv6->getOutput(0)->getDimensions());
     nvinfer1::ITensor* inputTensor18[] = {upsample17->getOutput(0), conv6->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat18 = network->addConcatenation(inputTensor18, 2);
@@ -2272,7 +2256,7 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDetP6(nvinfer1::IBuilder* builder, nv
                                                      1, 1, calculateP(1), "model.20");
     nvinfer1::IResizeLayer* upsample21 = network->addResize(*conv20->getOutput(0));
     assert(upsample21);
-    upsample21->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample21->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample21->setOutputDimensions(conv4->getOutput(0)->getDimensions());
     nvinfer1::ITensor* inputTensor22[] = {upsample21->getOutput(0), conv4->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat22 = network->addConcatenation(inputTensor22, 2);
@@ -2338,8 +2322,8 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDetP6(nvinfer1::IBuilder* builder, nv
     nvinfer1::IConvolutionLayer* conv33_cv3_0_2 =
             network->addConvolutionNd(*conv33_cv3_0_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.33.cv3.0.2.weight"], weightMap["model.33.cv3.0.2.bias"]);
-    conv33_cv3_0_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv33_cv3_0_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv33_cv3_0_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv33_cv3_0_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor33_0[] = {conv33_cv2_0_2->getOutput(0), conv33_cv3_0_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat33_0 = network->addConcatenation(inputTensor33_0, 2);
 
@@ -2360,8 +2344,8 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDetP6(nvinfer1::IBuilder* builder, nv
     nvinfer1::IConvolutionLayer* conv33_cv3_1_2 =
             network->addConvolutionNd(*conv33_cv3_1_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.33.cv3.1.2.weight"], weightMap["model.33.cv3.1.2.bias"]);
-    conv33_cv3_1_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv33_cv3_1_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv33_cv3_1_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv33_cv3_1_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor33_1[] = {conv33_cv2_1_2->getOutput(0), conv33_cv3_1_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat33_1 = network->addConcatenation(inputTensor33_1, 2);
 
@@ -2382,8 +2366,8 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDetP6(nvinfer1::IBuilder* builder, nv
     nvinfer1::IConvolutionLayer* conv33_cv3_2_2 =
             network->addConvolutionNd(*conv33_cv3_2_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.33.cv3.2.2.weight"], weightMap["model.33.cv3.2.2.bias"]);
-    conv33_cv3_2_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv33_cv3_2_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv33_cv3_2_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv33_cv3_2_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor33_2[] = {conv33_cv2_2_2->getOutput(0), conv33_cv3_2_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat33_2 = network->addConcatenation(inputTensor33_2, 2);
 
@@ -2404,8 +2388,8 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDetP6(nvinfer1::IBuilder* builder, nv
     nvinfer1::IConvolutionLayer* conv33_cv3_3_2 =
             network->addConvolutionNd(*conv33_cv3_3_1->getOutput(0), kNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.33.cv3.3.2.weight"], weightMap["model.33.cv3.3.2.bias"]);
-    conv33_cv3_3_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv33_cv3_3_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv33_cv3_3_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv33_cv3_3_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor33_3[] = {conv33_cv2_3_2->getOutput(0), conv33_cv3_3_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat33_3 = network->addConcatenation(inputTensor33_3, 2);
 
@@ -2486,8 +2470,8 @@ nvinfer1::IHostMemory* buildEngineYolov8_5uDetP6(nvinfer1::IBuilder* builder, nv
     yolo->getOutput(0)->setName(kOutputTensorName);
     network->markOutput(*yolo->getOutput(0));
 
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
 #if defined(USE_FP16)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
@@ -2556,7 +2540,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Obb(nvinfer1::IBuilder* builder, nvinfer
     float scale[] = {1.0, 2.0, 2.0};
     nvinfer1::IResizeLayer* upsample10 = network->addResize(*conv9->getOutput(0));
     assert(upsample10);
-    upsample10->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample10->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample10->setScales(scale, 3);
 
     nvinfer1::ITensor* inputTensor11[] = {upsample10->getOutput(0), conv6->getOutput(0)};
@@ -2567,7 +2551,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Obb(nvinfer1::IBuilder* builder, nvinfer
 
     nvinfer1::IResizeLayer* upsample13 = network->addResize(*conv12->getOutput(0));
     assert(upsample13);
-    upsample13->setResizeMode(nvinfer1::InterpolationMode::kNEAREST);
+    upsample13->setResizeMode(nvinfer1::ResizeMode::kNEAREST);
     upsample13->setScales(scale, 3);
 
     nvinfer1::ITensor* inputTensor14[] = {upsample13->getOutput(0), conv4->getOutput(0)};
@@ -2617,8 +2601,8 @@ nvinfer1::IHostMemory* buildEngineYolov8Obb(nvinfer1::IBuilder* builder, nvinfer
     nvinfer1::IConvolutionLayer* conv22_cv3_0_2 =
             network->addConvolutionNd(*conv22_cv3_0_1->getOutput(0), kObbNumClass, nvinfer1::DimsHW{1, 1},
                                       weightMap["model.22.cv3.0.2.weight"], weightMap["model.22.cv3.0.2.bias"]);
-    conv22_cv3_0_2->setStrideNd(nvinfer1::DimsHW{1, 1});
-    conv22_cv3_0_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
+    conv22_cv3_0_2->setStride(nvinfer1::DimsHW{1, 1});
+    conv22_cv3_0_2->setPadding(nvinfer1::DimsHW{0, 0});
     nvinfer1::ITensor* inputTensor22_0[] = {conv22_cv2_0_2->getOutput(0), conv22_cv3_0_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat22_0 = network->addConcatenation(inputTensor22_0, 2);
 
@@ -2650,14 +2634,14 @@ nvinfer1::IHostMemory* buildEngineYolov8Obb(nvinfer1::IBuilder* builder, nvinfer
     nvinfer1::IElementWiseLayer* conv22_cv2_2_1 =
             convBnSiLU(network, weightMap, *conv22_cv2_2_0->getOutput(0), base_in_channel, 3, 1, 1, "model.22.cv2.2.1");
     nvinfer1::IConvolutionLayer* conv22_cv2_2_2 =
-            network->addConvolutionNd(*conv22_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv22_cv2_2_1->getOutput(0), 64, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.22.cv2.2.2.weight"], weightMap["model.22.cv2.2.2.bias"]);
     nvinfer1::IElementWiseLayer* conv22_cv3_2_0 =
             convBnSiLU(network, weightMap, *conv21->getOutput(0), base_out_channel, 3, 1, 1, "model.22.cv3.2.0");
     nvinfer1::IElementWiseLayer* conv22_cv3_2_1 = convBnSiLU(network, weightMap, *conv22_cv3_2_0->getOutput(0),
                                                              base_out_channel, 3, 1, 1, "model.22.cv3.2.1");
     nvinfer1::IConvolutionLayer* conv22_cv3_2_2 =
-            network->addConvolutionNd(*conv22_cv3_2_1->getOutput(0), kObbNumClass, nvinfer1::DimsHW{1, 1},
+            network->addConvolution(*conv22_cv3_2_1->getOutput(0), kObbNumClass, nvinfer1::DimsHW{1, 1},
                                     weightMap["model.22.cv3.2.2.weight"], weightMap["model.22.cv3.2.2.bias"]);
     nvinfer1::ITensor* inputTensor22_2[] = {conv22_cv2_2_2->getOutput(0), conv22_cv3_2_2->getOutput(0)};
     nvinfer1::IConcatenationLayer* cat22_2 = network->addConcatenation(inputTensor22_2, 2);
@@ -2739,8 +2723,8 @@ nvinfer1::IHostMemory* buildEngineYolov8Obb(nvinfer1::IBuilder* builder, nvinfer
     yolo->getOutput(0)->setName(kOutputTensorName);
     network->markOutput(*yolo->getOutput(0));
 
-    // setMaxBatchSize removed in TRT10
-    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 16 * (1 << 20));
+    builder->setMaxBatchSize(kBatchSize);
+    config->setMaxWorkspaceSize(16 * (1 << 20));
 
 #if defined(USE_FP16)
     config->setFlag(nvinfer1::BuilderFlag::kFP16);

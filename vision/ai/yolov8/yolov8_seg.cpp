@@ -106,6 +106,16 @@ void deserialize_engine(std::string& engine_name, IRuntime** runtime, ICudaEngin
 void prepare_buffer(ICudaEngine* engine, float** input_buffer_device, float** output_buffer_device,
                     float** output_seg_buffer_device, float** output_buffer_host, float** output_seg_buffer_host,
                     float** decode_ptr_host, float** decode_ptr_device, std::string cuda_post_process) {
+    assert(engine->getNbBindings() == 3);
+    // In order to bind the buffers, we need to know the names of the input and output tensors.
+    // Note that indices are guaranteed to be less than IEngine::getNbBindings()
+    const int inputIndex = engine->getBindingIndex(kInputTensorName);
+    const int outputIndex = engine->getBindingIndex(kOutputTensorName);
+    const int outputIndex_seg = engine->getBindingIndex("proto");
+
+    assert(inputIndex == 0);
+    assert(outputIndex == 1);
+    assert(outputIndex_seg == 2);
     // Create GPU buffers on device
     CUDA_CHECK(cudaMalloc((void**)input_buffer_device, kBatchSize * 3 * kInputH * kInputW * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)output_buffer_device, kBatchSize * kOutputSize * sizeof(float)));
@@ -130,10 +140,7 @@ void infer(IExecutionContext& context, cudaStream_t& stream, void** buffers, flo
            std::string cuda_post_process) {
     // infer on the batch asynchronously, and DMA output back to host
     auto start = std::chrono::system_clock::now();
-    context.setTensorAddress(kInputTensorName, buffers[0]);
-    context.setTensorAddress(kOutputTensorName, buffers[1]);
-    context.setTensorAddress("proto", buffers[2]);
-    context.enqueueV3(stream);
+    context.enqueue(batchsize, buffers, stream, nullptr);
     if (cuda_post_process == "c") {
 
         std::cout << "kOutputSize:" << kOutputSize << std::endl;
@@ -240,7 +247,7 @@ int main(int argc, char** argv) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
     cuda_preprocess_init(kMaxInputImageSize);
-    auto out_dims = engine->getTensorShape(kOutputTensorName);
+    auto out_dims = engine->getBindingDimensions(1);
     model_bboxes = out_dims.d[0];
     // Prepare cpu and gpu buffers
     float* device_buffers[3];
