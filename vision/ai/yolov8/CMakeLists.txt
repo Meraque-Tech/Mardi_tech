@@ -55,3 +55,6 @@ target_link_libraries(yolov8_pose nvinfer cudart myplugins ${OpenCV_LIBS})
 
 add_executable(yolov8_cls ${PROJECT_SOURCE_DIR}/yolov8_cls.cpp ${SRCS})
 target_link_libraries(yolov8_cls nvinfer cudart myplugins ${OpenCV_LIBS})
+
+add_executable(yolov8_det_video ${PROJECT_SOURCE_DIR}/yolov8_det_video.cpp ${SRCS})
+target_link_libraries(yolov8_det_video nvinfer cudart myplugins ${OpenCV_LIBS})

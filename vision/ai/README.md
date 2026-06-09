@@ -212,6 +212,18 @@ sudo ./yolov8_pose -d yolov8n-pose.engine ../images g //gpu postprocess
 ```
 
 
+### Detection (Webcam / Video Stream)
+```
+// Run detection on a webcam or video device
+// Arguments: [.engine] [cam_id: 0/1/...] [c/g] [show: true/false]
+
+sudo ./yolov8_det_video yolov8n.engine 0 g true    // webcam 0, GPU postprocess, show window
+sudo ./yolov8_det_video yolov8n.engine 1 c false   // webcam 1, CPU postprocess, headless (no window)
+
+// Press ESC to exit when show=true
+// Press Ctrl+C to stop when running headless
+```
+
 ### Oriented Bounding Boxes (OBB) Estimation
 ```
 cd {tensorrtx}/yolov8/
