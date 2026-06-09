@@ -19,7 +19,5 @@ docker run -it --rm --net=host \
     -v $HOME/.Xauthority:/root/.Xauthority:ro \
     -v ./yolov8/images:/workspace/yolov8/build/images:ro \
     -v ./yolov8/weights:/workspace/yolov8/build/weights:ro \
-    --device /dev/video0 \
-    --device /dev/video1 \
     meraquetech/race_nav:yolov8-trt-x86 \
     bash -c "cd /workspace/yolov8/build && ./yolov8_det_video ./weights/yolov8n.engine ${CAM_ID} ${POSTPROCESS} ${SHOW}"
