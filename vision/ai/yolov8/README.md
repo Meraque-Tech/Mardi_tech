@@ -15,6 +15,7 @@
     xhost +local
     docker run -it --rm --net=host \
         --runtime nvidia \
+        --gpus all \
         -e DISPLAY=$DISPLAY \
         -v /tmp/.X11-unix/:/tmp/.X11-unix \
         -v ./yolov8/yolov8n.pt:/workspace/yolov8/build/yolov8n.pt \
