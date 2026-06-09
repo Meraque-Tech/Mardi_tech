@@ -8,6 +8,7 @@
 
 # Custom model
 ```
+./engine_file_build.sh yolov8n n
 ./engine_file_build.sh yolov8s s
 
 Two-step process:
