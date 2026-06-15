@@ -142,6 +142,50 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
 
 ```
 
+# yolov8_trt_bed_detect (ROS 2 Node)
+
+Runs YOLOv8 TensorRT bed detection with a USB webcam, publishing results over ROS 2 topics.
+
+## Build image
+
+From `vision/ai/` (with `yolov8_trt_bed_detect/` folder present):
+
+```bash
+docker build \
+  -f Dockerfile.yolov8_trt_bed_detect_jetson_nano \
+  -t meraquetech/race_nav:yolov8-trt-bed-detect-nano.v1 \
+  .
+```
+
+## Run
+
+```bash
+docker run -it --rm --net=host \
+  --runtime nvidia \
+  --privileged \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  --device /dev/video0:/dev/video0 \
+  -v $PWD/yolov8_trt_bed_detect/weights:/ros2_ws/src/yolov8_trt_bed_detect/weights:ro \
+  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v1
+```
+
+Then inside the container:
+
+```bash
+# Serialize engine (once per model)
+ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
+  -s weights/yolov8s_bed.wts weights/yolov8s_bed.engine s
+
+# Run detection node
+ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
+  -d weights/yolov8s_bed.engine ./ g -conf 0.85
+
+# Trigger detection from another terminal
+ros2 service call /bed_detection std_srvs/srv/Trigger {}
+```
+
+---
+
 # Live Camera Stream with Detection (yolov8_stream)
 
 Streams camera input with YOLOv8 OBB detections as **MJPEG over HTTP** — viewable in any browser, no plugins needed.
