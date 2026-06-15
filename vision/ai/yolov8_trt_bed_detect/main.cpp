@@ -8,6 +8,12 @@
 #include <signal.h>
 #include <stdio.h>
 
+// Global state
+rclcpp::Node::SharedPtr node;
+int start_bed_detection_ = 0;
+float conf_score_value = 0.8f;
+bool bed_detection_fb_ = 0;
+
 
 void sig_handler(int signal){
     std::cout << "\nCtrl+C pressed. Exiting..." << std::endl;
