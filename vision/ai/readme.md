@@ -103,7 +103,7 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
         -v $HOME/.Xauthority:/root/.Xauthority:ro \
         -v $PWD/yolov8/images:/workspace/yolov8/build/images:ro \
         -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
-        -v $PWD/yolov8/weights:/output:ro \
+        -v $PWD/yolov8/weights:/output \
         meraquetech/race_nav:yolov8-trt-nano.v1
 
   # Test Nvidia ->
@@ -130,7 +130,7 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
         -v $HOME/.Xauthority:/root/.Xauthority:ro \
         -v $PWD/yolov8/images:/workspace/yolov8/build/images:ro \
         -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
-        -v $PWD/yolov8/weights:/output:ro \
+        -v $PWD/yolov8/weights:/output \
         meraquetech/race_nav:yolov8-trt-nano.v1 \
         bash -c "cd /workspace/yolov8/build && ./yolov8_det -s ./weights/yolov8n.wts yolov8n.engine n && cp yolov8n.engine /output/"
   
