@@ -216,8 +216,12 @@ int main(int argc, char** argv) {
             break;
         }
 
+        // Resize to model input size before GPU upload to reduce transfer cost
+        cv::Mat resized;
+        cv::resize(frame, resized, cv::Size(kInputW, kInputH), 0, 0, cv::INTER_LINEAR);
+
         // Preprocess + infer (single-frame batch)
-        std::vector<cv::Mat> batch = {frame};
+        std::vector<cv::Mat> batch = {resized};
         cuda_batch_preprocess(batch, device_buffers[0], kInputW, kInputH, stream);
         run_infer(*context, stream, (void**)device_buffers,
                   output_buffer_host, decode_ptr_host, decode_ptr_device,
