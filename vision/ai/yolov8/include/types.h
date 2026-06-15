@@ -16,4 +16,4 @@ struct AffineMatrix {
 };
 
 const int bbox_element =
-        sizeof(AffineMatrix) / sizeof(float) + 1;  // left, top, right, bottom, confidence, class, keepflag
+        sizeof(AffineMatrix) / sizeof(float) + 2;  // cx/left, cy/top, w/right, h/bottom, confidence, class, keepflag, angle

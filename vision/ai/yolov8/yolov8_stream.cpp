@@ -249,10 +249,11 @@ int main(int argc, char** argv) {
             g_frame_ready = false;           // consume
         }
 
-        // Letterbox — identical transform to cuda_preprocess:
-        //   scale = min(input_size/w, input_size/h), center-aligned with pad=128
-        // Passing this NxN image to cuda_batch_preprocess makes it a 1:1 copy
-        // (scale=1, offset=0), so model coords map directly to display image coords.
+        // Pass original frame directly to CUDA — cuda_preprocess applies the same
+        // center-aligned letterbox internally (scale=min, pad=128). This avoids a
+        // redundant CPU resize before the GPU upload.
+        // The CUDA letterbox parameters (scale, pad_x, pad_y) are recomputed here
+        // only to create the display image for drawing bboxes on.
         float scale = std::min(input_size / (float)frame.cols,
                                input_size / (float)frame.rows);
         int new_w = (int)(frame.cols * scale);
@@ -260,14 +261,15 @@ int main(int argc, char** argv) {
         int pad_x = (input_size - new_w) / 2;
         int pad_y = (input_size - new_h) / 2;
 
-        cv::Mat scaled;
-        cv::resize(frame, scaled, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
-        cv::Mat letterboxed(input_size, input_size, frame.type(), cv::Scalar(128, 128, 128));
-        scaled.copyTo(letterboxed(cv::Rect(pad_x, pad_y, new_w, new_h)));
-
-        // GPU preprocess + infer
-        std::vector<cv::Mat> batch = {letterboxed};
+        // GPU preprocess (letterbox done inside CUDA kernel)
+        std::vector<cv::Mat> batch = {frame};
         cuda_batch_preprocess(batch, device_buffers[0], input_size, input_size, stream);
+
+        // Build display image with the same letterbox so model coords map 1:1
+        cv::Mat display_scaled;
+        cv::resize(frame, display_scaled, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
+        cv::Mat display(input_size, input_size, frame.type(), cv::Scalar(128, 128, 128));
+        display_scaled.copyTo(display(cv::Rect(pad_x, pad_y, new_w, new_h)));
 
         auto t0 = std::chrono::steady_clock::now();
         run_infer(*context, stream, (void**)device_buffers,
@@ -276,25 +278,26 @@ int main(int argc, char** argv) {
         int infer_ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
                            std::chrono::steady_clock::now() - t0).count();
 
-        // Postprocess
+        // Postprocess — draw on display image (same letterbox as CUDA input)
         std::vector<std::vector<Detection>> res_batch;
+        std::vector<cv::Mat> display_batch = {display};
         if (post == "c")
             batch_nms_obb(res_batch, output_buffer_host, 1, kOutputSize, kConfThresh, kNmsThresh);
         else
-            batch_process_obb(res_batch, decode_ptr_host, 1, bbox_element, batch);
+            batch_process_obb(res_batch, decode_ptr_host, 1, bbox_element, display_batch);
 
-        draw_bbox_obb(batch, res_batch);
+        draw_bbox_obb(display_batch, res_batch);
 
         // Overlay inference time
         std::string label = "Infer: " + std::to_string(infer_ms) + " ms";
-        cv::putText(batch[0], label, cv::Point(8, 24), cv::FONT_HERSHEY_SIMPLEX,
+        cv::putText(display, label, cv::Point(8, 24), cv::FONT_HERSHEY_SIMPLEX,
                     0.7, cv::Scalar(0,0,0), 3, cv::LINE_AA);
-        cv::putText(batch[0], label, cv::Point(8, 24), cv::FONT_HERSHEY_SIMPLEX,
+        cv::putText(display, label, cv::Point(8, 24), cv::FONT_HERSHEY_SIMPLEX,
                     0.7, cv::Scalar(0,255,0), 2, cv::LINE_AA);
 
         // Encode and publish — no lock held during encoding (CPU-heavy)
         std::vector<uchar> jpeg;
-        cv::imencode(".jpg", batch[0], jpeg, encode_params);
+        cv::imencode(".jpg", display, jpeg, encode_params);
         {
             std::lock_guard<std::mutex> lk(g_jpeg_mutex);
             g_jpeg_frame = std::move(jpeg);
