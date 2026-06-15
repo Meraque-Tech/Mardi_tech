@@ -247,12 +247,24 @@ int main(int argc, char** argv) {
             g_frame_ready = false;           // consume
         }
 
-        // Resize to model input
-        cv::Mat resized;
-        cv::resize(frame, resized, cv::Size(kInputW, kInputH), 0, 0, cv::INTER_LINEAR);
+        // Letterbox — identical transform to cuda_preprocess:
+        //   scale = min(kInputW/w, kInputH/h), center-aligned with pad=128
+        // Passing this 640x640 image to cuda_batch_preprocess makes it a 1:1 copy
+        // (scale=1, offset=0), so model coords map directly to display image coords.
+        float scale = std::min(kInputW  / (float)frame.cols,
+                               kInputH / (float)frame.rows);
+        int new_w = (int)(frame.cols * scale);
+        int new_h = (int)(frame.rows * scale);
+        int pad_x = (kInputW  - new_w) / 2;
+        int pad_y = (kInputH - new_h) / 2;
+
+        cv::Mat scaled;
+        cv::resize(frame, scaled, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
+        cv::Mat letterboxed(kInputH, kInputW, frame.type(), cv::Scalar(128, 128, 128));
+        scaled.copyTo(letterboxed(cv::Rect(pad_x, pad_y, new_w, new_h)));
 
         // GPU preprocess + infer
-        std::vector<cv::Mat> batch = {resized};
+        std::vector<cv::Mat> batch = {letterboxed};
         cuda_batch_preprocess(batch, device_buffers[0], kInputW, kInputH, stream);
 
         auto t0 = std::chrono::steady_clock::now();
