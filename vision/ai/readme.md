@@ -96,8 +96,8 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
 ```
   docker run -it --rm --net=host \
         --runtime nvidia \
-        --gpus all \
         --privileged \
+        -e NVIDIA_VISIBLE_DEVICES=all \
         -e XAUTHORITY=/root/.Xauthority \
         -v $HOME/.Xauthority:/root/.Xauthority:ro \
         -v ./yolov8/images:/workspace/yolov8/build/images:ro \
