@@ -114,6 +114,10 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
 
   # if output okay then all okay
 
+  cd build
+  ./yolov8_det -s ./weights/yolov8n.wts yolov8n.engine n
+
+  cp yolov8n.engine /output/
   
 
 ```
