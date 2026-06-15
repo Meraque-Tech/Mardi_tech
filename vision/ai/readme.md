@@ -116,8 +116,21 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
 
   cd build
   ./yolov8_det -s ./weights/yolov8n.wts yolov8n.engine n
-
   cp yolov8n.engine /output/
+
+
+  # build in once -->
+  docker run -it --rm --net=host \
+        --runtime nvidia \
+        --privileged \
+        --gpus all \
+        -e NVIDIA_VISIBLE_DEVICES=all \
+        -e XAUTHORITY=/root/.Xauthority \
+        -v $HOME/.Xauthority:/root/.Xauthority:ro \
+        -v $PWD/yolov8/images:/workspace/yolov8/build/images:ro \
+        -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
+        meraquetech/race_nav:yolov8-trt-nano.v1 \
+        bash -c "cd /workspace/yolov8/build && ./yolov8_det -s ./weights/yolov8n.wts yolov8n.engine n && cp yolov8n.engine /output/"
   
 
 ```
