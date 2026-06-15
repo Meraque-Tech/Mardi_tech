@@ -176,6 +176,7 @@ cd build
 | `<cam 0-3>` | Camera device index (`/dev/video0` – `/dev/video3`) |
 | `<c\|g>` | Postprocess on CPU (`c`) or GPU (`g`) |
 | `[port]` | HTTP port for MJPEG stream (default: `8080`) |
+| `[flip]` | Correct camera driver flip: `1`=horizontal, `0`=vertical, `2`=both (omit = no correction) |
 
 ## View Stream
 

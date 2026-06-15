@@ -156,26 +156,27 @@ void mjpeg_server(int port) {
 }
 
 // ─── argument parsing ─────────────────────────────────────────────────────────
-// Usage: yolov8_stream -d <engine> <cam_id 0-3> <c|g> [port=8080]
+// Usage: yolov8_stream -d <engine> <cam_id 0-3> <c|g> [port=8080] [flip: 0=vert 1=horiz 2=both]
 bool parse_args(int argc, char** argv, std::string& engine, int& cam_id,
-                std::string& post, int& port) {
+                std::string& post, int& port, int& flip_code) {
     if (argc < 5 || std::string(argv[1]) != "-d") return false;
     engine = argv[2];
     cam_id = std::stoi(argv[3]);
     post   = argv[4];
     if (post != "c" && post != "g") return false;
     if (cam_id < 0 || cam_id > 3) return false;
-    if (argc >= 6) port = std::stoi(argv[5]);
+    if (argc >= 6) port      = std::stoi(argv[5]);
+    if (argc >= 7) flip_code = std::stoi(argv[6]);
     return true;
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
 int main(int argc, char** argv) {
     std::string engine_name, post;
-    int cam_id = 0, port = 8080;
+    int cam_id = 0, port = 8080, flip_code = -1;
 
-    if (!parse_args(argc, argv, engine_name, cam_id, post, port)) {
-        std::cerr << "Usage: ./yolov8_stream -d <engine.engine> <cam 0-3> <c|g> [port=8080]\n";
+    if (!parse_args(argc, argv, engine_name, cam_id, post, port, flip_code)) {
+        std::cerr << "Usage: ./yolov8_stream -d <engine.engine> <cam 0-3> <c|g> [port=8080] [flip: 0=vert 1=horiz 2=both]\n";
         return -1;
     }
 
@@ -221,6 +222,8 @@ int main(int argc, char** argv) {
             std::cerr << "Camera read failed" << std::endl;
             break;
         }
+        if (flip_code >= 0) cv::flip(frame, frame, flip_code);
+
         // Resize to model input size before GPU upload to reduce transfer cost
         cv::Mat resized;
         cv::resize(frame, resized, cv::Size(kInputW, kInputH), 0, 0, cv::INTER_LINEAR);
