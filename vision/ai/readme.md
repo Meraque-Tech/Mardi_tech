@@ -203,8 +203,9 @@ docker run -it --rm --net=host \
       --device /dev/video0:/dev/video0 \
       --device /dev/video1:/dev/video1 \
       -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
+      --name=yolov8n \
       meraquetech/race_nav:yolov8-trt-nano.v1 \
-      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080"
+      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080 0"
 ```
 
 > Add `--device /dev/video1:/dev/video1` etc. for cameras 1–3.
