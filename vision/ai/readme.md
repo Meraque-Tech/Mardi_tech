@@ -225,6 +225,7 @@ docker run -it --rm --net=host \
       --runtime nvidia \
       --privileged \
       -e NVIDIA_VISIBLE_DEVICES=all \
+      --name=yolov8_trt \
       -v /tmp/argus_socket:/tmp/argus_socket \
       -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
       meraquetech/race_nav:yolov8-trt-nano.v1 \
