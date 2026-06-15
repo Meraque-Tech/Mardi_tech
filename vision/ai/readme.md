@@ -200,6 +200,7 @@ docker run -it --rm --net=host \
       --privileged \
       -e NVIDIA_VISIBLE_DEVICES=all \
       --device /dev/video0:/dev/video0 \
+      --device /dev/video1:/dev/video1 \
       -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
       meraquetech/race_nav:yolov8-trt-nano.v1 \
       bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080"
