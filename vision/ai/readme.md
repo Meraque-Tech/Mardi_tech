@@ -141,3 +141,65 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
     ./yolov8_det -d /output/yolov8n.engine ./images g
 
 ```
+
+# Live Camera Stream with Detection (yolov8_stream)
+
+Streams camera input with YOLOv8 OBB detections as **MJPEG over HTTP** — viewable in any browser, no plugins needed.
+
+## Build
+
+```bash
+cd yolov8/build
+cmake .. && make -j$(nproc) yolov8_stream
+```
+
+## Run
+
+```bash
+# Camera 0, GPU postprocess, stream on default port 8080
+./yolov8_stream -d yolov8n.engine 0 g
+
+# Camera 1, CPU postprocess, custom port
+./yolov8_stream -d yolov8n.engine 1 c 9090
+
+# Camera 2 or 3
+./yolov8_stream -d yolov8n.engine 2 g
+./yolov8_stream -d yolov8n.engine 3 g
+```
+
+**Arguments:**
+| Arg | Description |
+|-----|-------------|
+| `-d` | Run inference mode |
+| `<engine>` | Path to serialized `.engine` file |
+| `<cam 0-3>` | Camera device index (`/dev/video0` – `/dev/video3`) |
+| `<c\|g>` | Postprocess on CPU (`c`) or GPU (`g`) |
+| `[port]` | HTTP port for MJPEG stream (default: `8080`) |
+
+## View Stream
+
+Open in browser:
+```
+http://<host-ip>:8080/
+```
+
+Or with VLC / ffplay:
+```bash
+vlc http://localhost:8080/
+ffplay http://localhost:8080/
+```
+
+## Run in Docker
+
+```bash
+docker run -it --rm --net=host \
+      --runtime nvidia \
+      --privileged \
+      -e NVIDIA_VISIBLE_DEVICES=all \
+      --device /dev/video0:/dev/video0 \
+      -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
+      meraquetech/race_nav:yolov8-trt-nano.v1 \
+      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080"
+```
+
+> Add `--device /dev/video1:/dev/video1` etc. for additional cameras.
