@@ -156,11 +156,12 @@ cmake .. && make -j$(nproc) yolov8_stream
 ## Run
 
 ```bash
+cd build
 # Camera 0, GPU postprocess, stream on default port 8080
-./yolov8_stream -d yolov8n.engine 0 g
+./yolov8_stream -d weights/yolov8n.engine 0 g
 
 # Camera 1, CPU postprocess, custom port
-./yolov8_stream -d yolov8n.engine 1 g 9090
+./yolov8_stream -d weights/yolov8n.engine 0 g 9090
 
 # Camera 2 or 3
 ./yolov8_stream -d yolov8n.engine 2 g
