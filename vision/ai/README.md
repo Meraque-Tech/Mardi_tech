@@ -84,7 +84,7 @@ Step 2 — runs meraquetech/race_nav:yolov8-trt-x86 to serialize .wts → .engin
 
 
     DeSerialize ->
-    ./yolov8_det -d yolov8n.engine ./images g
+    ./yolov8_det -d /output/yolov8n.engine ./images g
 
 
 ```
