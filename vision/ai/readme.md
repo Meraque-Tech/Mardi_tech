@@ -105,4 +105,15 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
         -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
         meraquetech/race_nav:yolov8-trt-nano.v1
 
+  # Test Nvidia ->
+
+  ldconfig -p | grep libcuda
+  /usr/local/cuda/bin/nvcc --version
+  ls /dev/nvhost-ctrl /dev/nvmap
+  dpkg -l | grep -i tensorrt
+
+  # if output okay then all okay
+
+  
+
 ```
