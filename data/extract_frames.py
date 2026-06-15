@@ -5,7 +5,7 @@ from pathlib import Path
 
 # ====== SETTINGS ======
 INPUT_DIR = Path("/home/aloy/Mardi_tech/data/videos")
-OUTPUT_DIR = Path("/home/aloy/Mardi_tech/data/images")
+OUTPUT_DIR = Path("/home/aloy/Mardi_Extracted_Data")
 
 # Set to None to extract ALL frames
 # Set to a number like 1, 2, 5, 10 to extract that many frames per second
@@ -57,6 +57,7 @@ def extract_frames(video_path: Path, output_root: Path, fps, image_format: str):
         "-loglevel", "error",
         "-progress", "pipe:1",
         "-nostats",
+        "-noautorotate",
         "-i", str(video_path),
     ]
 

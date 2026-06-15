@@ -4,7 +4,7 @@ import roboflow
 
 rf = roboflow.Roboflow(api_key="BSHu0NfrIBFl58wtwWnP")
 workspace = rf.workspace("rnd-kyodu")
-folder_base = "ZED_05-57-35"
+folder_base = "MARDI_Phase_1_Pineapple_Pontian"
 
 # Accept folder as CLI argument, fallback to ~/zed_extracted
 if len(sys.argv) > 1:
