@@ -160,7 +160,7 @@ cmake .. && make -j$(nproc) yolov8_stream
 ./yolov8_stream -d yolov8n.engine 0 g
 
 # Camera 1, CPU postprocess, custom port
-./yolov8_stream -d yolov8n.engine 1 c 9090
+./yolov8_stream -d yolov8n.engine 1 g 9090
 
 # Camera 2 or 3
 ./yolov8_stream -d yolov8n.engine 2 g
