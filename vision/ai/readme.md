@@ -157,15 +157,18 @@ cmake .. && make -j$(nproc) yolov8_stream
 
 ```bash
 cd build
-# Camera 0, GPU postprocess, stream on default port 8080
+# Camera 0, GPU postprocess, default port 8080
 ./yolov8_stream -d weights/yolov8n.engine 0 g
 
-# Camera 1, GPU postprocess, custom port
-./yolov8_stream -d weights/yolov8n.engine 0 g 9090
+# Camera 1, custom port 9090
+./yolov8_stream -d weights/yolov8n.engine 1 g 9090
 
 # Camera 2 or 3
-./yolov8_stream -d yolov8n.engine 2 g
-./yolov8_stream -d yolov8n.engine 3 g
+./yolov8_stream -d weights/yolov8n.engine 2 g
+./yolov8_stream -d weights/yolov8n.engine 3 g
+
+# With horizontal flip (mirror correction)
+./yolov8_stream -d weights/yolov8n.engine 0 g 8080 1
 ```
 
 **Arguments:**
@@ -176,6 +179,7 @@ cd build
 | `<cam 0-3>` | Camera device index (`/dev/video0` – `/dev/video3`) |
 | `<c\|g>` | Postprocess on CPU (`c`) or GPU (`g`) |
 | `[port]` | HTTP port for MJPEG stream (default: `8080`) |
+| `[flip]` | `1`=horizontal, `0`=vertical, `2`=both (omit = no flip) |
 
 ## View Stream
 
