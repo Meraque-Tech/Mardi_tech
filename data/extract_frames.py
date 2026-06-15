@@ -9,7 +9,7 @@ OUTPUT_DIR = Path("/home/aloy/Mardi_Extracted_Data")
 
 # Set to None to extract ALL frames
 # Set to a number like 1, 2, 5, 10 to extract that many frames per second
-FPS = 5
+FPS = 2
 
 IMAGE_FORMAT = "jpg"  # "png" or "jpg"
 RECURSIVE = True      # True = also search subfolders
