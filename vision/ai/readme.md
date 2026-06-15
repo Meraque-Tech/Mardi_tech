@@ -160,7 +160,7 @@ cd build
 # Camera 0, GPU postprocess, stream on default port 8080
 ./yolov8_stream -d weights/yolov8n.engine 0 g
 
-# Camera 1, CPU postprocess, custom port
+# Camera 1, GPU postprocess, custom port
 ./yolov8_stream -d weights/yolov8n.engine 0 g 9090
 
 # Camera 2 or 3
@@ -192,6 +192,8 @@ ffplay http://localhost:8080/
 
 ## Run in Docker
 
+### USB Camera (`/dev/video0`)
+
 ```bash
 docker run -it --rm --net=host \
       --runtime nvidia \
@@ -203,4 +205,26 @@ docker run -it --rm --net=host \
       bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080"
 ```
 
-> Add `--device /dev/video1:/dev/video1` etc. for additional cameras.
+> Add `--device /dev/video1:/dev/video1` etc. for cameras 1–3.
+
+### CSI Camera (Jetson — requires nvargus-daemon)
+
+CSI cameras on Jetson go through `nvargus-daemon` on the **host**, not through `/dev/video*`.
+Start the daemon on the host first, then pass the socket into the container:
+
+```bash
+# On the host (once per boot)
+sudo systemctl start nvargus-daemon
+
+# Run container with argus socket
+docker run -it --rm --net=host \
+      --runtime nvidia \
+      --privileged \
+      -e NVIDIA_VISIBLE_DEVICES=all \
+      -v /tmp/argus_socket:/tmp/argus_socket \
+      -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
+      meraquetech/race_nav:yolov8-trt-nano.v1 \
+      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080"
+```
+
+> If `nvargus-daemon` is not installed: `sudo apt install nvidia-l4t-jetson-multimedia-api`
