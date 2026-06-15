@@ -1,0 +1,42 @@
+# Jetson Nano — JetPack 4.6.1, CUDA 10.2, TensorRT 8.2, ROS 2 Humble
+FROM dustynv/ros:humble-pytorch-l4t-r32.7.1
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV OPENBLAS_CORETYPE=ARMV8
+SHELL ["/bin/bash", "-c"]
+
+# Add JetPack 4.6.x apt repo
+RUN echo "deb https://repo.download.nvidia.com/jetson/common r32.7 main" \
+        > /etc/apt/sources.list.d/nvidia-l4t-apt-source.list && \
+    echo "deb https://repo.download.nvidia.com/jetson/t210 r32.7 main" \
+        >> /etc/apt/sources.list.d/nvidia-l4t-apt-source.list && \
+    wget -qO - https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
+        | apt-key add -
+
+RUN rm -f /etc/apt/sources.list.d/ros2.list && \
+    apt-get update && apt-get install -y \
+    tensorrt \
+    libopencv-dev \
+    ros-humble-std-srvs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Fix v4l2 symlink for webcam on Jetson
+RUN ln -sf /usr/lib/aarch64-linux-gnu/tegra/libv4l2.so.0 /usr/lib/aarch64-linux-gnu/libv4l2.so
+
+# Verify installs
+RUN dpkg -l | grep tensorrt
+RUN nvcc --version
+RUN pkg-config --modversion opencv4
+
+# Build the ROS 2 package
+WORKDIR /ros2_ws/src
+COPY yolov8_trt_bed_detect/ yolov8_trt_bed_detect/
+
+WORKDIR /ros2_ws
+RUN source /opt/ros/humble/setup.bash && \
+    colcon build --packages-select yolov8_trt_bed_detect \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+# Usage:
+#   docker run ... ./yolov8_trt_bed_detect -d ./weights/best.engine . g -conf 0.5
+CMD ["/bin/bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash"]
