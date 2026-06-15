@@ -157,15 +157,20 @@ cmake .. && make -j$(nproc) yolov8_stream
 
 ```bash
 cd build
-# Camera 0, GPU postprocess, stream on default port 8080
+# Camera 0, GPU postprocess, default port 8080
 ./yolov8_stream -d weights/yolov8n.engine 0 g
 
-# Camera 1, GPU postprocess, custom port
+# Custom port
 ./yolov8_stream -d weights/yolov8n.engine 0 g 9090
 
-# Camera 2 or 3
-./yolov8_stream -d yolov8n.engine 2 g
-./yolov8_stream -d yolov8n.engine 3 g
+# Flip horizontally (mirror — most common for front-facing cameras)
+./yolov8_stream -d weights/yolov8n.engine 0 g 8080 1
+
+# Flip vertically (upside-down mount)
+./yolov8_stream -d weights/yolov8n.engine 0 g 8080 0
+
+# Flip both axes (180° rotation)
+./yolov8_stream -d weights/yolov8n.engine 0 g 8080 2
 ```
 
 **Arguments:**
@@ -176,6 +181,7 @@ cd build
 | `<cam 0-3>` | Camera device index (`/dev/video0` – `/dev/video3`) |
 | `<c\|g>` | Postprocess on CPU (`c`) or GPU (`g`) |
 | `[port]` | HTTP port for MJPEG stream (default: `8080`) |
+| `[flip]` | Flip code: `1`=horizontal, `0`=vertical, `2`=both (omit = no flip) |
 
 ## View Stream
 
@@ -202,7 +208,7 @@ docker run -it --rm --net=host \
       --device /dev/video0:/dev/video0 \
       -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
       meraquetech/race_nav:yolov8-trt-nano.v1 \
-      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080"
+      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080 1"
 ```
 
 > Add `--device /dev/video1:/dev/video1` etc. for cameras 1–3.
@@ -224,7 +230,7 @@ docker run -it --rm --net=host \
       -v /tmp/argus_socket:/tmp/argus_socket \
       -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
       meraquetech/race_nav:yolov8-trt-nano.v1 \
-      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080"
+      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080 1"
 ```
 
 > If `nvargus-daemon` is not installed: `sudo apt install nvidia-l4t-jetson-multimedia-api`
