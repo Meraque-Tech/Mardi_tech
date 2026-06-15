@@ -17,7 +17,6 @@ RUN rm -f /etc/apt/sources.list.d/ros2.list && \
     apt-get update && apt-get install -y \
     tensorrt \
     libopencv-dev \
-    ros-humble-std-srvs \
     && rm -rf /var/lib/apt/lists/*
 
 # Fix v4l2 symlink for webcam on Jetson
