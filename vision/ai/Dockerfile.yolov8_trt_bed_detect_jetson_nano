@@ -1,11 +1,16 @@
-# Jetson Nano — JetPack 4.6.1, CUDA 10.2, TensorRT 8.2, ROS 2 Humble
+# Jetson Nano — JetPack 4.6.1, CUDA 10.2, TensorRT 8.2.1
+# FROM nvcr.io/nvidia/l4t-tensorrt:r8.2.1-runtime
 FROM dustynv/ros:humble-pytorch-l4t-r32.7.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV OPENBLAS_CORETYPE=ARMV8
+# ENV CUDA_HOME=/usr/local/cuda
+# ENV CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda
+# Select bash as default shell
 SHELL ["/bin/bash", "-c"]
 
-# Add JetPack 4.6.x apt repo
+
+# Add JetPack 4.6.x apt repo (Jetson Nano = Tegra210/t210, L4T r32.7)
 RUN echo "deb https://repo.download.nvidia.com/jetson/common r32.7 main" \
         > /etc/apt/sources.list.d/nvidia-l4t-apt-source.list && \
     echo "deb https://repo.download.nvidia.com/jetson/t210 r32.7 main" \
@@ -13,19 +18,24 @@ RUN echo "deb https://repo.download.nvidia.com/jetson/common r32.7 main" \
     wget -qO - https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
         | apt-key add -
 
+# RUN echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf && ldconfig
+
 RUN rm -f /etc/apt/sources.list.d/ros2.list && \
     apt-get update && apt-get install -y \
     tensorrt \
-    libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Fix v4l2 symlink for webcam on Jetson
 RUN ln -sf /usr/lib/aarch64-linux-gnu/tegra/libv4l2.so.0 /usr/lib/aarch64-linux-gnu/libv4l2.so
 
-# Verify installs
+# check tensorRT installation
 RUN dpkg -l | grep tensorrt
-RUN nvcc --version
+# check CUDA installation
+RUN nvcc --version  
+#  check OpenCV installation
 RUN pkg-config --modversion opencv4
+# check NVInfer header files
+RUN ls /usr/include/aarch64-linux-gnu/ | grep NvInfer   \
+    && ls /usr/include/aarch64-linux-gnu/ | grep NvInferRuntime
 
 # Build the ROS 2 package
 WORKDIR /ros2_ws/src
