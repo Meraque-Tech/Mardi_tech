@@ -180,6 +180,7 @@ cd build
 | `<c\|g>` | Postprocess on CPU (`c`) or GPU (`g`) |
 | `[port]` | HTTP port for MJPEG stream (default: `8080`) |
 | `[flip]` | `1`=horizontal, `0`=vertical, `2`=both (omit = no flip) |
+| `[input_size]` | Model input resolution e.g. `640` or `1280` (default: `640`) |
 
 ## View Stream
 
@@ -229,7 +230,7 @@ docker run -it --rm --net=host \
       -v /tmp/argus_socket:/tmp/argus_socket \
       -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
       meraquetech/race_nav:yolov8-trt-nano.v1 \
-      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080 0"
+      bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080 0 640"
 ```
 
 > If `nvargus-daemon` is not installed: `sudo apt install nvidia-l4t-jetson-multimedia-api`

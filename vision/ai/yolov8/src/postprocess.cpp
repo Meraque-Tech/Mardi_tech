@@ -395,43 +395,21 @@ void batch_nms_obb(std::vector<std::vector<Detection>>& res_batch, float* output
 static std::vector<cv::Point> get_corner(cv::Mat& img, const Detection& box) {
     float cos_value, sin_value;
 
-    // Calculate center point and width/height
     float x1 = box.bbox[0];
     float y1 = box.bbox[1];
-    float w = box.bbox[2];
-    float h = box.bbox[3];
-    float angle = box.angle * 180.0f / CV_PI;  // Convert radians to degrees
+    float w  = box.bbox[2];
+    float h  = box.bbox[3];
+    float angle = box.angle * 180.0f / CV_PI;  // radians → degrees
 
-    // Print original angle
-    std::cout << "Original angle: " << angle << std::endl;
-
-    // Swap width and height if height is greater than or equal to width
+    // YOLOv8-OBB convention: width >= height; swap and rotate 90° if not
     if (h >= w) {
         std::swap(w, h);
-        angle = fmod(angle + 90.0f, 180.0f);  // Adjust angle to be within [0, 180)
+        angle = fmod(angle + 90.0f, 180.0f);
     }
+    if (angle < 0)      angle += 360.0f;
+    if (angle > 180.0f) angle -= 180.0f;
 
-    // Ensure the angle is between 0 and 180 degrees
-    if (angle < 0) {
-        angle += 360.0f;  // Convert to positive value
-    }
-    if (angle > 180.0f) {
-        angle -= 180.0f;  // Subtract 180 from angles greater than 180
-    }
-
-    // Print adjusted angle
-    std::cout << "Adjusted angle: " << angle << std::endl;
-
-    // Convert to normal angle value
-    float normal_angle = fmod(angle, 180.0f);
-    if (normal_angle < 0) {
-        normal_angle += 180.0f;  // Ensure it's a positive value
-    }
-
-    // Print normal angle value
-    std::cout << "Normal angle: " << normal_angle << std::endl;
-
-    cos_value = std::cos(angle * CV_PI / 180.0f);  // Convert to radians
+    cos_value = std::cos(angle * CV_PI / 180.0f);
     sin_value = std::sin(angle * CV_PI / 180.0f);
 
     // Calculate each corner point
@@ -482,7 +460,7 @@ void draw_bbox_obb(std::vector<cv::Mat>& img_batch, std::vector<std::vector<Dete
             auto color = colors[(int)obj.class_id % colors.size()];
             auto bgr = cv::Scalar(color & 0xFF, color >> 8 & 0xFF, color >> 16 & 0xFF);
             auto corner_points = get_corner(img, obj);
-            cv::polylines(img, std::vector<std::vector<cv::Point>>{corner_points}, true, bgr, 1);
+            cv::polylines(img, std::vector<std::vector<cv::Point>>{corner_points}, true, bgr, 2, cv::LINE_AA);
 
             auto text = (std::to_string((int)(obj.class_id)) + ":" + to_string_with_precision(obj.conf));
             cv::Size textsize = cv::getTextSize(text, 0, 0.3, 1, nullptr);

@@ -177,29 +177,31 @@ void mjpeg_server(int port) {
 }
 
 // ─── args ─────────────────────────────────────────────────────────────────────
-// ./yolov8_stream -d <engine> <cam 0-3> <c|g> [port=8080] [flip: 0=vert 1=horiz 2=both]
+// ./yolov8_stream -d <engine> <cam 0-3> <c|g> [port=8080] [flip: 0=vert 1=horiz 2=both] [input_size=640]
 bool parse_args(int argc, char** argv, std::string& engine, int& cam_id,
-                std::string& post, int& port, int& flip_code) {
+                std::string& post, int& port, int& flip_code, int& input_size) {
     if (argc < 5 || std::string(argv[1]) != "-d") return false;
     engine    = argv[2];
     cam_id    = std::stoi(argv[3]);
     post      = argv[4];
     if (post != "c" && post != "g") return false;
     if (cam_id < 0 || cam_id > 3)  return false;
-    if (argc >= 6) port      = std::stoi(argv[5]);
-    if (argc >= 7) flip_code = std::stoi(argv[6]);
+    if (argc >= 6) port       = std::stoi(argv[5]);
+    if (argc >= 7) flip_code  = std::stoi(argv[6]);
+    if (argc >= 8) input_size = std::stoi(argv[7]);
     return true;
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
 int main(int argc, char** argv) {
     std::string engine_name, post;
-    int cam_id = 0, port = 8080, flip_code = -1;
+    int cam_id = 0, port = 8080, flip_code = -1, input_size = kInputW;
 
-    if (!parse_args(argc, argv, engine_name, cam_id, post, port, flip_code)) {
-        std::cerr << "Usage: ./yolov8_stream -d <engine> <cam 0-3> <c|g> [port=8080] [flip: 0=vert 1=horiz 2=both]\n";
+    if (!parse_args(argc, argv, engine_name, cam_id, post, port, flip_code, input_size)) {
+        std::cerr << "Usage: ./yolov8_stream -d <engine> <cam 0-3> <c|g> [port=8080] [flip: 0=vert 1=horiz 2=both] [input_size=640]\n";
         return -1;
     }
+    std::cout << "Input size: " << input_size << "x" << input_size << "\n";
 
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
@@ -248,24 +250,24 @@ int main(int argc, char** argv) {
         }
 
         // Letterbox — identical transform to cuda_preprocess:
-        //   scale = min(kInputW/w, kInputH/h), center-aligned with pad=128
-        // Passing this 640x640 image to cuda_batch_preprocess makes it a 1:1 copy
+        //   scale = min(input_size/w, input_size/h), center-aligned with pad=128
+        // Passing this NxN image to cuda_batch_preprocess makes it a 1:1 copy
         // (scale=1, offset=0), so model coords map directly to display image coords.
-        float scale = std::min(kInputW  / (float)frame.cols,
-                               kInputH / (float)frame.rows);
+        float scale = std::min(input_size / (float)frame.cols,
+                               input_size / (float)frame.rows);
         int new_w = (int)(frame.cols * scale);
         int new_h = (int)(frame.rows * scale);
-        int pad_x = (kInputW  - new_w) / 2;
-        int pad_y = (kInputH - new_h) / 2;
+        int pad_x = (input_size - new_w) / 2;
+        int pad_y = (input_size - new_h) / 2;
 
         cv::Mat scaled;
         cv::resize(frame, scaled, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
-        cv::Mat letterboxed(kInputH, kInputW, frame.type(), cv::Scalar(128, 128, 128));
+        cv::Mat letterboxed(input_size, input_size, frame.type(), cv::Scalar(128, 128, 128));
         scaled.copyTo(letterboxed(cv::Rect(pad_x, pad_y, new_w, new_h)));
 
         // GPU preprocess + infer
         std::vector<cv::Mat> batch = {letterboxed};
-        cuda_batch_preprocess(batch, device_buffers[0], kInputW, kInputH, stream);
+        cuda_batch_preprocess(batch, device_buffers[0], input_size, input_size, stream);
 
         auto t0 = std::chrono::steady_clock::now();
         run_infer(*context, stream, (void**)device_buffers,
