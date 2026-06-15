@@ -393,82 +393,48 @@ void batch_nms_obb(std::vector<std::vector<Detection>>& res_batch, float* output
 }
 
 static std::vector<cv::Point> get_corner(cv::Mat& img, const Detection& box) {
-    float cos_value, sin_value;
+    // Model output: cx, cy, w, h in model input coordinate space, angle in radians
+    float cx = box.bbox[0];
+    float cy = box.bbox[1];
+    float w  = box.bbox[2];
+    float h  = box.bbox[3];
+    float angle = box.angle;  // radians, keep as-is for trig
 
-    // Calculate center point and width/height
-    float x1 = box.bbox[0];
-    float y1 = box.bbox[1];
-    float w = box.bbox[2];
-    float h = box.bbox[3];
-    float angle = box.angle * 180.0f / CV_PI;  // Convert radians to degrees
-
-    // Print original angle
-    std::cout << "Original angle: " << angle << std::endl;
-
-    // Swap width and height if height is greater than or equal to width
-    if (h >= w) {
-        std::swap(w, h);
-        angle = fmod(angle + 90.0f, 180.0f);  // Adjust angle to be within [0, 180)
+    // Scale model coords → image pixel coords
+    // get_rect handles letterbox offsets; replicate the same scale here with floats
+    float r_w = kInputW / (img.cols * 1.0f);
+    float r_h = kInputH / (img.rows * 1.0f);
+    float scale, pad_x = 0.0f, pad_y = 0.0f;
+    if (r_h > r_w) {
+        scale = r_w;
+        pad_y = (kInputH - scale * img.rows) / 2.0f;
+    } else {
+        scale = r_h;
+        pad_x = (kInputW - scale * img.cols) / 2.0f;
     }
+    // Map center from model space to image space (no integer rounding until drawing)
+    float px = (cx - pad_x) / scale;
+    float py = (cy - pad_y) / scale;
+    float pw = w / scale;
+    float ph = h / scale;
 
-    // Ensure the angle is between 0 and 180 degrees
-    if (angle < 0) {
-        angle += 360.0f;  // Convert to positive value
+    // Rotate the four half-axes by angle to get corners
+    float cos_a = std::cos(angle);
+    float sin_a = std::sin(angle);
+    float dx1 =  pw / 2.0f * cos_a,  dy1 =  pw / 2.0f * sin_a;  // along width axis
+    float dx2 = -ph / 2.0f * sin_a,  dy2 =  ph / 2.0f * cos_a;  // along height axis
+
+    std::vector<cv::Point> pts(4);
+    pts[0] = cv::Point(int(round(px - dx1 - dx2)), int(round(py - dy1 - dy2)));
+    pts[1] = cv::Point(int(round(px + dx1 - dx2)), int(round(py + dy1 - dy2)));
+    pts[2] = cv::Point(int(round(px + dx1 + dx2)), int(round(py + dy1 + dy2)));
+    pts[3] = cv::Point(int(round(px - dx1 + dx2)), int(round(py - dy1 + dy2)));
+
+    for (auto& p : pts) {
+        p.x = std::max(0, std::min(p.x, img.cols - 1));
+        p.y = std::max(0, std::min(p.y, img.rows - 1));
     }
-    if (angle > 180.0f) {
-        angle -= 180.0f;  // Subtract 180 from angles greater than 180
-    }
-
-    // Print adjusted angle
-    std::cout << "Adjusted angle: " << angle << std::endl;
-
-    // Convert to normal angle value
-    float normal_angle = fmod(angle, 180.0f);
-    if (normal_angle < 0) {
-        normal_angle += 180.0f;  // Ensure it's a positive value
-    }
-
-    // Print normal angle value
-    std::cout << "Normal angle: " << normal_angle << std::endl;
-
-    cos_value = std::cos(angle * CV_PI / 180.0f);  // Convert to radians
-    sin_value = std::sin(angle * CV_PI / 180.0f);
-
-    // Calculate each corner point
-    float l = x1 - w / 2;  // Left boundary
-    float r = x1 + w / 2;  // Right boundary
-    float t = y1 - h / 2;  // Top boundary
-    float b = y1 + h / 2;  // Bottom boundary
-
-    // Use get_rect function to scale the coordinates
-    float bbox[4] = {l, t, r, b};
-    cv::Rect rect = get_rect(img, bbox);
-
-    float x_ = (rect.x + rect.x + rect.width) / 2;   // Center x
-    float y_ = (rect.y + rect.y + rect.height) / 2;  // Center y
-    float width = rect.width;                        // Width
-    float height = rect.height;                      // Height
-
-    // Calculate each corner point
-    std::vector<cv::Point> corner_points(4);
-    float vec1x = width / 2 * cos_value;
-    float vec1y = width / 2 * sin_value;
-    float vec2x = -height / 2 * sin_value;
-    float vec2y = height / 2 * cos_value;
-
-    corner_points[0] = cv::Point(int(round(x_ + vec1x + vec2x)), int(round(y_ + vec1y + vec2y)));  // Top-left corner
-    corner_points[1] = cv::Point(int(round(x_ + vec1x - vec2x)), int(round(y_ + vec1y - vec2y)));  // Top-right corner
-    corner_points[2] =
-            cv::Point(int(round(x_ - vec1x - vec2x)), int(round(y_ - vec1y - vec2y)));  // Bottom-right corner
-    corner_points[3] = cv::Point(int(round(x_ - vec1x + vec2x)), int(round(y_ - vec1y + vec2y)));  // Bottom-left corner
-
-    // Check and adjust corner points to ensure the rectangle is parallel to image boundaries
-    for (auto& point : corner_points) {
-        point.x = std::max(0, std::min(point.x, img.cols - 1));
-        point.y = std::max(0, std::min(point.y, img.rows - 1));
-    }
-
-    return corner_points;
+    return pts;
 }
 
 void draw_bbox_obb(std::vector<cv::Mat>& img_batch, std::vector<std::vector<Detection>>& res_batch) {
@@ -482,7 +448,7 @@ void draw_bbox_obb(std::vector<cv::Mat>& img_batch, std::vector<std::vector<Dete
             auto color = colors[(int)obj.class_id % colors.size()];
             auto bgr = cv::Scalar(color & 0xFF, color >> 8 & 0xFF, color >> 16 & 0xFF);
             auto corner_points = get_corner(img, obj);
-            cv::polylines(img, std::vector<std::vector<cv::Point>>{corner_points}, true, bgr, 1);
+            cv::polylines(img, std::vector<std::vector<cv::Point>>{corner_points}, true, bgr, 2, cv::LINE_AA);
 
             auto text = (std::to_string((int)(obj.class_id)) + ":" + to_string_with_precision(obj.conf));
             cv::Size textsize = cv::getTextSize(text, 0, 0.3, 1, nullptr);

@@ -1,6 +1,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -28,6 +29,8 @@ const int kOutputSize = kMaxNumOutputBbox * sizeof(Detection) / sizeof(float) + 
 static std::mutex              g_frame_mutex;
 static std::vector<uchar>      g_jpeg_frame;
 static std::atomic<bool>       g_running{true};
+
+static void signal_handler(int) { g_running = false; }
 
 // ─── TensorRT helpers (same as yolov8_obb.cpp) ───────────────────────────────
 void deserialize_engine(const std::string& engine_name, IRuntime** runtime,
@@ -176,6 +179,9 @@ int main(int argc, char** argv) {
         return -1;
     }
 
+    signal(SIGINT,  signal_handler);
+    signal(SIGTERM, signal_handler);
+
     cudaSetDevice(kGpuId);
 
     // Load engine
@@ -223,9 +229,13 @@ int main(int argc, char** argv) {
         // Preprocess + infer (single-frame batch)
         std::vector<cv::Mat> batch = {resized};
         cuda_batch_preprocess(batch, device_buffers[0], kInputW, kInputH, stream);
+
+        auto t0 = std::chrono::steady_clock::now();
         run_infer(*context, stream, (void**)device_buffers,
                   output_buffer_host, decode_ptr_host, decode_ptr_device,
                   model_bboxes, post);
+        auto t1 = std::chrono::steady_clock::now();
+        int infer_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
         // Postprocess
         std::vector<std::vector<Detection>> res_batch;
@@ -237,6 +247,13 @@ int main(int argc, char** argv) {
 
         // Draw detections
         draw_bbox_obb(batch, res_batch);
+
+        // Overlay inference time
+        std::string fps_text = "Infer: " + std::to_string(infer_ms) + " ms";
+        cv::putText(batch[0], fps_text, cv::Point(8, 24),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 0), 3, cv::LINE_AA);
+        cv::putText(batch[0], fps_text, cv::Point(8, 24),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
 
         // Encode to JPEG and publish
         std::vector<uchar> jpeg_buf;
