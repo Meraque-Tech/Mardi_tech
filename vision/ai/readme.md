@@ -231,6 +231,8 @@ docker run -it --rm --net=host \
       -v $PWD/yolov8/weights:/workspace/yolov8/build/weights:ro \
       meraquetech/race_nav:yolov8-trt-nano.v1 \
       bash -c "cd /workspace/yolov8/build && ./yolov8_stream -d ./weights/yolov8n.engine 0 g 8080 0 640"
+
+docker rm -f yolov8_trt
 ```
 
 > If `nvargus-daemon` is not installed: `sudo apt install nvidia-l4t-jetson-multimedia-api`
