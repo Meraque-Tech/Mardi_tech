@@ -115,11 +115,13 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
 
   # if output okay then all okay
 
+  Serialize ->
   cd build
   ./yolov8_det -s ./weights/yolov8n.wts yolov8n.engine n
   cp yolov8n.engine /output/
 
 
+  Serialize Engine Using Docker container ->
   # build in once -->
   docker run -it --rm --net=host \
         --runtime nvidia \
@@ -134,5 +136,8 @@ No `runtime:` key or `deploy.resources` block is needed — both are unsupported
         meraquetech/race_nav:yolov8-trt-nano.v1 \
         bash -c "cd /workspace/yolov8/build && ./yolov8_det -s ./weights/yolov8n.wts yolov8n.engine n && cp yolov8n.engine /output/"
   
+
+  DeSerialize ->
+    ./yolov8_det -d /output/yolov8n.engine ./images g
 
 ```
