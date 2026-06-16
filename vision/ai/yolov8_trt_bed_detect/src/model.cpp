@@ -4,6 +4,8 @@
 #include <iostream>
 #include "config.h"
 
+int kNumClass = 1;
+
 nvinfer1::IHostMemory* buildEngineYolov8n(nvinfer1::IBuilder* builder,
                                           nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt, const std::string& wts_path) {
     std::map<std::string, nvinfer1::Weights> weightMap = loadWeights(wts_path);

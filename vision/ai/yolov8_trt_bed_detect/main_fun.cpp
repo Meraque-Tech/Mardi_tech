@@ -118,6 +118,9 @@ bool parse_args(int argc, char **argv, std::string &wts, std::string &engine, st
         wts = std::string(argv[2]);
         engine = std::string(argv[3]);
         sub_type = std::string(argv[4]);
+        if (argc > 5) {
+            kNumClass = std::stoi(argv[5]);
+        }
     } else if (std::string(argv[1]) == "-d") {
         engine = std::string(argv[2]);
         img_dir = std::string(argv[3]);
