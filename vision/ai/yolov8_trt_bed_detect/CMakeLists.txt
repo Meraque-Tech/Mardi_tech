@@ -64,6 +64,14 @@ install(TARGETS
   yolov8_trt_bed_detect
   DESTINATION lib/${PROJECT_NAME})
 
+install(TARGETS
+  myplugins
+  DESTINATION lib/${PROJECT_NAME})
+
+set_target_properties(yolov8_trt_bed_detect PROPERTIES
+  INSTALL_RPATH "$ORIGIN"
+  BUILD_WITH_INSTALL_RPATH TRUE)
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
