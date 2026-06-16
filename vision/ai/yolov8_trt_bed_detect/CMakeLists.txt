@@ -58,7 +58,7 @@ endif()
 file(GLOB_RECURSE SRCS ${PROJECT_SOURCE_DIR}/src/*.cpp ${PROJECT_SOURCE_DIR}/src/*.cu)
 add_executable(yolov8_trt_bed_detect ${PROJECT_SOURCE_DIR}/main.cpp ${SRCS})
 ament_target_dependencies(yolov8_trt_bed_detect ${dependencies})
-target_link_libraries(yolov8_trt_bed_detect nvinfer cudart myplugins ${OpenCV_LIBS})
+target_link_libraries(yolov8_trt_bed_detect nvinfer cudart myplugins ${OpenCV_LIBS} pthread)
 
 install(TARGETS
   yolov8_trt_bed_detect

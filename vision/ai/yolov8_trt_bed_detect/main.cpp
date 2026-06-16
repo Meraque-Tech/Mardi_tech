@@ -4,6 +4,7 @@
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include "std_srvs/srv/trigger.hpp"
+#include "mjpeg_server.h"
 
 #include <signal.h>
 #include <stdio.h>
@@ -71,6 +72,13 @@ int main(int argc, char *argv[]) {
     cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
 
+    MjpegServer mjpeg_server;
+    if (!mjpeg_server.start(8080)) {
+        std::cerr << "Failed to start MJPEG server on port 8080." << std::endl;
+    } else {
+        std::cout << "MJPEG stream available at http://<host-ip>:8080/" << std::endl;
+    }
+
     IRuntime *runtime = nullptr;
     ICudaEngine *engine = nullptr;
     IExecutionContext *context = nullptr;
@@ -115,6 +123,8 @@ int main(int argc, char *argv[]) {
                 batch_process(res_batch, decode_ptr_host, img_batch.size(), bbox_element, img_batch);
             }
 
+            draw_bbox(img_batch, res_batch);
+
             auto &res = res_batch[0];
             auto bed_msg = std_msgs::msg::UInt8();
 
@@ -135,6 +145,8 @@ int main(int argc, char *argv[]) {
             }
             bed_status_pub->publish(bed_msg);
         }
+
+        mjpeg_server.push_frame(frame);
 
         int key = cv::waitKey(1);
         if (key == 'q') {
