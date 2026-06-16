@@ -170,6 +170,8 @@ docker run -it --rm --net=host \
   -v $PWD/yolov8/weights:/output \
   meraquetech/race_nav:yolov8-trt-bed-detect-nano.v1
 ```
+or,
+meraquetech/race_nav:yolov8-trt-bed-detect-nano.v2
 
 Then inside the container:
 
