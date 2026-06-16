@@ -181,6 +181,7 @@ ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect -s /ros2_ws/src/yolov8_trt_
 ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
   -d /output/yolov8n.engine ./ g -conf 0.2
 
+docker exec -it yolov8_trt_bed_detect bash
 # Trigger detection from another terminal
 ros2 service call /bed_detection std_srvs/srv/Trigger {}
 ```
