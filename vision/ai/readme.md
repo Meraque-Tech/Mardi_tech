@@ -175,7 +175,7 @@ Then inside the container:
 
 ```bash
 # Serialize engine (once per model)
-ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect -s /ros2_ws/src/yolov8_trt_bed_detect/weights/yolov8n.wts yolov8n.engine n
+ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect -s /ros2_ws/src/yolov8_trt_bed_detect/weights/yolov8n.wts yolov8n.engine n 80
 
 # Run detection node
 ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
