@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>yolov8_trt_bed_detect</name>
+  <name>yolov8_trt_target_detect</name>
   <version>0.0.0</version>
-  <description>YOLOv8 TensorRT bed detection node with webcam input</description>
+  <description>YOLOv8 TensorRT target detection node with webcam input</description>
   <maintainer email="debanik@solarisrobots.in">Debanik</maintainer>
   <license>TODO: License declaration</license>
 

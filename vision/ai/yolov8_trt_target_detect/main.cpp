@@ -11,9 +11,9 @@
 
 // Global state
 rclcpp::Node::SharedPtr node;
-int start_bed_detection_ = 0;
+int start_target_detection_ = 0;
 float conf_score_value = 0.8f;
-bool bed_detection_fb_ = 0;
+bool target_detection_fb_ = 0;
 
 
 void sig_handler(int signal){
@@ -21,13 +21,13 @@ void sig_handler(int signal){
     exit(0);
 }
 
-void bed_detection_cb(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+void target_detection_cb(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
           std::shared_ptr<std_srvs::srv::Trigger::Response> response)
 {
-    start_bed_detection_ = 1;
+    start_target_detection_ = 1;
     response->success = 1;
-    response->message = "bed detection started";
-    std::cout << "\nbed detection started" << std::endl;
+    response->message = "target detection started";
+    std::cout << "\ntarget detection started" << std::endl;
 }
 
 int main(int argc, char *argv[]) {
@@ -36,10 +36,10 @@ int main(int argc, char *argv[]) {
     node = rclcpp::Node::make_shared("yolov8_trt");
 
     auto conf_pub = node->create_publisher<std_msgs::msg::Float32>("conf", 10);
-    auto bed_status_pub = node->create_publisher<std_msgs::msg::UInt8>("bed_detection_status", 10);
+    auto target_status_pub = node->create_publisher<std_msgs::msg::UInt8>("target_detection_status", 10);
 
-    auto bed_detection_service =
-        node->create_service<std_srvs::srv::Trigger>("bed_detection", &bed_detection_cb);
+    auto target_detection_service =
+        node->create_service<std_srvs::srv::Trigger>("target_detection", &target_detection_cb);
 
     cv::Mat frame;
 
@@ -109,7 +109,7 @@ int main(int argc, char *argv[]) {
         cap >> frame;
         if (frame.empty()) continue;
 
-        if (start_bed_detection_ == 1) {
+        if (start_target_detection_ == 1) {
             std::vector<cv::Mat> img_batch{frame};
 
             cuda_batch_preprocess(img_batch, device_buffers[0], kInputW, kInputH, stream);
@@ -126,7 +126,7 @@ int main(int argc, char *argv[]) {
             draw_bbox(img_batch, res_batch);
 
             auto &res = res_batch[0];
-            auto bed_msg = std_msgs::msg::UInt8();
+            auto target_msg = std_msgs::msg::UInt8();
 
             if (!res.empty()) {
                 for (auto &it : res) {
@@ -135,15 +135,15 @@ int main(int argc, char *argv[]) {
                         auto conf_msg = std_msgs::msg::Float32();
                         conf_msg.data = it.conf;
                         conf_pub->publish(conf_msg);
-                        bed_msg.data = 1;
-                        std::cout << "Detected bed." << std::endl;
+                        target_msg.data = 1;
+                        std::cout << "Detected target." << std::endl;
                         break;
                     }
                 }
             } else {
-                bed_msg.data = 0;
+                target_msg.data = 0;
             }
-            bed_status_pub->publish(bed_msg);
+            target_status_pub->publish(target_msg);
         }
 
         mjpeg_server.push_frame(frame);

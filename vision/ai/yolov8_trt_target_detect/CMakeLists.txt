@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(yolov8_trt_bed_detect)
+project(yolov8_trt_target_detect)
 
 add_definitions(-w)
 
@@ -56,19 +56,19 @@ else()
 endif()
 
 file(GLOB_RECURSE SRCS ${PROJECT_SOURCE_DIR}/src/*.cpp ${PROJECT_SOURCE_DIR}/src/*.cu)
-add_executable(yolov8_trt_bed_detect ${PROJECT_SOURCE_DIR}/main.cpp ${SRCS})
-ament_target_dependencies(yolov8_trt_bed_detect ${dependencies})
-target_link_libraries(yolov8_trt_bed_detect nvinfer cudart myplugins ${OpenCV_LIBS} pthread)
+add_executable(yolov8_trt_target_detect ${PROJECT_SOURCE_DIR}/main.cpp ${SRCS})
+ament_target_dependencies(yolov8_trt_target_detect ${dependencies})
+target_link_libraries(yolov8_trt_target_detect nvinfer cudart myplugins ${OpenCV_LIBS} pthread)
 
 install(TARGETS
-  yolov8_trt_bed_detect
+  yolov8_trt_target_detect
   DESTINATION lib/${PROJECT_NAME})
 
 install(TARGETS
   myplugins
   DESTINATION lib/${PROJECT_NAME})
 
-set_target_properties(yolov8_trt_bed_detect PROPERTIES
+set_target_properties(yolov8_trt_target_detect PROPERTIES
   INSTALL_RPATH "$ORIGIN"
   BUILD_WITH_INSTALL_RPATH TRUE)
 
