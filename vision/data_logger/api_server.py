@@ -2,16 +2,19 @@
 REST API to start / stop frame_logger and video_logger C++ binaries.
 
 Endpoints:
-  POST /start/frame   body: { device, output, fps, max_frames, show }
-  POST /start/video   body: { device, output, fps, duration, show }
+  POST /start/frame         body: { device, output, fps, max_frames, show }
+  POST /start/video         body: { device, output, fps, duration, show }
   POST /stop
   GET  /status
+  GET  /files?type=frames|videos   list saved files
+  GET  /download/<type>/<filename> download a file
+  DELETE /files/<type>/<filename>  delete a file
 """
 
 import os
 import signal
 import subprocess
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file, abort
 
 app = Flask(__name__, static_folder="ui")
 
@@ -106,6 +109,145 @@ def stop():
     _proc = None
     _logger_type = None
     return jsonify({"stopped": True, "pid": pid})
+
+
+LOGS = {
+    "frames": os.path.join(BASE, "logs", "frames"),
+    "videos": os.path.join(BASE, "logs", "videos"),
+}
+
+
+@app.get("/files")
+def list_files():
+    ftype = request.args.get("type", "videos")
+    if ftype not in LOGS:
+        return jsonify({"error": "type must be 'frames' or 'videos'"}), 400
+    folder = LOGS[ftype]
+    if not os.path.isdir(folder):
+        return jsonify({"type": ftype, "files": []})
+    files = sorted(os.listdir(folder), reverse=True)
+    result = []
+    for f in files:
+        path = os.path.join(folder, f)
+        result.append({
+            "name": f,
+            "size_mb": round(os.path.getsize(path) / 1024 / 1024, 2),
+            "url": f"/download/{ftype}/{f}",
+        })
+    return jsonify({"type": ftype, "files": result})
+
+
+@app.get("/download/<ftype>/<filename>")
+def download_file(ftype, filename):
+    if ftype not in LOGS:
+        abort(404)
+    folder = LOGS[ftype]
+    safe = os.path.basename(filename)   # prevent path traversal
+    path = os.path.join(folder, safe)
+    if not os.path.isfile(path):
+        abort(404)
+    return send_file(path, as_attachment=True, download_name=safe)
+
+
+@app.delete("/files/<ftype>/<filename>")
+def delete_file(ftype, filename):
+    if ftype not in LOGS:
+        abort(404)
+    folder = LOGS[ftype]
+    safe = os.path.basename(filename)
+    path = os.path.join(folder, safe)
+    if not os.path.isfile(path):
+        abort(404)
+    os.remove(path)
+    return jsonify({"deleted": safe})
+
+
+# ── Network endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/network/status")
+def network_status():
+    try:
+        devices = subprocess.check_output(
+            ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"],
+            universal_newlines=True
+        ).strip()
+        ips = subprocess.check_output(["hostname", "-I"], universal_newlines=True).strip()
+        return jsonify({"devices": devices, "ips": ips.split()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/network/wifi/list")
+def wifi_list():
+    import time
+    try:
+        # Rescan required on Jetson — without it only the connected network appears
+        subprocess.call(["nmcli", "device", "wifi", "rescan"], stderr=subprocess.DEVNULL)
+        time.sleep(2)  # wait for scan results to populate
+
+        # Use | as separator to avoid splitting on colons inside SSIDs
+        out = subprocess.check_output(
+            ["nmcli", "--escape", "no", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY",
+             "device", "wifi", "list"],
+            universal_newlines=True
+        ).strip()
+
+        seen = {}  # ssid -> best entry (deduplicate by keeping highest signal)
+        for line in out.splitlines():
+            # Fields: IN-USE:SSID:SIGNAL:SECURITY  (nmcli uses : even with --escape no)
+            # Split on first 3 colons only so SSID with colons is preserved
+            parts = line.split(":", 3)
+            if len(parts) < 4:
+                continue
+            in_use, ssid, signal, security = parts
+            if not ssid:
+                continue
+            try:
+                sig_int = int(signal)
+            except ValueError:
+                sig_int = 0
+            if ssid not in seen or sig_int > seen[ssid]["signal_int"]:
+                seen[ssid] = {
+                    "ssid":       ssid,
+                    "signal":     signal,
+                    "signal_int": sig_int,
+                    "security":   security,
+                    "in_use":     in_use.strip() == "*",
+                }
+
+        networks = sorted(seen.values(), key=lambda n: n["signal_int"], reverse=True)
+        for n in networks:
+            del n["signal_int"]
+        return jsonify({"networks": networks})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/network/wifi/connect")
+def wifi_connect():
+    body = request.get_json(silent=True) or {}
+    ssid     = body.get("ssid", "").strip()
+    password = body.get("password", "").strip()
+    if not ssid:
+        return jsonify({"error": "ssid is required"}), 400
+    try:
+        cmd = ["nmcli", "device", "wifi", "connect", ssid]
+        if password:
+            cmd += ["password", password]
+        out = subprocess.check_output(cmd, universal_newlines=True, stderr=subprocess.STDOUT)
+        ips = subprocess.check_output(["hostname", "-I"], universal_newlines=True).strip()
+        return jsonify({"connected": True, "ssid": ssid, "output": out.strip(), "ips": ips.split()})
+    except subprocess.CalledProcessError as e:
+        return jsonify({"connected": False, "error": e.output.strip()}), 500
+
+
+@app.post("/system/shutdown")
+def system_shutdown():
+    try:
+        subprocess.Popen(["shutdown", "-h", "now"])
+        return jsonify({"shutdown": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

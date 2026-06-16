@@ -11,7 +11,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Build tools + ffmpeg + Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    g++ \
     build-essential \
     make \
     cmake \
@@ -19,11 +18,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     python3 \
     python3-pip \
-    # OpenCV 4 dev headers from NVIDIA L4T feed
     libopencv-dev \
+    network-manager \
+    gcc-8 \
+    g++-8 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir flask
+# Use GCC 8 as default (required for C++17 filesystem support)
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 80 \
+ && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 80
+
+RUN pip3 install --no-cache-dir setuptools wheel && \
+    pip3 install --no-cache-dir flask
 
 WORKDIR /app
 
@@ -33,11 +39,18 @@ COPY frame_logger/ frame_logger/
 COPY video_logger/ video_logger/
 
 # Nano has 4 cores — limit to avoid OOM during build
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
- && cmake --build build -j2
+RUN mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j2
 
 COPY api_server.py .
 COPY ui/ ui/
+
+
+# Build tools + ffmpeg + Python
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     network-manager \
+#     && rm -rf /var/lib/apt/lists/*
+
+
 
 RUN mkdir -p logs/frames logs/videos
 

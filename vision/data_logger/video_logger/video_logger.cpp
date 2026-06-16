@@ -64,8 +64,11 @@ int main(int argc, char** argv) {
 
     fs::create_directories(outdir);
 
+#if CV_VERSION_MAJOR > 3 || (CV_VERSION_MAJOR == 3 && CV_VERSION_MINOR >= 4)
     cv::VideoCapture cap(device, cv::CAP_V4L2);
-    if (!cap.isOpened()) cap.open(device);
+#else
+    cv::VideoCapture cap(device);
+#endif
     if (!cap.isOpened()) {
         std::cerr << "Cannot open /dev/video" << device << "\n";
         return 1;

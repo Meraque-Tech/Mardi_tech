@@ -49,6 +49,23 @@ cmake --build build -j$(nproc)
 
 Two platform-specific Dockerfiles — both compile C++ binaries inside the image.
 
+### Prerequisites — Docker Compose version
+
+Check which version you have:
+```bash
+docker compose version        # v2 (plugin) — preferred
+docker-compose --version      # v1 (standalone)
+```
+
+Upgrade from v1 to v2:
+```bash
+sudo apt remove docker-compose -y
+sudo apt install docker-compose-plugin -y
+docker compose version        # should show v2.x
+```
+
+> `run.sh` auto-detects v1 vs v2 and uses the correct command automatically.
+
 ### x86_64  Ubuntu 22.04
 
 ```bash
@@ -69,8 +86,39 @@ sudo systemctl restart docker
 
 Then:
 ```bash
-docker compose -f docker-compose.jetson.yml up --build
-docker compose -f docker-compose.jetson.yml down
+docker-compose -f docker-compose.jetson.yml build
+docker-compose -f docker-compose.jetson.yml push
+docker-compose -f docker-compose.jetson.yml up -d
+docker-compose -f docker-compose.jetson.yml down
+```
+
+### Building for Jetson Nano from x86
+
+**Option A — Build directly on the Jetson (easiest):**
+```bash
+# Copy project to Nano, then on the Nano:
+docker-compose -f docker-compose.jetson.yml up --build
+```
+
+**Option B — Cross-compile on x86 with buildx + QEMU:**
+```bash
+# Install QEMU
+sudo apt install qemu-user-static
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+# Create ARM64 builder
+docker buildx create --name multiarch --use
+docker buildx inspect --bootstrap
+
+# Build and push directly to Docker Hub
+docker buildx build \
+  --platform linux/arm64 \
+  -f Dockerfile.jetson \
+  -t meraquetech/race_nav:data-logger-jetson \
+  --push .
+
+# Then on the Jetson just pull and run:
+docker-compose -f docker-compose.jetson.yml up -d
 ```
 
 ### Image names
@@ -88,7 +136,7 @@ docker compose -f docker-compose.x86.yml build
 docker push meraquetech/race_nav:data-logger-x86
 
 # Jetson
-docker compose -f docker-compose.jetson.yml build
+docker-compose -f docker-compose.jetson.yml build
 docker push meraquetech/race_nav:data-logger-jetson
 ```
 
@@ -101,7 +149,7 @@ docker compose -f docker-compose.x86.yml up -d
 
 # Jetson
 docker pull meraquetech/race_nav:data-logger-jetson
-docker compose -f docker-compose.jetson.yml up -d
+docker-compose -f docker-compose.jetson.yml up -d
 ```
 
 ### File reference
@@ -165,6 +213,30 @@ Start the video logger. Body (all optional):
 
 #### `POST /stop`
 Stop the running logger.
+
+#### `GET /files?type=videos|frames`
+List saved files with name, size, and download URL.
+```json
+{
+  "type": "videos",
+  "files": [
+    { "name": "video_20260603_121500.mp4", "size_mb": 12.4, "url": "/download/videos/video_20260603_121500.mp4" }
+  ]
+}
+```
+
+#### `GET /download/<type>/<filename>`
+Download a saved file directly.
+```bash
+curl -OJ http://localhost:5000/download/videos/video_20260603_121500.mp4
+curl -OJ http://localhost:5000/download/frames/frame_20260603_121500_123456.jpg
+```
+
+#### `DELETE /files/<type>/<filename>`
+Delete a saved file.
+```bash
+curl -X DELETE http://localhost:5000/files/videos/video_20260603_121500.mp4
+```
 
 ### Example with curl
 
@@ -303,4 +375,9 @@ Camera 640×480             YOLO 640×640
 # Label frames with Roboflow or LabelImg, then:
 pip install ultralytics
 yolo train data=pineapple.yaml model=yolov8n.pt imgsz=640
+```
+
+# To change ownership from root to user dj:
+```
+    sudo chown $USER:$USER *
 ```

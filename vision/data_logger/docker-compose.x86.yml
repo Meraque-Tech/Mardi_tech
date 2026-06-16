@@ -1,3 +1,5 @@
+version: "3"
+
 # x86_64  Ubuntu 22.04
 # Usage: docker compose -f docker-compose.x86.yml up --build
 
@@ -9,16 +11,24 @@ services:
     image: meraquetech/race_nav:data-logger-x86
     container_name: data_logger_x86
     restart: always
-    ports:
-      - "5000:5000"
+    network_mode: host
+    # ports:
+    #   - "5000:5000"
     volumes:
       - ./logs:/app/logs
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-    devices:
-      - /dev/video0:/dev/video0
-    group_add:
-      - video
+      - /bin/systemctl:/bin/systemctl
+      - /run/systemd/system:/run/systemd/system
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      - /sys/fs/cgroup:/sys/fs/cgroup
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:rw  # Allow the container to control Docker on the host
+      - /var/run/dbus:/var/run/dbus
+      - /dev/mem:/dev/mem
+    privileged: true
+    # devices:
+    #   - /dev/video0:/dev/video0
+    #   - /dev/video2:/dev/video2
+    #   - /dev/video3:/dev/video3
     environment:
       - PYTHONUNBUFFERED=1
-      - DISPLAY=${DISPLAY}
-      - QT_X11_NO_MITSHM=1
