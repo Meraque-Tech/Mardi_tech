@@ -40,15 +40,6 @@ int main(int argc, char *argv[]) {
     auto bed_detection_service =
         node->create_service<std_srvs::srv::Trigger>("bed_detection", &bed_detection_cb);
 
-    // Open webcam (device index 0 by default)
-    cv::VideoCapture cap(0);
-    if (!cap.isOpened()) {
-        std::cout << "Failed to open webcam." << std::endl;
-        return 1;
-    }
-    cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
-
     cv::Mat frame;
 
     cudaSetDevice(kGpuId);
@@ -70,6 +61,15 @@ int main(int argc, char *argv[]) {
         serialize_engine(wts_name, engine_name, sub_type);
         return 0;
     }
+
+    // Open webcam (device index 0 by default) — only needed for inference mode
+    cv::VideoCapture cap(0);
+    if (!cap.isOpened()) {
+        std::cout << "Failed to open webcam." << std::endl;
+        return 1;
+    }
+    cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
 
     IRuntime *runtime = nullptr;
     ICudaEngine *engine = nullptr;
