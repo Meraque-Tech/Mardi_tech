@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>YOLOv8 Training</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>YOLOv8 Training</h1>
+          <p id="data-root">Loading configuration...</p>
+        </div>
+        <div class="status-pill" id="status-pill">Idle</div>
+      </header>
+
+      <section class="workspace">
+        <div class="panel dataset-panel">
+          <div class="panel-header">
+            <h2>Dataset</h2>
+            <button id="prepare-dataset" type="button">Prepare Dataset</button>
+          </div>
+
+          <div class="source-tabs" role="tablist">
+            <button class="tab active" type="button" data-source="local">Local Path</button>
+            <button class="tab" type="button" data-source="upload">Upload ZIP</button>
+            <button class="tab" type="button" data-source="roboflow">Roboflow</button>
+          </div>
+
+          <div class="source-view active" id="source-local">
+            <label>
+              Local server path
+              <input id="local-path" type="text" placeholder="/path/to/yolo/dataset">
+            </label>
+            <label class="checkbox-row">
+              <input id="local-force-split" type="checkbox">
+              Rebuild train/val/test split
+            </label>
+          </div>
+
+          <div class="source-view" id="source-upload">
+            <label>
+              YOLO dataset ZIP
+              <input id="upload-file" type="file" accept=".zip">
+            </label>
+            <label class="checkbox-row">
+              <input id="upload-force-split" type="checkbox" checked>
+              Rebuild train/val/test split
+            </label>
+          </div>
+
+          <div class="source-view" id="source-roboflow">
+            <div class="grid two">
+              <label>
+                Workspace
+                <input id="rf-workspace" type="text">
+              </label>
+              <label>
+                Project
+                <input id="rf-project" type="text">
+              </label>
+              <label>
+                Version
+                <input id="rf-version" type="number" min="1">
+              </label>
+              <label>
+                Format
+                <input id="rf-format" type="text" value="yolov8">
+              </label>
+            </div>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Dataset name
+              <input id="dataset-name" type="text" value="pineapple_dataset">
+            </label>
+            <label>
+              Dataset YAML
+              <input id="dataset-yaml" type="text" readonly>
+            </label>
+          </div>
+
+          <div class="grid three">
+            <label>
+              Train %
+              <input id="split-train" type="number" min="1" max="100" value="70">
+            </label>
+            <label>
+              Val %
+              <input id="split-val" type="number" min="0" max="100" value="20">
+            </label>
+            <label>
+              Test %
+              <input id="split-test" type="number" min="0" max="100" value="10">
+            </label>
+          </div>
+
+          <label>
+            Class IDs
+            <textarea id="classes" rows="5">flat
+missing
+ok</textarea>
+          </label>
+        </div>
+
+        <div class="panel training-panel">
+          <div class="panel-header">
+            <h2>Training</h2>
+            <div class="button-row">
+              <button id="start-training" type="button">Start</button>
+              <button id="stop-training" class="secondary" type="button">Stop</button>
+            </div>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Model size
+              <select id="model-size">
+                <option value="nano">Nano - yolov8n.pt</option>
+                <option value="small">Small - yolov8s.pt</option>
+                <option value="medium">Medium - yolov8m.pt</option>
+                <option value="large">Large - yolov8l.pt</option>
+                <option value="xlarge">Extra large - yolov8x.pt</option>
+              </select>
+            </label>
+            <label>
+              Device
+              <input id="device" type="text" placeholder="0, cpu, or blank for auto">
+            </label>
+          </div>
+
+          <div class="grid three">
+            <label>
+              Epochs
+              <input id="epochs" type="number" min="1" value="100">
+            </label>
+            <label>
+              Image size
+              <input id="imgsz" type="number" min="32" value="640">
+            </label>
+            <label>
+              Batch
+              <input id="batch" type="number" value="16">
+            </label>
+          </div>
+
+          <div class="grid three">
+            <label>
+              Patience
+              <input id="patience" type="number" min="0" value="50">
+            </label>
+            <label>
+              Save period
+              <input id="save-period" type="number" value="-1">
+            </label>
+            <label>
+              Run name
+              <input id="run-name" type="text" value="train">
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              Project
+              <input id="project" type="text" value="runs/detect">
+            </label>
+            <label class="checkbox-row inline-check">
+              <input id="resume" type="checkbox">
+              Resume from checkpoint
+            </label>
+          </div>
+
+          <div class="message" id="message"></div>
+        </div>
+      </section>
+
+      <section class="panel logs-panel">
+        <div class="panel-header">
+          <h2>Logs</h2>
+          <button id="refresh-logs" class="secondary" type="button">Refresh</button>
+        </div>
+        <pre id="logs"></pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

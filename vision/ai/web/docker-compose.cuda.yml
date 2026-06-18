@@ -1,0 +1,22 @@
+services:
+  yolov8-training-web:
+    build:
+      context: ../../..
+      dockerfile: vision/ai/web/Dockerfile.cuda
+    container_name: yolov8-training-web
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../..:/app
+      - ./datasets:/app/vision/ai/web/datasets
+      - ./logs:/app/vision/ai/web/logs
+      - ../../../runs:/app/runs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
