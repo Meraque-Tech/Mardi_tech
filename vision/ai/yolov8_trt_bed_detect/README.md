@@ -80,11 +80,17 @@ docker run -it --rm --net=host \
 Inside the container, serialize the engine:
 
 ```bash
+# for nano ->
 ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
-  -s weights/yolov8s_bed.wts weights/yolov8s_bed.engine s
+  -s /weights/yolov8n.wts /weights/yolov8n.engine n
+
+# for small ->
+ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
+  -s /weights/yolov8s.wts /weights/yolov8s.engine s
+
 ```
 
-This produces `weights/yolov8s_bed.engine` (only needs to be done once per model).
+This produces `weights/yolov8s.engine` (only needs to be done once per model).
 
 ---
 
@@ -95,7 +101,7 @@ All TensorRT and camera settings live in [`config/trt_params.yaml`](config/trt_p
 ```yaml
 yolov8_trt:
   ros__parameters:
-    engine_name:        "weights/yolov8s_bed.engine"
+    engine_name:        "weights/yolov8n.engine"
     input_h:            416        # must match engine build resolution
     input_w:            416
     precision:          "fp16"     # "fp16" or "int8"
