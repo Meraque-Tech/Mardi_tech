@@ -3,7 +3,7 @@ yolov8_trt:
 
     # ── Engine file ──────────────────────────────────────────────────────────
     # engine_name: "yolov8n.engine"        # path to serialised TRT engine
-    engine_name: "/ros2_ws/src/yolov8_trt_bed_detect/weights/yolov8s_bed.engine"        # path to serialised TRT engine
+    engine_name: "/ros2_ws/src/yolov8_trt_bed_detect/weights/yolov8n.engine"        # path to serialised TRT engine
 
     # ── Input resolution (must match engine build) ───────────────────────────
     # 640 → 416 saves ~34% compute | 320 saves ~61%
