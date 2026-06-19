@@ -73,7 +73,7 @@ Use this when you want the UI and training process to run inside a CUDA-enabled
 container.
 
 ```bash
-docker compose -f vision/ai/web/docker-compose.cuda.yml up --build
+docker compose -f vision/ai/web/docker-compose.train_web.yml up --build
 ```
 
 Then open:

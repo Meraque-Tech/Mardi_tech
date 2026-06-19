@@ -26,6 +26,7 @@ TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_yolov8.py"
 STATIC_DIR = WEB_DIR / "static"
 LOG_DIR = WEB_DIR / "logs"
 LOG_FILE = LOG_DIR / "current.log"
+RUNS_ROOT = REPO_ROOT / "runs"
 
 load_dotenv(WEB_DIR / ".env")
 
@@ -57,10 +58,14 @@ class SplitConfig(BaseModel):
 
 class LocalDatasetRequest(BaseModel):
     path: str
-    classes: list[str]
+    classes: list[str] = Field(default_factory=list)
     split: SplitConfig = Field(default_factory=SplitConfig)
     name: str = "local_dataset"
     force_split: bool = False
+
+
+class ClassDetectRequest(BaseModel):
+    path: str
 
 
 class RoboflowRequest(BaseModel):
@@ -89,6 +94,11 @@ class TrainRequest(BaseModel):
     resume: bool = False
 
 
+class WeightRequest(BaseModel):
+    project: str = "runs/detect"
+    name: str = "train"
+
+
 def ensure_dirs():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -100,6 +110,42 @@ def clean_name(value: str, fallback: str) -> str:
     return cleaned or fallback
 
 
+def safe_upload_path(filename: str) -> Path:
+    normalized = filename.replace("\\", "/")
+    if normalized.startswith("/"):
+        raise HTTPException(status_code=400, detail=f"Invalid upload path: {filename}")
+
+    parts = [part for part in normalized.split("/") if part and part != "."]
+    if not parts or any(part == ".." for part in parts):
+        raise HTTPException(status_code=400, detail=f"Invalid upload path: {filename}")
+
+    return Path(*parts)
+
+
+def resolve_weight_path(project: str, name: str, weight: str) -> Path:
+    if weight not in {"best", "last"}:
+        raise HTTPException(status_code=404, detail="Unknown weight file.")
+
+    project_path = Path(project).expanduser()
+    if not project_path.is_absolute():
+        project_path = REPO_ROOT / project_path
+
+    candidate = (project_path / name / "weights" / f"{weight}.pt").resolve()
+    runs_root = RUNS_ROOT.resolve()
+    try:
+        candidate.relative_to(runs_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Weights can only be downloaded from the runs directory.",
+        ) from exc
+
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail=f"Weight file not found: {candidate}")
+
+    return candidate
+
+
 def validate_classes(classes: list[str]) -> dict[int, str]:
     names = [item.strip() for item in classes if item.strip()]
     if not names:
@@ -107,10 +153,65 @@ def validate_classes(classes: list[str]) -> dict[int, str]:
     return {index: name for index, name in enumerate(names)}
 
 
+def normalize_yaml_names(raw_names) -> list[str]:
+    if isinstance(raw_names, list):
+        return [str(name).strip() for name in raw_names if str(name).strip()]
+
+    if isinstance(raw_names, dict):
+        normalized = []
+        def sort_key(item):
+            try:
+                return (0, int(item[0]))
+            except (TypeError, ValueError):
+                return (1, str(item[0]))
+
+        for key, value in sorted(raw_names.items(), key=sort_key):
+            name = str(value).strip()
+            if name:
+                normalized.append(name)
+        return normalized
+
+    return []
+
+
+def read_yaml_class_names(yaml_path: Path) -> list[str]:
+    try:
+        payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise HTTPException(status_code=400, detail=f"Could not read dataset YAML: {exc}") from exc
+
+    names = normalize_yaml_names(payload.get("names"))
+    if not names:
+        raise HTTPException(status_code=400, detail=f"No class names found in {yaml_path}")
+    return names
+
+
+def detect_dataset_classes(source: Path) -> list[str]:
+    yaml_path = source if source.is_file() and source.suffix.lower() in {".yaml", ".yml"} else find_dataset_yaml(find_dataset_root(source))
+    if not yaml_path:
+        raise HTTPException(status_code=404, detail="No data.yaml or dataset.yaml file found.")
+    return read_yaml_class_names(yaml_path)
+
+
+def resolve_dataset_classes(root: Path, classes: list[str]) -> dict[int, str]:
+    names = [item.strip() for item in classes if item.strip()]
+    if not names:
+        names = detect_dataset_classes(root)
+    return validate_classes(names)
+
+
+def dataset_response(yaml_path: Path, message: str) -> dict:
+    try:
+        classes = read_yaml_class_names(yaml_path)
+    except HTTPException:
+        classes = []
+    return {"dataset_yaml": str(yaml_path), "classes": classes, "message": message}
+
+
 def validate_split(split: SplitConfig) -> tuple[float, float, float]:
     total = split.train + split.val + split.test
-    if total <= 0:
-        raise HTTPException(status_code=400, detail="Split values must be greater than zero.")
+    if total != 100:
+        raise HTTPException(status_code=400, detail="Train, val, and test split values must total 100%.")
     return split.train / total, split.val / total, split.test / total
 
 
@@ -291,7 +392,7 @@ def prepare_dataset(source: Path, name: str, classes: list[str], split: SplitCon
         return source
 
     root = find_dataset_root(source)
-    names = validate_classes(classes)
+    names = resolve_dataset_classes(root, classes)
 
     if not force_split and "train" in split_dirs(root) and "val" in split_dirs(root):
         return prepare_existing_split(root, name, names)
@@ -358,7 +459,17 @@ def local_dataset(request: LocalDatasetRequest):
         split=request.split,
         force_split=request.force_split,
     )
-    return {"dataset_yaml": str(yaml_path), "message": "Local dataset is ready."}
+    return dataset_response(yaml_path, "Local dataset is ready.")
+
+
+@app.post("/api/dataset/classes")
+def dataset_classes(request: ClassDetectRequest):
+    source = Path(request.path).expanduser()
+    if not source.exists():
+        raise HTTPException(status_code=400, detail=f"Path does not exist: {source}")
+
+    classes = detect_dataset_classes(source)
+    return {"classes": classes, "message": f"Detected {len(classes)} class names."}
 
 
 @app.post("/api/dataset/upload")
@@ -407,7 +518,60 @@ async def upload_dataset(
         split=split,
         force_split=force_split,
     )
-    return {"dataset_yaml": str(yaml_path), "message": "Uploaded dataset is ready."}
+    return dataset_response(yaml_path, "Uploaded dataset is ready.")
+
+
+@app.post("/api/dataset/folder")
+async def upload_folder_dataset(
+    files: list[UploadFile] = File(...),
+    classes: str = Form(...),
+    train: int = Form(70),
+    val: int = Form(20),
+    test: int = Form(10),
+    name: str = Form("uploaded_folder_dataset"),
+    force_split: bool = Form(False),
+):
+    if not files:
+        raise HTTPException(status_code=400, detail="Choose a dataset folder first.")
+
+    try:
+        class_names = json.loads(classes)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Classes must be valid JSON.") from exc
+
+    split = SplitConfig(train=train, val=val, test=test)
+    clean = clean_name(name, "uploaded_folder_dataset")
+    upload_dir = DATA_ROOT / "folder_uploads" / clean
+    if upload_dir.exists():
+        shutil.rmtree(upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_root = upload_dir.resolve()
+
+    saved_count = 0
+    for upload in files:
+        relative_path = safe_upload_path(upload.filename or "")
+        target = (upload_dir / relative_path).resolve()
+        try:
+            target.relative_to(upload_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid upload path: {upload.filename}") from exc
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("wb") as output:
+            shutil.copyfileobj(upload.file, output)
+        saved_count += 1
+
+    if saved_count == 0:
+        raise HTTPException(status_code=400, detail="No files were uploaded.")
+
+    yaml_path = prepare_dataset(
+        source=upload_dir,
+        name=clean,
+        classes=class_names,
+        split=split,
+        force_split=force_split,
+    )
+    return dataset_response(yaml_path, "Uploaded folder dataset is ready.")
 
 
 @app.post("/api/dataset/roboflow")
@@ -458,7 +622,7 @@ def roboflow_dataset(request: RoboflowRequest):
     dataset_root = Path(getattr(dataset, "location", download_dir))
     yaml_path = find_dataset_yaml(dataset_root)
     if yaml_path:
-        return {"dataset_yaml": str(yaml_path), "message": "Roboflow dataset is ready."}
+        return dataset_response(yaml_path, "Roboflow dataset is ready.")
 
     if not request.classes:
         raise HTTPException(
@@ -473,7 +637,7 @@ def roboflow_dataset(request: RoboflowRequest):
         split=request.split,
         force_split=False,
     )
-    return {"dataset_yaml": str(yaml_path), "message": "Roboflow dataset is ready."}
+    return dataset_response(yaml_path, "Roboflow dataset is ready.")
 
 
 @app.post("/api/train/start")
@@ -561,3 +725,25 @@ def train_status():
 @app.get("/api/train/logs", response_class=PlainTextResponse)
 def train_logs():
     return read_log_tail()
+
+
+@app.post("/api/train/weights/status")
+def weights_status(request: WeightRequest):
+    result = {}
+    for weight in ("best", "last"):
+        try:
+            path = resolve_weight_path(request.project, request.name, weight)
+            result[weight] = {"available": True, "path": str(path), "size": path.stat().st_size}
+        except HTTPException:
+            result[weight] = {"available": False, "path": "", "size": 0}
+    return result
+
+
+@app.get("/api/train/weights/{weight}")
+def download_weight(weight: str, project: str = "runs/detect", name: str = "train"):
+    path = resolve_weight_path(project, name, weight)
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename=path.name,
+    )

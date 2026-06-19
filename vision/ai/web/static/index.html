@@ -24,20 +24,9 @@
           </div>
 
           <div class="source-tabs" role="tablist">
-            <button class="tab active" type="button" data-source="local">Local Path</button>
             <button class="tab" type="button" data-source="upload">Upload ZIP</button>
+            <button class="tab active" type="button" data-source="folder">Upload Folder</button>
             <button class="tab" type="button" data-source="roboflow">Roboflow</button>
-          </div>
-
-          <div class="source-view active" id="source-local">
-            <label>
-              Local server path
-              <input id="local-path" type="text" placeholder="/path/to/yolo/dataset">
-            </label>
-            <label class="checkbox-row">
-              <input id="local-force-split" type="checkbox">
-              Rebuild train/val/test split
-            </label>
           </div>
 
           <div class="source-view" id="source-upload">
@@ -47,6 +36,17 @@
             </label>
             <label class="checkbox-row">
               <input id="upload-force-split" type="checkbox" checked>
+              Rebuild train/val/test split
+            </label>
+          </div>
+
+          <div class="source-view active" id="source-folder">
+            <label>
+              Dataset folder
+              <input id="folder-files" type="file" webkitdirectory directory multiple>
+            </label>
+            <label class="checkbox-row">
+              <input id="folder-force-split" type="checkbox">
               Rebuild train/val/test split
             </label>
           </div>
@@ -98,11 +98,12 @@
             </label>
           </div>
 
-          <label>
-            Class IDs
-            <textarea id="classes" rows="5">flat
-missing
-ok</textarea>
+          <label class="classes-field">
+            <span class="field-header">
+              <span>Class IDs</span>
+              <button id="detect-classes" class="secondary compact" type="button">Auto Fetch</button>
+            </span>
+            <textarea id="classes" rows="5" placeholder="flat&#10;missing&#10;ok"></textarea>
           </label>
         </div>
 
@@ -117,7 +118,7 @@ ok</textarea>
 
           <div class="grid two">
             <label>
-              Model size
+              <span class="tooltip-label" tabindex="0" data-tooltip="Base YOLOv8 checkpoint size. Larger models can be more accurate but train slower and need more GPU memory.">Model size</span>
               <select id="model-size">
                 <option value="nano">Nano - yolov8n.pt</option>
                 <option value="small">Small - yolov8s.pt</option>
@@ -127,53 +128,64 @@ ok</textarea>
               </select>
             </label>
             <label>
-              Device
+              <span class="tooltip-label" tabindex="0" data-tooltip="Training device passed to Ultralytics. Use 0 for GPU 0, 0,1 for multiple GPUs, cpu for CPU, or leave blank for auto.">Device</span>
               <input id="device" type="text" placeholder="0, cpu, or blank for auto">
             </label>
           </div>
 
           <div class="grid three">
             <label>
-              Epochs
+              <span class="tooltip-label" tabindex="0" data-tooltip="Maximum number of full passes through the training dataset. More epochs can improve learning but take longer.">Epochs</span>
               <input id="epochs" type="number" min="1" value="100">
             </label>
             <label>
-              Image size
+              <span class="tooltip-label" tabindex="0" data-tooltip="Input image size used during training. Larger sizes can detect finer details but use more memory.">Image size</span>
               <input id="imgsz" type="number" min="32" value="640">
             </label>
             <label>
-              Batch
+              <span class="tooltip-label" tabindex="0" data-tooltip="Number of images processed per training step. Higher values can train faster but require more GPU memory.">Batch</span>
               <input id="batch" type="number" value="16">
             </label>
           </div>
 
           <div class="grid three">
             <label>
-              Patience
+              <span class="tooltip-label" tabindex="0" data-tooltip="Early stopping patience. Training stops if validation performance does not improve for this many epochs.">Patience</span>
               <input id="patience" type="number" min="0" value="50">
             </label>
             <label>
-              Save period
+              <span class="tooltip-label" tabindex="0" data-tooltip="Checkpoint save interval in epochs. Use -1 to save only the standard best.pt and last.pt files.">Save period</span>
               <input id="save-period" type="number" value="-1">
             </label>
             <label>
-              Run name
+              <span class="tooltip-label" tabindex="0" data-tooltip="Folder name for this training run inside the selected project directory.">Run name</span>
               <input id="run-name" type="text" value="train">
             </label>
           </div>
 
           <div class="grid two">
             <label>
-              Project
+              <span class="tooltip-label" tabindex="0" data-tooltip="Output directory for training runs. With Docker defaults, runs/detect maps to the repo's runs/detect folder.">Project</span>
               <input id="project" type="text" value="runs/detect">
             </label>
             <label class="checkbox-row inline-check">
               <input id="resume" type="checkbox">
-              Resume from checkpoint
+              <span class="tooltip-label" tabindex="0" data-tooltip="Continue training from the selected checkpoint instead of starting a fresh run.">Resume from checkpoint</span>
             </label>
           </div>
 
           <div class="message" id="message"></div>
+
+          <div class="weights-toolbar">
+            <div>
+              <h3>Model Weights</h3>
+              <p id="weights-status">No trained weights found for this run yet.</p>
+            </div>
+            <div class="button-row">
+              <button id="download-best" class="secondary" type="button" disabled>Download best.pt</button>
+              <button id="download-last" class="secondary" type="button" disabled>Download last.pt</button>
+            </div>
+          </div>
         </div>
       </section>
 
