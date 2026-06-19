@@ -145,6 +145,7 @@ int main(int argc, char *argv[]) {
             }
 
             draw_bbox(img_batch, res_batch);
+            frame = img_batch[0];  // use annotated frame for MJPEG stream
 
             auto &res = res_batch[0];
             auto bed_msg = std_msgs::msg::UInt8();

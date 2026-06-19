@@ -78,10 +78,7 @@ docker run -it --rm --net=host \
   -v $PWD/yolov8_trt_bed_detect/launch:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/launch \
   meraquetech/race_nav:yolov8-trt-bed-detect-nano.v4
 
-ros2 launch yolov8_trt_bed_detect bed_detect.launch.py
 
-docker exec -it yolov8-trt-bed-detect-nano bash
-ros2 service call /bed_detection std_srvs/srv/Trigger {}
 
 
 ```
@@ -98,6 +95,15 @@ ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
   -s /weights/yolov8s.wts /weights/yolov8s.engine s
 
 ```
+
+<!-- RUN -->
+```
+  ros2 launch yolov8_trt_bed_detect bed_detect.launch.py
+  docker exec -it yolov8-trt-bed-detect-nano bash
+  ros2 service call /bed_detection std_srvs/srv/Trigger {}
+
+```
+
 
 This produces `weights/yolov8s.engine` (only needs to be done once per model).
 
