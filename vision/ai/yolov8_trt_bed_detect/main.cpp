@@ -123,7 +123,7 @@ int main(int argc, char *argv[]) {
     float *decode_ptr_host = nullptr;
     float *decode_ptr_device = nullptr;
 
-    prepare_buffer(engine, &device_buffers[0], &device_buffers[1], &output_buffer_host, &decode_ptr_host, &decode_ptr_device, p.cuda_post_process);
+    prepare_buffer(engine, &device_buffers[0], &device_buffers[1], &output_buffer_host, &decode_ptr_host, &decode_ptr_device, p.cuda_post_process, p.input_h, p.input_w);
 
     while (rclcpp::ok()) {
         cap >> frame;

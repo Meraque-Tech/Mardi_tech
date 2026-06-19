@@ -15,6 +15,9 @@ Logger gLogger;
 using namespace nvinfer1;
 const int kOutputSize = kMaxNumOutputBbox * sizeof(Detection) / sizeof(float) + 1;
 
+int kInputH = 512;
+int kInputW = 512;
+
 void serialize_engine(std::string &wts_name, std::string &engine_name, std::string &sub_type) {
     IBuilder *builder = createInferBuilder(gLogger);
     IBuilderConfig *config = builder->createBuilderConfig();
@@ -71,7 +74,7 @@ void deserialize_engine(std::string &engine_name, IRuntime **runtime, ICudaEngin
 }
 
 void prepare_buffer(ICudaEngine *engine, float **input_buffer_device, float **output_buffer_device,
-                    float **output_buffer_host, float **decode_ptr_host, float **decode_ptr_device, std::string cuda_post_process) {
+                    float **output_buffer_host, float **decode_ptr_host, float **decode_ptr_device, std::string cuda_post_process, int input_h, int input_w) {
     assert(engine->getNbBindings() == 2);
     // In order to bind the buffers, we need to know the names of the input and output tensors.
     // Note that indices are guaranteed to be less than IEngine::getNbBindings()
@@ -80,7 +83,7 @@ void prepare_buffer(ICudaEngine *engine, float **input_buffer_device, float **ou
     assert(inputIndex == 0);
     assert(outputIndex == 1);
     // Create GPU buffers on device
-    CUDA_CHECK(cudaMalloc((void **) input_buffer_device, kBatchSize * 3 * kInputH * kInputW * sizeof(float)));
+    CUDA_CHECK(cudaMalloc((void **) input_buffer_device, kBatchSize * 3 * input_h * input_w * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void **) output_buffer_device, kBatchSize * kOutputSize * sizeof(float)));
     if (cuda_post_process == "c") {
         *output_buffer_host = new float[kBatchSize * kOutputSize];
@@ -117,6 +120,10 @@ bool parse_args(int argc, char **argv, std::string &wts, std::string &engine, st
         wts = std::string(argv[2]);
         engine = std::string(argv[3]);
         sub_type = std::string(argv[4]);
+        if (argc >= 7) {
+            kInputH = std::stoi(argv[5]);
+            kInputW = std::stoi(argv[6]);
+        }
     } else if (std::string(argv[1]) == "-d") {
         engine = std::string(argv[2]);
         img_dir = std::string(argv[3]);
