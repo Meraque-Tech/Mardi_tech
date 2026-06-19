@@ -2,7 +2,8 @@
 set -e
 
 REPO="meraquetech/race_nav"
-TAG="yolov8-trt-nano.v1"
+TAG="yolov8-trt-nano.v4"
+
 DOCKERFILE="Dockerfile.yolov8_trt_jetson_nano"
 
 cd "$(dirname "$0")"
