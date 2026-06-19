@@ -8,8 +8,8 @@ yolov8_trt:
     # ── Input resolution (must match engine build) ───────────────────────────
     # 640 → 416 saves ~34% compute | 320 saves ~61%
     # Change here AND rebuild the engine (-s step).
-    input_h: 416
-    input_w: 416
+    input_h: 512
+    input_w: 512
 
     # ── Precision ─────────────────────────────────────────────────────────────
     # "fp16"  – fast, good accuracy  (engine must be built with USE_FP16)
