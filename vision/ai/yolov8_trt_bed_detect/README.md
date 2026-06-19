@@ -54,7 +54,7 @@ From `vision/ai/`:
 ```bash
 docker build \
   -f Dockerfile.yolov8_trt_bed_detect_jetson_nano \
-  -t meraquetech/race_nav:yolov8-trt-bed-detect-nano.v1 \
+  -t meraquetech/race_nav:yolov8-trt-bed-detect-nano.v4 \
   .
 ```
 
@@ -73,7 +73,7 @@ docker run -it --rm --net=host \
   -e NVIDIA_VISIBLE_DEVICES=all \
   --device /dev/video0:/dev/video0 \
   -v $PWD/yolov8_trt_bed_detect/weights:/ros2_ws/src/yolov8_trt_bed_detect/weights \
-  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v1
+  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v4
 ```
 
 Inside the container, serialize the engine:
@@ -176,7 +176,7 @@ docker run -it --rm --net=host \
   -e NVIDIA_VISIBLE_DEVICES=all \
   --device /dev/video0:/dev/video0 \
   -v $PWD/yolov8_trt_bed_detect/weights:/ros2_ws/src/yolov8_trt_bed_detect/weights:ro \
-  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v1 \
+  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v4 \
   bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && \
   ros2 launch yolov8_trt_bed_detect bed_detect.launch.py \
   engine_name:=/ros2_ws/src/yolov8_trt_bed_detect/weights/yolov8s_bed.engine"
