@@ -20,7 +20,7 @@ TRAINING_CONFIG = {
     "device": None,
     "workers": 8,
     "optimizer": "auto",
-    "lr0": 0.01,
+    "lr0": 0.001,
     "lrf": 0.01,
     "weight_decay": 0.0005,
     "cos_lr": False,

@@ -36,6 +36,8 @@ ROBOFLOW_FORMAT=yolov8
 WEB_DATA_ROOT=
 TRAINING_PYTHON=python3
 TRAINING_DEVICE=
+HOST_UID=1000
+HOST_GID=1000
 ```
 
 Only `ROBOFLOW_API_KEY` and `ROBOFLOW_WORKSPACE` are required when using
@@ -101,6 +103,12 @@ configured. The compose file mounts the repository into `/app`, maps
 ```yaml
 shm_size: "8gb"
 ```
+
+The image creates an `appuser` account using `HOST_UID:HOST_GID` and runs the
+service as that named user. Files created in bind-mounted datasets, logs, and
+run directories therefore remain editable by the host user, while libraries
+that require a valid container username continue to work. The defaults are
+`1000:1000`; set these values in `.env` when the host user has different IDs.
 
 Because the source tree is mounted into the container, most Python/HTML/CSS/JS
 changes only require a container restart:
@@ -211,7 +219,7 @@ data is reserved for final evaluation when present in the dataset.
 2. Enter or auto-fetch class names.
 3. Set train/val/test percentages if rebuilding the split.
 4. Click `Prepare Dataset`.
-5. Review the dataset summary and warnings.
+5. Expand the dataset summary to review split counts, per-class image and instance distribution, and warnings.
 6. Choose model size:
    - Nano: `yolov8n.pt`
    - Small: `yolov8s.pt`
@@ -302,9 +310,9 @@ Training loss
 Validation loss
 mAP50
 mAP50-95
-Accuracy graph by epoch
+Detection performance graph by epoch
 Loss graph by epoch
-Best epoch summary
+Best epoch summary, including lowest training and validation losses
 ```
 
 `Overall F1` is derived from validation precision and recall. `Weighted F1` is

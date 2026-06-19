@@ -3,6 +3,7 @@
 
 import csv
 import json
+import math
 import os
 import random
 import re
@@ -12,6 +13,7 @@ import subprocess
 import threading
 import time
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +32,7 @@ STATIC_DIR = WEB_DIR / "static"
 LOG_DIR = WEB_DIR / "logs"
 LOG_FILE = LOG_DIR / "current.log"
 RUNS_ROOT = REPO_ROOT / "runs"
+MYT = timezone(timedelta(hours=8), name="MYT")
 
 load_dotenv(WEB_DIR / ".env")
 
@@ -48,6 +51,7 @@ MODEL_MAP = {
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
 PROGRESS_LINE_RE = re.compile(r":\s*\d+%\s+.*\b\d+/\d+\b")
+RUN_DIRECTORY_PREFIXES = ("Logging results to ", "Results saved to ")
 
 app = FastAPI(title="YOLOv8 Training UI")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -55,6 +59,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 training_process: Optional[subprocess.Popen] = None
 training_started_at: Optional[float] = None
 training_log_file: Optional[Path] = None
+training_run_info: Optional[dict] = None
 
 
 class SplitConfig(BaseModel):
@@ -166,6 +171,18 @@ def resolve_project_path(project: str) -> Path:
     return project_path.resolve()
 
 
+def normalize_training_project_path(project: str) -> Path:
+    project_path = resolve_project_path(project or "runs/detect")
+    ensure_runs_path(project_path)
+
+    runs_root = RUNS_ROOT.resolve()
+    relative_parts = list(project_path.relative_to(runs_root).parts)
+    while len(relative_parts) >= 3 and relative_parts[1] == "runs" and relative_parts[2] == relative_parts[0]:
+        relative_parts = [relative_parts[0], *relative_parts[3:]]
+
+    return runs_root.joinpath(*relative_parts) if relative_parts else runs_root
+
+
 def ensure_runs_path(path: Path):
     runs_root = RUNS_ROOT.resolve()
     try:
@@ -185,11 +202,17 @@ def is_run_dir(path: Path) -> bool:
     )
 
 
-def latest_run_dir(search_root: Path) -> Optional[Path]:
-    if not search_root.exists():
+def find_named_run_dir(search_root: Path, name: str) -> Optional[Path]:
+    if not search_root.exists() or not name:
         return None
 
-    candidates = [path for path in search_root.rglob("*") if path.is_dir() and is_run_dir(path)]
+    candidates = [
+        path
+        for path in search_root.rglob("*")
+        if path.is_dir()
+        and is_run_dir(path)
+        and (path.name == name or path.parent.name == name)
+    ]
     if not candidates:
         return None
 
@@ -199,24 +222,41 @@ def latest_run_dir(search_root: Path) -> Optional[Path]:
     )
 
 
-def resolve_run_dir(project: str, name: str) -> Path:
+def resolve_run_dir_details(project: str, name: str) -> tuple[Path, str]:
     project_path = resolve_project_path(project)
     ensure_runs_path(project_path)
+
+    current_info = training_run_info or {}
+    current_run_dir = current_info.get("run_dir")
+    current_project = current_info.get("requested_project") or current_info.get("project")
+    if current_run_dir and current_info.get("name") == name and current_project:
+        try:
+            same_project = resolve_project_path(current_project) == project_path
+        except (OSError, RuntimeError):
+            same_project = False
+        actual = Path(current_run_dir).expanduser().resolve()
+        if same_project and actual.is_dir():
+            ensure_runs_path(actual)
+            return actual, "actual"
 
     exact = (project_path / name).resolve()
     ensure_runs_path(exact)
     if is_run_dir(exact):
-        return exact
+        return exact, "exact"
 
-    scoped_latest = latest_run_dir(project_path)
-    if scoped_latest:
-        return scoped_latest
+    named = find_named_run_dir(project_path, name)
+    if named:
+        return named, "legacy"
 
-    global_latest = latest_run_dir(RUNS_ROOT.resolve())
-    if global_latest:
-        return global_latest
+    raise HTTPException(
+        status_code=404,
+        detail=f"No completed run matching project '{project}' and name '{name}' was found.",
+    )
 
-    raise HTTPException(status_code=404, detail="No completed training run found under the runs directory.")
+
+def resolve_run_dir(project: str, name: str) -> Path:
+    run_dir, _ = resolve_run_dir_details(project, name)
+    return run_dir
 
 
 def validate_classes(classes: list[str]) -> dict[int, str]:
@@ -331,6 +371,40 @@ def count_missing_labels(images_path: Optional[Path], labels_path: Optional[Path
     return missing
 
 
+def update_class_distribution(
+    images: list[Path],
+    labels_path: Optional[Path],
+    distribution: dict[int, dict],
+) -> tuple[int, int]:
+    malformed_rows = 0
+    unknown_class_rows = 0
+    for image in images:
+        label_path = labels_path / f"{image.stem}.txt" if labels_path else None
+        if label_path is None or not label_path.is_file():
+            continue
+
+        classes_in_image: set[int] = set()
+        for line in label_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            fields = line.strip().split()
+            if not fields:
+                continue
+            try:
+                class_id = int(fields[0])
+            except ValueError:
+                malformed_rows += 1
+                continue
+            if class_id not in distribution:
+                unknown_class_rows += 1
+                continue
+            distribution[class_id]["instances"] += 1
+            classes_in_image.add(class_id)
+
+        for class_id in classes_in_image:
+            distribution[class_id]["images"] += 1
+
+    return malformed_rows, unknown_class_rows
+
+
 def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
     warnings = []
     try:
@@ -342,6 +416,17 @@ def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
     splits = {}
     total_images = 0
     total_missing = 0
+    malformed_rows = 0
+    unknown_class_rows = 0
+    class_distribution = {
+        class_id: {
+            "class_id": class_id,
+            "class_name": class_name,
+            "images": 0,
+            "instances": 0,
+        }
+        for class_id, class_name in enumerate(classes)
+    }
     for split in ("train", "val", "test"):
         images_path = split_image_folder(dataset_root, payload.get(split))
         labels_path = label_folder_for_images(dataset_root, images_path)
@@ -349,6 +434,9 @@ def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
         missing_labels = count_missing_labels(images_path, labels_path)
         total_images += len(images)
         total_missing += missing_labels
+        split_malformed, split_unknown = update_class_distribution(images, labels_path, class_distribution)
+        malformed_rows += split_malformed
+        unknown_class_rows += split_unknown
         splits[split] = {
             "images": len(images),
             "missing_labels": missing_labels,
@@ -364,11 +452,16 @@ def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
         warnings.append("No validation images found.")
     if total_missing:
         warnings.append(f"{total_missing} images are missing label files.")
+    if malformed_rows:
+        warnings.append(f"{malformed_rows} malformed annotation rows were ignored.")
+    if unknown_class_rows:
+        warnings.append(f"{unknown_class_rows} annotations reference unknown class IDs.")
 
     return {
         "dataset_root": str(dataset_root),
         "class_count": len(classes),
         "classes": classes,
+        "class_distribution": list(class_distribution.values()),
         "splits": splits,
         "total_images": total_images,
         "missing_labels": total_missing,
@@ -383,9 +476,10 @@ def float_value(row: dict, key: str) -> Optional[float]:
     if value is None:
         return None
     try:
-        return float(str(value).strip())
+        parsed = float(str(value).strip())
     except ValueError:
         return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def sum_values(row: dict, keys: list[str]) -> Optional[float]:
@@ -396,7 +490,7 @@ def sum_values(row: dict, keys: list[str]) -> Optional[float]:
 
 
 def format_metric(value: Optional[float], digits: int = 4):
-    return round(value, digits) if value is not None else None
+    return round(value, digits) if value is not None and math.isfinite(value) else None
 
 
 def f1_from_precision_recall(precision: Optional[float], recall: Optional[float]) -> Optional[float]:
@@ -494,11 +588,13 @@ def best_metric_summary(history: list[dict]) -> dict:
     best_map95 = best_by("map50_95")
     best_map50 = best_by("map50")
     best_f1 = best_by("overall_f1")
+    best_train_loss = best_by("training_loss", higher_is_better=False)
     best_val_loss = best_by("testing_loss", higher_is_better=False)
     return {
         "best_map50_95": best_map95,
         "best_map50": best_map50,
         "best_f1": best_f1,
+        "lowest_training_loss": best_train_loss,
         "lowest_validation_loss": best_val_loss,
     }
 
@@ -778,6 +874,22 @@ def should_write_log_line(line: str) -> bool:
     return True
 
 
+def capture_training_run_dir(line: str):
+    global training_run_info
+    prefix = next((item for item in RUN_DIRECTORY_PREFIXES if line.startswith(item)), None)
+    if prefix is None or training_run_info is None:
+        return
+
+    run_dir = Path(line[len(prefix):].strip()).expanduser().resolve()
+    try:
+        ensure_runs_path(run_dir)
+    except HTTPException:
+        return
+
+    training_run_info["run_dir"] = str(run_dir)
+    training_run_info["resolution_type"] = "actual"
+
+
 def stream_training_logs(process: subprocess.Popen, log_paths: list[Path]):
     handles = [path.open("a", encoding="utf-8") for path in log_paths]
     try:
@@ -786,6 +898,7 @@ def stream_training_logs(process: subprocess.Popen, log_paths: list[Path]):
 
         for raw_line in process.stdout:
             line = clean_log_line(raw_line)
+            capture_training_run_dir(line)
             if not should_write_log_line(line):
                 continue
             for handle in handles:
@@ -842,20 +955,33 @@ def resolve_artifact_path(request: ArtifactRequest) -> Path:
 
 def current_status() -> dict:
     global training_process
-    log_info = {
+    returncode = None
+    running = False
+    if training_process is not None:
+        returncode = training_process.poll()
+        if returncode is None:
+            running = True
+        else:
+            training_process = None
+
+    run_info = dict(training_run_info or {})
+    if not running and not run_info.get("run_dir") and run_info.get("project") and run_info.get("name"):
+        try:
+            run_dir, resolution_type = resolve_run_dir_details(run_info["project"], run_info["name"])
+            run_info["run_dir"] = str(run_dir)
+            run_info["resolution_type"] = resolution_type
+        except HTTPException:
+            run_info.setdefault("run_dir", "")
+            run_info["resolution_type"] = "not_found"
+
+    return {
+        "running": running,
+        "returncode": returncode,
+        "started_at": training_started_at,
         "log_file": str(LOG_FILE),
         "history_log_file": str(training_log_file) if training_log_file else "",
+        "training_run": run_info,
     }
-
-    if training_process is None:
-        return {"running": False, "returncode": None, "started_at": training_started_at, **log_info}
-
-    returncode = training_process.poll()
-    if returncode is not None:
-        training_process = None
-        return {"running": False, "returncode": returncode, "started_at": training_started_at, **log_info}
-
-    return {"running": True, "returncode": None, "started_at": training_started_at, **log_info}
 
 
 @app.on_event("startup")
@@ -1079,7 +1205,7 @@ def roboflow_dataset(request: RoboflowRequest):
 
 @app.post("/api/train/start")
 def start_training(request: TrainRequest):
-    global training_process, training_started_at, training_log_file
+    global training_process, training_started_at, training_log_file, training_run_info
 
     status = current_status()
     if status["running"]:
@@ -1092,10 +1218,20 @@ def start_training(request: TrainRequest):
     model = request.custom_model or MODEL_MAP.get(request.model_size)
     if not model:
         raise HTTPException(status_code=400, detail=f"Unknown model size: {request.model_size}")
+    training_project_path = normalize_training_project_path(request.project)
+    training_run_info = {
+        "requested_project": request.project,
+        "requested_name": request.name,
+        "project": str(training_project_path),
+        "name": request.name,
+        "expected_run_dir": str(training_project_path / request.name),
+        "run_dir": "",
+        "resolution_type": "pending",
+    }
 
     ensure_dirs()
     LOG_FILE.write_text("", encoding="utf-8")
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(MYT).strftime("%Y%m%d-%H%M%S")
     training_log_file = LOG_DIR / f"train-{timestamp}.log"
 
     cmd = [
@@ -1117,7 +1253,7 @@ def start_training(request: TrainRequest):
         "--pretrained", str(request.pretrained).lower(),
         "--activation", request.activation,
         "--seed", str(request.seed),
-        "--project", request.project,
+        "--project", str(training_project_path),
         "--name", request.name,
     ]
 
@@ -1165,6 +1301,7 @@ def start_training(request: TrainRequest):
         "command": cmd,
         "log_file": str(LOG_FILE),
         "history_log_file": str(training_log_file),
+        "training_run": training_run_info,
     }
 
 
@@ -1220,24 +1357,39 @@ def download_history_log():
 @app.post("/api/train/weights/status")
 def weights_status(request: WeightRequest):
     try:
-        run_dir = resolve_run_dir(request.project, request.name)
+        run_dir, resolution_type = resolve_run_dir_details(request.project, request.name)
     except HTTPException:
         run_dir = None
+        resolution_type = "not_found"
 
-    result = {"run_dir": str(run_dir) if run_dir else ""}
+    result = {
+        "run_dir": str(run_dir) if run_dir else "",
+        "resolution_type": resolution_type,
+    }
     for weight in ("best", "last"):
-        try:
-            path = resolve_weight_path(request.project, request.name, weight)
+        path = run_dir / "weights" / f"{weight}.pt" if run_dir else None
+        if path and path.is_file():
             result[weight] = {"available": True, "path": str(path), "size": path.stat().st_size}
-        except HTTPException:
+        else:
             result[weight] = {"available": False, "path": "", "size": 0}
     return result
 
 
 @app.post("/api/train/metrics")
 def train_metrics(request: WeightRequest):
-    run_dir = resolve_run_dir(request.project, request.name)
-    return read_run_metrics(run_dir)
+    try:
+        run_dir, resolution_type = resolve_run_dir_details(request.project, request.name)
+    except HTTPException:
+        return {
+            "available": False,
+            "run_dir": "",
+            "resolution_type": "not_found",
+            "artifacts": {},
+        }
+
+    result = read_run_metrics(run_dir)
+    result["resolution_type"] = resolution_type
+    return result
 
 
 @app.post("/api/train/artifacts/download")

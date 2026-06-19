@@ -6,9 +6,37 @@ const state = {
   metricsHistory: [],
   metricsAvailable: false,
   logMode: "recent",
+  activePreset: null,
+  isPreparing: false,
+  isDetecting: false,
+  isStarting: false,
+  isStopping: false,
+  stopRequested: false,
+  running: false,
+  pollInFlight: false,
+  targetRevision: 0,
+  targetTimer: null,
+  lastDataRefresh: 0,
+  resizeFrame: null,
+  downloads: new Set(),
+  folderTooLarge: false,
+  resolvedRunPath: "",
+  runResolutionType: "not_found",
 };
 
 const $ = (id) => document.getElementById(id);
+
+const STATUS_LABELS = {
+  idle: "Idle",
+  preparing: "Preparing",
+  starting: "Starting",
+  training: "Training",
+  stopping: "Stopping",
+  stopped: "Stopped",
+  completed: "Completed",
+  failed: "Failed",
+  error: "Error",
+};
 
 const CONTROL_DEFAULTS = {
   "model-size": "nano",
@@ -106,6 +134,60 @@ function setMessage(text, isError = false) {
   message.classList.toggle("error", isError);
 }
 
+function setStatusPhase(phase) {
+  const status = $("status-pill");
+  status.textContent = STATUS_LABELS[phase] || phase;
+  status.className = `status-pill status-${phase}`;
+}
+
+function syncActionStates() {
+  const locked = state.running || state.isStarting || state.isStopping;
+  const preparing = state.isPreparing || state.isDetecting;
+  const hasDataset = Boolean($("dataset-yaml").value || state.datasetYaml);
+
+  const invalidFolderSelection = state.source === "folder" && state.folderTooLarge;
+  $("prepare-dataset").disabled = locked || preparing || invalidFolderSelection;
+  $("prepare-dataset").textContent = state.isPreparing ? "Preparing..." : "Prepare Dataset";
+  $("prepare-dataset").setAttribute("aria-busy", String(state.isPreparing));
+  $("detect-classes").disabled = locked || preparing;
+  $("detect-classes").textContent = state.isDetecting ? "Detecting..." : "Auto Fetch";
+  $("detect-classes").setAttribute("aria-busy", String(state.isDetecting));
+  $("start-training").disabled = locked || preparing || !hasDataset;
+  $("start-training").textContent = state.isStarting ? "Starting..." : "Start";
+  $("start-training").setAttribute("aria-busy", String(state.isStarting));
+  $("stop-training").disabled = !state.running || state.isStopping;
+  $("stop-training").textContent = state.isStopping ? "Stopping..." : "Stop";
+  $("stop-training").setAttribute("aria-busy", String(state.isStopping));
+
+  document.querySelectorAll(".training-panel input, .training-panel select, .advanced-panel input, .advanced-panel select").forEach((control) => {
+    control.disabled = locked;
+  });
+  document.querySelectorAll("[data-preset], #reset-advanced").forEach((button) => {
+    button.disabled = locked;
+  });
+
+  if (state.isPreparing) {
+    setStatusPhase("preparing");
+  } else if (state.isStarting) {
+    setStatusPhase("starting");
+  } else if (state.isStopping) {
+    setStatusPhase("stopping");
+  } else if (state.running) {
+    setStatusPhase("training");
+  }
+}
+
+function setActivePreset(name) {
+  state.activePreset = name || null;
+  document.querySelectorAll("[data-preset]").forEach((button) => {
+    const selected = Boolean(name && button.dataset.preset === name);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  $("preset-status").textContent = name
+    ? `${name.replace("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())} preset selected`
+    : "Custom settings";
+}
+
 function numberValue(id) {
   return Number($(id).value);
 }
@@ -142,8 +224,11 @@ function setControlValue(id, value) {
 
 function applyControlValues(values) {
   Object.entries(values).forEach(([id, value]) => setControlValue(id, value));
-  refreshWeightsStatus();
-  refreshMetrics();
+  updateCurrentRunDisplay();
+  syncActionStates();
+  if (Object.hasOwn(values, "project") || Object.hasOwn(values, "run-name")) {
+    scheduleTargetRefresh();
+  }
 }
 
 function applyPreset(name) {
@@ -152,6 +237,7 @@ function applyPreset(name) {
     return;
   }
   applyControlValues(preset);
+  setActivePreset(name);
   setMessage(`Applied ${name.replace("_", " ")} preset.`);
 }
 
@@ -250,11 +336,24 @@ function splitConfig() {
   };
 }
 
+function updateSplitTotal() {
+  const split = splitConfig();
+  const values = [split.train, split.val, split.test];
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const validRanges = values.every((value) => Number.isFinite(value) && value >= 0 && value <= 100) && split.train > 0;
+  const isValid = validRanges && total === 100;
+  const indicator = $("split-total");
+  indicator.textContent = Number.isFinite(total) ? `Total: ${total}%` : "Total: invalid";
+  indicator.classList.toggle("valid", isValid);
+  indicator.classList.toggle("invalid", !isValid);
+  return isValid;
+}
+
 function validateSplitTotal() {
   const split = splitConfig();
   const total = split.train + split.val + split.test;
-  if (total !== 100) {
-    throw new Error(`Train, val, and test split values must total 100%. Current total: ${total}%.`);
+  if (!updateSplitTotal() || total !== 100) {
+    throw new Error("Train, validation, and test splits must total 100%.");
   }
 }
 
@@ -265,23 +364,115 @@ function weightTarget() {
   };
 }
 
+function normalizedPath(value) {
+  return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function resolvedPathDiffers(target, runDir, resolutionType) {
+  if (!runDir || resolutionType === "exact") {
+    return false;
+  }
+  if (resolutionType === "legacy") {
+    return true;
+  }
+
+  const selected = normalizedPath(`${target.project}/${target.name}`).replace(/^\.\//, "");
+  const resolved = normalizedPath(runDir);
+  return resolved !== selected && !resolved.endsWith(`/${selected}`);
+}
+
+function updateCurrentRunDisplay(details = null) {
+  const target = weightTarget();
+  if (details) {
+    const runDir = details.run_dir || details.runDir || "";
+    const resolutionType = details.resolution_type || details.resolutionType || (runDir ? "legacy" : "not_found");
+    state.resolvedRunPath = runDir;
+    state.runResolutionType = resolutionType;
+  }
+
+  $("current-run-name").textContent = target.name;
+  $("current-run-path").textContent = `Selected: ${target.project}/${target.name}`;
+
+  const resolved = $("resolved-run-path");
+  const showResolved = resolvedPathDiffers(
+    target,
+    state.resolvedRunPath,
+    state.runResolutionType,
+  );
+  resolved.hidden = !showResolved;
+  if (showResolved) {
+    const label = state.runResolutionType === "legacy" ? "Legacy run" : "Actual output";
+    resolved.textContent = `${label}: ${state.resolvedRunPath}`;
+  } else {
+    resolved.textContent = "";
+  }
+}
+
+function refreshTargetData() {
+  const revision = state.targetRevision;
+  const target = weightTarget();
+  updateCurrentRunDisplay();
+  return Promise.all([
+    refreshWeightsStatus(target, revision),
+    refreshMetrics(target, revision),
+  ]);
+}
+
+function scheduleTargetRefresh() {
+  window.clearTimeout(state.targetTimer);
+  state.targetRevision += 1;
+  state.resolvedRunPath = "";
+  state.runResolutionType = "not_found";
+  updateCurrentRunDisplay();
+  state.targetTimer = window.setTimeout(refreshTargetData, 400);
+}
+
 function weightDownloadUrl(weight) {
   const params = new URLSearchParams(weightTarget());
   return `/api/train/weights/${weight}?${params.toString()}`;
 }
 
 function formatBytes(bytes) {
-  if (!bytes) {
-    return "";
+  if (!Number.isFinite(Number(bytes)) || Number(bytes) < 0) {
+    return "Unknown size";
+  }
+  if (Number(bytes) === 0) {
+    return "0 B";
   }
   const units = ["B", "KB", "MB", "GB"];
-  let size = bytes;
+  let size = Number(bytes);
   let unit = 0;
   while (size >= 1024 && unit < units.length - 1) {
     size /= 1024;
     unit += 1;
   }
   return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function updateFileSelection() {
+  const zip = $("upload-file").files[0];
+  $("upload-selection").textContent = zip
+    ? `${zip.name} (${formatBytes(zip.size)})`
+    : "No ZIP selected.";
+
+  const folderFiles = Array.from($("folder-files").files);
+  if (!folderFiles.length) {
+    state.folderTooLarge = false;
+    $("folder-selection").classList.remove("error");
+    $("folder-selection").textContent = "No folder selected. Folder upload supports up to 1,000 files; use ZIP for larger datasets.";
+    syncActionStates();
+    return;
+  }
+  const totalSize = folderFiles.reduce((sum, file) => sum + file.size, 0);
+  const firstPath = folderFiles[0].webkitRelativePath || folderFiles[0].name;
+  const folderName = firstPath.split("/")[0];
+  state.folderTooLarge = folderFiles.length > 1000;
+  $("folder-selection").classList.toggle("error", state.folderTooLarge);
+  const limitNote = folderFiles.length > 1000
+    ? " Too many files for folder upload; use Upload ZIP."
+    : " Folder upload supports up to 1,000 files.";
+  $("folder-selection").textContent = `${folderName}: ${folderFiles.length} files (${formatBytes(totalSize)}).${limitNote}`;
+  syncActionStates();
 }
 
 function metricText(value, suffix = "") {
@@ -352,20 +543,54 @@ function renderDatasetSummary(summary) {
       </div>
     `;
   }).join("");
-  const classPreview = Array.isArray(summary.classes) ? summary.classes.slice(0, 8).join(", ") : "";
-  const classSuffix = Array.isArray(summary.classes) && summary.classes.length > 8 ? "..." : "";
+  const distribution = Array.isArray(summary.class_distribution) ? summary.class_distribution : [];
+  const totalInstances = distribution.reduce((sum, item) => sum + (Number(item.instances) || 0), 0);
+  const distributionRows = distribution.map((item) => {
+    const instances = Number(item.instances) || 0;
+    const images = Number(item.images) || 0;
+    const share = totalInstances ? (instances / totalInstances) * 100 : 0;
+    return `
+      <tr>
+        <td>${escapeHtml(item.class_name)}</td>
+        <td>${images}</td>
+        <td>${instances}</td>
+        <td>
+          <div class="distribution-share">
+            <span><i style="width: ${share.toFixed(2)}%"></i></span>
+            <small>${share.toFixed(1)}%</small>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+  const distributionTable = distributionRows
+    ? `
+      <div class="dataset-distribution">
+        <h4>Dataset Distribution</h4>
+        <table>
+          <thead><tr><th>Class</th><th>Images</th><th>Instances</th><th>Share</th></tr></thead>
+          <tbody>${distributionRows}</tbody>
+          <tfoot><tr><th>Total</th><td></td><th>${totalInstances}</th><td></td></tr></tfoot>
+        </table>
+      </div>
+    `
+    : "<p>No class distribution is available.</p>";
   const warnings = Array.isArray(summary.warnings) && summary.warnings.length
     ? `<ul>${summary.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
     : "<p>No dataset warnings found.</p>";
 
   container.innerHTML = `
-    <div class="summary-header">
-      <h3>Dataset Summary</h3>
-      <p>${summary.total_images || 0} images, ${summary.class_count || 0} classes</p>
-    </div>
-    <div class="summary-grid">${splitRows}</div>
-    <p>${escapeHtml(classPreview)}${classSuffix}</p>
-    ${warnings}
+    <details class="dataset-summary-details" open>
+      <summary>
+        <span>Dataset Summary</span>
+        <small>${summary.total_images || 0} images, ${summary.class_count || 0} classes</small>
+      </summary>
+      <div class="dataset-summary-content">
+        <div class="summary-grid">${splitRows}</div>
+        ${distributionTable}
+        ${warnings}
+      </div>
+    </details>
   `;
 }
 
@@ -376,17 +601,27 @@ function formatBestMetric(row, key, label) {
   return `<div><span>${label}</span><strong>${metricText(row[key])}</strong><small>Epoch ${row.epoch}</small></div>`;
 }
 
-function renderBestMetrics(best) {
+function renderBestMetrics(best, history = []) {
   const container = $("best-metrics");
   if (!best) {
     container.innerHTML = "";
     return;
   }
+  const summary = { ...best };
+  if (!summary.lowest_training_loss && Array.isArray(history)) {
+    const candidates = history.filter((row) => row.training_loss !== null && row.training_loss !== undefined);
+    if (candidates.length) {
+      summary.lowest_training_loss = candidates.reduce((lowest, row) => (
+        row.training_loss < lowest.training_loss ? row : lowest
+      ));
+    }
+  }
   const rows = [
-    formatBestMetric(best.best_map50_95, "map50_95", "Best mAP50-95"),
-    formatBestMetric(best.best_map50, "map50", "Best mAP50"),
-    formatBestMetric(best.best_f1, "overall_f1", "Best F1"),
-    formatBestMetric(best.lowest_validation_loss, "testing_loss", "Lowest validation loss"),
+    formatBestMetric(summary.best_map50_95, "map50_95", "Best mAP50-95"),
+    formatBestMetric(summary.best_map50, "map50", "Best mAP50"),
+    formatBestMetric(summary.best_f1, "overall_f1", "Best F1"),
+    formatBestMetric(summary.lowest_training_loss, "training_loss", "Lowest training loss"),
+    formatBestMetric(summary.lowest_validation_loss, "testing_loss", "Lowest validation loss"),
   ].filter(Boolean);
   container.innerHTML = rows.length ? `<h4>Best Epochs</h4><div class="best-grid">${rows.join("")}</div>` : "";
 }
@@ -398,9 +633,9 @@ function setArtifactButtons(artifacts) {
     }
     return Boolean(artifacts && artifacts[key] && artifacts[key].available);
   };
-  $("download-results-csv").disabled = !isEnabled("results_csv");
-  $("download-accuracy-graph").disabled = !isEnabled("accuracy_graph");
-  $("download-loss-graph").disabled = !isEnabled("loss_graph");
+  $("download-results-csv").disabled = !isEnabled("results_csv") || state.downloads.has("results_csv");
+  $("download-accuracy-graph").disabled = !isEnabled("accuracy_graph") || state.downloads.has("accuracy_graph");
+  $("download-loss-graph").disabled = !isEnabled("loss_graph") || state.downloads.has("loss_graph");
 }
 
 function resetCharts() {
@@ -577,11 +812,17 @@ async function loadConfig() {
 function setSource(source) {
   state.source = source;
   document.querySelectorAll(".tab").forEach((button) => {
-    button.classList.toggle("active", button.dataset.source === source);
+    const active = button.dataset.source === source;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
   });
   document.querySelectorAll(".source-view").forEach((view) => {
-    view.classList.toggle("active", view.id === `source-${source}`);
+    const active = view.id === `source-${source}`;
+    view.classList.toggle("active", active);
+    view.hidden = !active;
   });
+  syncActionStates();
 }
 
 async function prepareUploadedDataset() {
@@ -654,6 +895,11 @@ async function prepareRoboflowDataset() {
 }
 
 async function prepareDataset() {
+  if (state.isPreparing) {
+    return;
+  }
+  state.isPreparing = true;
+  syncActionStates();
   setMessage("Preparing dataset...");
   try {
     validateSplitTotal();
@@ -674,10 +920,21 @@ async function prepareDataset() {
     setMessage(result.message);
   } catch (error) {
     setMessage(error.message, true);
+  } finally {
+    state.isPreparing = false;
+    if (!state.running) {
+      setStatusPhase("idle");
+    }
+    syncActionStates();
   }
 }
 
 async function detectClasses() {
+  if (state.isDetecting) {
+    return;
+  }
+  state.isDetecting = true;
+  syncActionStates();
   setMessage("Detecting classes...");
   try {
     let classes = [];
@@ -691,6 +948,12 @@ async function detectClasses() {
     setMessage(`Detected ${classes.length} class names.`);
   } catch (error) {
     setMessage(error.message, true);
+  } finally {
+    state.isDetecting = false;
+    if (!state.running) {
+      setStatusPhase("idle");
+    }
+    syncActionStates();
   }
 }
 
@@ -701,6 +964,12 @@ async function startTraining() {
     return;
   }
 
+  if (state.isStarting || state.running) {
+    return;
+  }
+  state.isStarting = true;
+  setActivePreset(state.activePreset);
+  syncActionStates();
   setMessage("Starting training...");
   try {
     const result = await apiJson("/api/train/start", {
@@ -731,31 +1000,56 @@ async function startTraining() {
         resume: $("resume").checked,
       }),
     });
+    state.running = true;
+    state.lastDataRefresh = 0;
     setMessage(`${result.message}\nPID: ${result.pid}`);
+    updateCurrentRunDisplay({ ...(result.training_run || {}), running: true });
     pollStatus();
   } catch (error) {
     setMessage(error.message, true);
+    setStatusPhase("failed");
+  } finally {
+    state.isStarting = false;
+    syncActionStates();
   }
 }
 
 async function stopTraining() {
+  if (!state.running || state.isStopping) {
+    return;
+  }
+  state.isStopping = true;
+  state.stopRequested = true;
+  syncActionStates();
   try {
     const result = await apiJson("/api/train/stop", { method: "POST", body: "{}" });
     setMessage(result.message);
     pollStatus();
   } catch (error) {
+    state.stopRequested = false;
     setMessage(error.message, true);
+    setStatusPhase("error");
+  } finally {
+    state.isStopping = false;
+    syncActionStates();
   }
 }
 
-async function refreshWeightsStatus() {
+async function refreshWeightsStatus(target = weightTarget(), revision = state.targetRevision) {
   try {
     const status = await apiJson("/api/train/weights/status", {
       method: "POST",
-      body: JSON.stringify(weightTarget()),
+      body: JSON.stringify(target),
     });
-    $("download-best").disabled = !status.best.available;
-    $("download-last").disabled = !status.last.available;
+    if (revision !== state.targetRevision) {
+      return;
+    }
+    updateCurrentRunDisplay({
+      run_dir: status.run_dir,
+      resolution_type: status.resolution_type,
+    });
+    $("download-best").disabled = !status.best.available || state.downloads.has("best");
+    $("download-last").disabled = !status.last.available || state.downloads.has("last");
 
     const available = ["best", "last"].filter((weight) => status[weight].available);
     if (available.length) {
@@ -766,21 +1060,32 @@ async function refreshWeightsStatus() {
       $("weights-status").textContent = "No trained weights found for this run yet.";
     }
   } catch (error) {
+    if (revision !== state.targetRevision) {
+      return;
+    }
     $("download-best").disabled = true;
     $("download-last").disabled = true;
     $("weights-status").textContent = error.message;
   }
 }
 
-async function refreshMetrics() {
+async function refreshMetrics(target = weightTarget(), revision = state.targetRevision) {
   try {
     const metrics = await apiJson("/api/train/metrics", {
       method: "POST",
-      body: JSON.stringify(weightTarget()),
+      body: JSON.stringify(target),
+    });
+    if (revision !== state.targetRevision) {
+      return;
+    }
+    updateCurrentRunDisplay({
+      run_dir: metrics.run_dir,
+      resolution_type: metrics.resolution_type,
     });
 
     if (!metrics.available) {
       state.metricsAvailable = false;
+      $("training-results-panel").classList.remove("has-results");
       $("metric-f1").textContent = "-";
       $("metric-weighted-f1").textContent = "-";
       $("metric-train-loss").textContent = "-";
@@ -796,44 +1101,53 @@ async function refreshMetrics() {
     }
 
     state.metricsAvailable = true;
+    $("training-results-panel").classList.add("has-results");
     $("metric-f1").textContent = metricText(metrics.overall_f1);
     $("metric-weighted-f1").textContent = metricText(metrics.weighted_f1);
     $("metric-train-loss").textContent = metricText(metrics.training_loss);
     $("metric-test-loss").textContent = metricText(metrics.testing_loss);
     $("metric-map50").textContent = metricText(metrics.map50);
     $("metric-map").textContent = metricText(metrics.map50_95);
-    renderBestMetrics(metrics.best);
+    renderBestMetrics(metrics.best, metrics.history);
     renderClassMetrics(metrics.per_class);
     renderMetricCharts(metrics.history);
     setArtifactButtons(metrics.artifacts || true);
     $("metrics-status").textContent = `Epoch ${metrics.epoch}. ${metrics.note}`;
   } catch (error) {
+    if (revision !== state.targetRevision) {
+      return;
+    }
+    $("training-results-panel").classList.remove("has-results");
     resetCharts();
     setArtifactButtons(false);
     $("metrics-status").textContent = error.message;
   }
 }
 
-async function downloadWeight(weight) {
+async function refreshMetricsFromButton() {
+  const button = $("refresh-metrics");
+  button.disabled = true;
+  button.textContent = "Refreshing...";
   try {
-    const response = await fetch(weightDownloadUrl(weight));
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.detail || `Download failed: ${response.status}`);
-    }
+    await refreshMetrics();
+  } finally {
+    button.disabled = false;
+    button.textContent = "Refresh";
+  }
+}
 
-    const blob = await response.blob();
+async function downloadWeight(weight) {
+  const button = $(weight === "best" ? "download-best" : "download-last");
+  const originalText = button.textContent;
+  state.downloads.add(weight);
+  button.disabled = true;
+  button.textContent = "Downloading...";
+  try {
     const filename = `${weight}.pt`;
-
+    let directory = null;
     if ("showDirectoryPicker" in window) {
       try {
-        const directory = await window.showDirectoryPicker();
-        const file = await directory.getFileHandle(filename, { create: true });
-        const writable = await file.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        setMessage(`Saved ${filename}.`);
-        return;
+        directory = await window.showDirectoryPicker();
       } catch (error) {
         if (error.name === "AbortError") {
           return;
@@ -844,6 +1158,23 @@ async function downloadWeight(weight) {
       }
     }
 
+    setMessage(`Preparing ${filename}...`);
+    const response = await fetch(weightDownloadUrl(weight));
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `Download failed: ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    if (directory) {
+      const file = await directory.getFileHandle(filename, { create: true });
+      const writable = await file.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      setMessage(`Saved ${filename}.`);
+      return;
+    }
+
     saveBlobWithBrowserDownload(blob, filename);
     setMessage(`Downloading ${filename}.`);
   } catch (error) {
@@ -851,10 +1182,24 @@ async function downloadWeight(weight) {
       return;
     }
     setMessage(error.message, true);
+  } finally {
+    state.downloads.delete(weight);
+    button.textContent = originalText;
+    await refreshWeightsStatus();
   }
 }
 
 async function downloadArtifact(artifact, filename) {
+  const buttonIds = {
+    results_csv: "download-results-csv",
+    accuracy_graph: "download-accuracy-graph",
+    loss_graph: "download-loss-graph",
+  };
+  const button = $(buttonIds[artifact]);
+  const originalText = button.textContent;
+  state.downloads.add(artifact);
+  button.disabled = true;
+  button.textContent = "Downloading...";
   try {
     const response = await fetch("/api/train/artifacts/download", {
       method: "POST",
@@ -869,6 +1214,10 @@ async function downloadArtifact(artifact, filename) {
     setMessage(`Downloading ${filename}.`);
   } catch (error) {
     setMessage(error.message, true);
+  } finally {
+    state.downloads.delete(artifact);
+    button.textContent = originalText;
+    await refreshMetrics();
   }
 }
 
@@ -885,7 +1234,9 @@ function logEndpoint() {
 function setLogMode(mode) {
   state.logMode = mode;
   document.querySelectorAll("[data-log-mode]").forEach((button) => {
-    button.classList.toggle("active-control", button.dataset.logMode === mode);
+    const active = button.dataset.logMode === mode;
+    button.classList.toggle("active-control", active);
+    button.setAttribute("aria-pressed", String(active));
   });
   refreshLogs();
 }
@@ -895,31 +1246,132 @@ function downloadLog(url) {
 }
 
 async function pollStatus() {
+  if (state.pollInFlight) {
+    return;
+  }
+  state.pollInFlight = true;
   try {
     const status = await apiJson("/api/train/status");
-    $("status-pill").textContent = status.running ? "Training" : "Idle";
+    const wasRunning = state.running;
+    state.running = Boolean(status.running);
+
+    if (state.running) {
+      setStatusPhase("training");
+    } else if (wasRunning && state.stopRequested) {
+      state.stopRequested = false;
+      setStatusPhase("stopped");
+      setMessage("Training stopped by user. The latest available checkpoint remains in the run folder.");
+    } else if (wasRunning && status.returncode === 0) {
+      setStatusPhase("completed");
+      setMessage("Training completed. Results and model weights are ready to review.");
+    } else if (wasRunning && status.returncode !== null && status.returncode !== 0) {
+      setStatusPhase("failed");
+      setMessage(`Training stopped with exit code ${status.returncode}. Review the warnings and full log.`, true);
+    } else if (!state.isPreparing && !state.isStarting && !state.isStopping) {
+      const currentPhase = $("status-pill").className;
+      if (!["status-completed", "status-failed", "status-stopped"].some((name) => currentPhase.includes(name))) {
+        setStatusPhase("idle");
+      }
+    }
+    syncActionStates();
+
     if (state.logMode === "recent") {
       $("logs").textContent = status.log_tail || "";
+    }
+    if (state.running && status.training_run && Object.keys(status.training_run).length) {
+      updateCurrentRunDisplay({ ...status.training_run, running: status.running });
+    } else if (wasRunning && status.training_run && Object.keys(status.training_run).length) {
+      updateCurrentRunDisplay(status.training_run);
     }
     $("log-status").textContent = status.history_log_file
       ? `Current log: ${status.log_file} | Run log: ${status.history_log_file}`
       : `Current log: ${status.log_file}`;
-    refreshWeightsStatus();
-    refreshMetrics();
+    const now = Date.now();
+    if (now - state.lastDataRefresh >= 6000 || wasRunning !== state.running) {
+      state.lastDataRefresh = now;
+      const revision = state.targetRevision;
+      const target = weightTarget();
+      await Promise.all([
+        refreshWeightsStatus(target, revision),
+        refreshMetrics(target, revision),
+      ]);
+    }
   } catch (error) {
-    $("status-pill").textContent = "Error";
+    setStatusPhase("error");
     setMessage(error.message, true);
+  } finally {
+    state.pollInFlight = false;
   }
 }
 
 async function refreshLogs() {
-  const response = await fetch(logEndpoint());
-  const text = await response.text();
-  $("logs").textContent = text || (state.logMode === "errors" ? "No warnings or errors found." : "");
+  const button = $("refresh-logs");
+  button.disabled = true;
+  button.textContent = "Refreshing...";
+  try {
+    const response = await fetch(logEndpoint());
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(text || `Log request failed: ${response.status}`);
+    }
+    $("logs").textContent = text || (state.logMode === "errors" ? "No warnings or errors found." : "No log output yet.");
+  } catch (error) {
+    $("log-status").textContent = `Unable to load logs: ${error.message}`;
+    setMessage(`Unable to load logs: ${error.message}`, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Refresh";
+  }
+}
+
+function handleTabKeydown(event) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+    return;
+  }
+  const tabs = Array.from(document.querySelectorAll(".source-tabs [role='tab']"));
+  const currentIndex = tabs.indexOf(event.currentTarget);
+  let nextIndex = currentIndex;
+  if (event.key === "ArrowRight") {
+    nextIndex = (currentIndex + 1) % tabs.length;
+  } else if (event.key === "ArrowLeft") {
+    nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+  } else if (event.key === "Home") {
+    nextIndex = 0;
+  } else if (event.key === "End") {
+    nextIndex = tabs.length - 1;
+  }
+  event.preventDefault();
+  tabs[nextIndex].focus();
+  setSource(tabs[nextIndex].dataset.source);
+}
+
+function positionTooltip(element) {
+  const rect = element.getBoundingClientRect();
+  const tooltipWidth = Math.min(280, window.innerWidth - 48);
+  element.classList.toggle("tooltip-align-right", rect.left + tooltipWidth > window.innerWidth - 16);
+  element.classList.toggle("tooltip-below", rect.top < 100);
+}
+
+function initializeTooltips() {
+  document.querySelectorAll(".tooltip-label").forEach((element) => {
+    element.addEventListener("mouseenter", () => positionTooltip(element));
+    element.addEventListener("focus", () => positionTooltip(element));
+  });
+}
+
+function redrawChartsSoon() {
+  if (state.resizeFrame) {
+    window.cancelAnimationFrame(state.resizeFrame);
+  }
+  state.resizeFrame = window.requestAnimationFrame(() => {
+    state.resizeFrame = null;
+    redrawCharts();
+  });
 }
 
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => setSource(button.dataset.source));
+  button.addEventListener("keydown", handleTabKeydown);
 });
 
 $("prepare-dataset").addEventListener("click", prepareDataset);
@@ -927,7 +1379,7 @@ $("detect-classes").addEventListener("click", detectClasses);
 $("start-training").addEventListener("click", startTraining);
 $("stop-training").addEventListener("click", stopTraining);
 $("refresh-logs").addEventListener("click", refreshLogs);
-$("refresh-metrics").addEventListener("click", refreshMetrics);
+$("refresh-metrics").addEventListener("click", refreshMetricsFromButton);
 $("download-best").addEventListener("click", () => downloadWeight("best"));
 $("download-last").addEventListener("click", () => downloadWeight("last"));
 $("download-results-csv").addEventListener("click", () => downloadArtifact("results_csv", "results.csv"));
@@ -935,10 +1387,13 @@ $("download-accuracy-graph").addEventListener("click", () => downloadArtifact("a
 $("download-loss-graph").addEventListener("click", () => downloadArtifact("loss_graph", "loss_by_epoch.png"));
 $("download-current-log").addEventListener("click", () => downloadLog("/api/train/logs/download"));
 $("download-history-log").addEventListener("click", () => downloadLog("/api/train/logs/history/download"));
-$("project").addEventListener("input", refreshWeightsStatus);
-$("run-name").addEventListener("input", refreshWeightsStatus);
-$("project").addEventListener("input", refreshMetrics);
-$("run-name").addEventListener("input", refreshMetrics);
+$("project").addEventListener("input", scheduleTargetRefresh);
+$("run-name").addEventListener("input", scheduleTargetRefresh);
+$("upload-file").addEventListener("change", updateFileSelection);
+$("folder-files").addEventListener("change", updateFileSelection);
+["split-train", "split-val", "split-test"].forEach((id) => {
+  $(id).addEventListener("input", updateSplitTotal);
+});
 document.querySelectorAll("[data-log-mode]").forEach((button) => {
   button.addEventListener("click", () => setLogMode(button.dataset.logMode));
 });
@@ -947,10 +1402,25 @@ document.querySelectorAll("[data-preset]").forEach((button) => {
 });
 $("reset-advanced").addEventListener("click", () => {
   applyControlValues(CONTROL_DEFAULTS);
+  setActivePreset(null);
   setMessage("Reset training controls to defaults.");
 });
-window.addEventListener("resize", redrawCharts);
+const presetControlIds = new Set(Object.values(TRAINING_PRESETS).flatMap((preset) => Object.keys(preset)));
+presetControlIds.forEach((id) => {
+  const control = $(id);
+  if (control) {
+    control.addEventListener("input", () => setActivePreset(null));
+    control.addEventListener("change", () => setActivePreset(null));
+  }
+});
+window.addEventListener("resize", redrawChartsSoon);
 
 loadConfig().catch((error) => setMessage(error.message, true));
+initializeTooltips();
+updateFileSelection();
+updateSplitTotal();
+setActivePreset(null);
+updateCurrentRunDisplay();
+syncActionStates();
 state.pollTimer = window.setInterval(pollStatus, 2500);
 pollStatus();

@@ -13,7 +13,7 @@
           <h1>YOLOv8 Training</h1>
           <p id="data-root">Loading configuration...</p>
         </div>
-        <div class="status-pill" id="status-pill">Idle</div>
+        <div class="status-pill status-idle" id="status-pill" role="status" aria-live="polite">Idle</div>
       </header>
 
       <section class="workspace">
@@ -23,35 +23,37 @@
             <button id="prepare-dataset" type="button">Prepare Dataset</button>
           </div>
 
-          <div class="source-tabs" role="tablist">
-            <button class="tab active" type="button" data-source="upload">Upload ZIP</button>
-            <button class="tab" type="button" data-source="folder">Upload Folder</button>
-            <button class="tab" type="button" data-source="roboflow">Roboflow</button>
+          <div class="source-tabs" role="tablist" aria-label="Dataset source">
+            <button id="tab-upload" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="source-upload" tabindex="0" data-source="upload">Upload ZIP</button>
+            <button id="tab-folder" class="tab" type="button" role="tab" aria-selected="false" aria-controls="source-folder" tabindex="-1" data-source="folder">Upload Folder</button>
+            <button id="tab-roboflow" class="tab" type="button" role="tab" aria-selected="false" aria-controls="source-roboflow" tabindex="-1" data-source="roboflow">Roboflow</button>
           </div>
 
-          <div class="source-view active" id="source-upload">
+          <div class="source-view active" id="source-upload" role="tabpanel" aria-labelledby="tab-upload">
             <label>
               YOLO dataset ZIP
               <input id="upload-file" type="file" accept=".zip">
             </label>
+            <p class="file-selection" id="upload-selection">No ZIP selected.</p>
             <label class="checkbox-row">
               <input id="upload-force-split" type="checkbox" checked>
               Rebuild train/val/test split
             </label>
           </div>
 
-          <div class="source-view" id="source-folder">
+          <div class="source-view" id="source-folder" role="tabpanel" aria-labelledby="tab-folder" hidden>
             <label>
               Dataset folder
               <input id="folder-files" type="file" webkitdirectory directory multiple>
             </label>
+            <p class="file-selection" id="folder-selection">No folder selected. Folder upload supports up to 1,000 files; use ZIP for larger datasets.</p>
             <label class="checkbox-row">
               <input id="folder-force-split" type="checkbox">
               Rebuild train/val/test split
             </label>
           </div>
 
-          <div class="source-view" id="source-roboflow">
+          <div class="source-view" id="source-roboflow" role="tabpanel" aria-labelledby="tab-roboflow" hidden>
             <div class="grid two">
               <label>
                 Workspace
@@ -98,13 +100,15 @@
             </label>
           </div>
 
-          <label class="classes-field">
-            <span class="field-header">
-              <span>Class IDs</span>
+          <div class="split-total valid" id="split-total" role="status">Total: 100%</div>
+
+          <div class="classes-field">
+            <div class="field-header">
+              <label for="classes">Class IDs</label>
               <button id="detect-classes" class="secondary compact" type="button">Auto Fetch</button>
-            </span>
+            </div>
             <textarea id="classes" rows="5" placeholder="flat&#10;missing&#10;ok"></textarea>
-          </label>
+          </div>
 
           <div class="dataset-summary" id="dataset-summary"></div>
         </div>
@@ -113,8 +117,8 @@
           <div class="panel-header">
             <h2>Training</h2>
             <div class="button-row">
-              <button id="start-training" type="button">Start</button>
-              <button id="stop-training" class="secondary" type="button">Stop</button>
+              <button id="start-training" type="button" disabled>Start</button>
+              <button id="stop-training" class="danger" type="button" disabled>Stop</button>
             </div>
           </div>
 
@@ -176,15 +180,32 @@
             </label>
           </div>
 
+          <div class="current-run-card" id="current-run-card">
+            <div>
+              <span>Current run</span>
+              <strong id="current-run-name">train</strong>
+            </div>
+            <div class="current-run-paths">
+              <p id="current-run-path">Selected: runs/detect/train</p>
+              <p id="resolved-run-path" hidden></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="message status-message" id="message" role="status" aria-live="polite">Ready. Prepare a dataset to begin.</div>
+
+      <section class="panel advanced-section">
           <details class="advanced-panel">
             <summary>Advanced Fine-Tuning</summary>
 
-            <div class="preset-toolbar" aria-label="Training presets">
-              <button class="secondary compact" type="button" data-preset="stable">Stable</button>
-              <button class="secondary compact" type="button" data-preset="low_vram">Low VRAM</button>
-              <button class="secondary compact" type="button" data-preset="quick">Quick Test</button>
-              <button class="secondary compact" type="button" data-preset="accuracy">High Accuracy</button>
+            <div class="preset-toolbar" role="group" aria-label="Training presets">
+              <button class="secondary compact" type="button" aria-pressed="false" data-preset="stable">Stable</button>
+              <button class="secondary compact" type="button" aria-pressed="false" data-preset="low_vram">Low VRAM</button>
+              <button class="secondary compact" type="button" aria-pressed="false" data-preset="quick">Quick Test</button>
+              <button class="secondary compact" type="button" aria-pressed="false" data-preset="accuracy">High Accuracy</button>
               <button id="reset-advanced" class="secondary compact" type="button">Reset</button>
+              <span class="preset-status" id="preset-status">Custom settings</span>
             </div>
 
             <div class="advanced-group">
@@ -202,9 +223,9 @@
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Optimizer used for weight updates. Auto lets Ultralytics choose based on model and training setup.">Optimizer</span>
                 <select id="optimizer">
-                  <option value="auto" selected>Auto</option>
+                  <option value="auto">Auto</option>
                   <option value="SGD">SGD</option>
-                  <option value="Adam">Adam</option>
+                  <option value="Adam" selected>Adam</option>
                   <option value="AdamW">AdamW</option>
                   <option value="NAdam">NAdam</option>
                   <option value="RAdam">RAdam</option>
@@ -213,7 +234,7 @@
               </label>
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Random seed for reproducible training runs. Same seed and settings help produce repeatable results.">Seed</span>
-                <input id="seed" type="number" value="0">
+                <input id="seed" type="number" value="42">
               </label>
             </div>
             </div>
@@ -282,8 +303,28 @@
             </div>
             </div>
           </details>
+      </section>
 
-          <div class="message" id="message"></div>
+      <section class="panel logs-panel">
+        <div class="panel-header">
+          <h2>Training Progress &amp; Logs</h2>
+          <div class="button-row">
+            <button id="log-mode-recent" class="secondary compact active-control" type="button" aria-pressed="true" data-log-mode="recent">Recent</button>
+            <button id="log-mode-full" class="secondary compact" type="button" aria-pressed="false" data-log-mode="full">Full</button>
+            <button id="log-mode-errors" class="secondary compact" type="button" aria-pressed="false" data-log-mode="errors">Warnings</button>
+            <button id="refresh-logs" class="secondary compact" type="button">Refresh</button>
+            <button id="download-current-log" class="secondary compact" type="button">Download Current</button>
+            <button id="download-history-log" class="secondary compact" type="button">Download Run Log</button>
+          </div>
+        </div>
+        <p id="log-status">Waiting for training status...</p>
+        <pre id="logs" tabindex="0" aria-label="Training logs"></pre>
+      </section>
+
+      <section class="panel training-results-panel" id="training-results-panel">
+          <div class="panel-header">
+            <h2>Training Results</h2>
+          </div>
 
           <div class="weights-toolbar">
             <div>
@@ -312,7 +353,7 @@
             <div class="best-metrics" id="best-metrics"></div>
             <div class="charts-grid">
               <div class="chart-panel">
-                <h4>Accuracy by Epoch</h4>
+                <h4>Detection Performance by Epoch</h4>
                 <canvas id="accuracy-chart" width="520" height="220"></canvas>
               </div>
               <div class="chart-panel">
@@ -322,30 +363,14 @@
             </div>
             <div class="artifact-toolbar">
               <button id="download-results-csv" class="secondary compact" type="button" disabled>Download results.csv</button>
-              <button id="download-accuracy-graph" class="secondary compact" type="button" disabled>Download accuracy graph</button>
+              <button id="download-accuracy-graph" class="secondary compact" type="button" disabled>Download performance graph</button>
               <button id="download-loss-graph" class="secondary compact" type="button" disabled>Download loss graph</button>
             </div>
             <div class="class-metrics" id="class-metrics"></div>
             <p id="metrics-status">No results.csv found for this run yet.</p>
           </div>
-        </div>
       </section>
 
-      <section class="panel logs-panel">
-        <div class="panel-header">
-          <h2>Logs</h2>
-          <div class="button-row">
-            <button id="log-mode-recent" class="secondary compact active-control" type="button" data-log-mode="recent">Recent</button>
-            <button id="log-mode-full" class="secondary compact" type="button" data-log-mode="full">Full</button>
-            <button id="log-mode-errors" class="secondary compact" type="button" data-log-mode="errors">Warnings</button>
-            <button id="refresh-logs" class="secondary compact" type="button">Refresh</button>
-            <button id="download-current-log" class="secondary compact" type="button">Download Current</button>
-            <button id="download-history-log" class="secondary compact" type="button">Download Run Log</button>
-          </div>
-        </div>
-        <p id="log-status"></p>
-        <pre id="logs"></pre>
-      </section>
     </main>
 
     <script src="/static/app.js"></script>
