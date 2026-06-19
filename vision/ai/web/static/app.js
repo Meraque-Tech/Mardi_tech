@@ -2,6 +2,7 @@ const state = {
   source: "folder",
   datasetYaml: "",
   pollTimer: null,
+  metricsHistory: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -14,6 +15,11 @@ function setMessage(text, isError = false) {
 
 function numberValue(id) {
   return Number($(id).value);
+}
+
+function optionalNumberValue(id) {
+  const value = $(id).value.trim();
+  return value === "" ? null : Number(value);
 }
 
 function classNames() {
@@ -156,6 +162,194 @@ function formatBytes(bytes) {
     unit += 1;
   }
   return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function metricText(value, suffix = "") {
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+  return `${value}${suffix}`;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderClassMetrics(classes) {
+  const container = $("class-metrics");
+  if (!Array.isArray(classes) || !classes.length) {
+    container.innerHTML = "";
+    return;
+  }
+
+  const rows = classes.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.class_name)}</td>
+      <td>${item.instances}</td>
+      <td>${metricText(item.f1)}</td>
+      <td>${metricText(item.precision)}</td>
+      <td>${metricText(item.recall)}</td>
+    </tr>
+  `).join("");
+
+  container.innerHTML = `
+    <h4>Per-Class F1</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Class</th>
+          <th>Instances</th>
+          <th>F1</th>
+          <th>Precision</th>
+          <th>Recall</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function resetCharts() {
+  drawLineChart("accuracy-chart", [], []);
+  drawLineChart("loss-chart", [], []);
+}
+
+function chartPoint(value) {
+  return value === null || value === undefined || Number.isNaN(Number(value)) ? null : Number(value);
+}
+
+function drawLineChart(canvasId, history, series) {
+  const canvas = $(canvasId);
+  const context = canvas.getContext("2d");
+  const rect = canvas.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  const width = Math.max(320, Math.floor(rect.width || canvas.width));
+  const height = Math.max(200, Math.floor(rect.height || canvas.height));
+  canvas.width = Math.floor(width * scale);
+  canvas.height = Math.floor(height * scale);
+  context.setTransform(scale, 0, 0, scale, 0, 0);
+  context.clearRect(0, 0, width, height);
+
+  context.fillStyle = "#f8fafb";
+  context.fillRect(0, 0, width, height);
+
+  if (!history.length) {
+    context.fillStyle = "#607080";
+    context.font = "13px sans-serif";
+    context.fillText("No epoch data yet", 16, 28);
+    return;
+  }
+
+  const padding = { top: 18, right: 18, bottom: 34, left: 46 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const epochs = history.map((item) => item.epoch);
+  const values = [];
+  series.forEach((line) => {
+    history.forEach((item) => {
+      const value = chartPoint(item[line.key]);
+      if (value !== null) {
+        values.push(value);
+      }
+    });
+  });
+
+  if (!values.length) {
+    context.fillStyle = "#607080";
+    context.font = "13px sans-serif";
+    context.fillText("No values available", 16, 28);
+    return;
+  }
+
+  const minEpoch = Math.min(...epochs);
+  const maxEpoch = Math.max(...epochs);
+  let minValue = Math.min(...values);
+  let maxValue = Math.max(...values);
+  if (minValue === maxValue) {
+    minValue -= 0.1;
+    maxValue += 0.1;
+  }
+  const valuePadding = (maxValue - minValue) * 0.08;
+  minValue = Math.max(0, minValue - valuePadding);
+  maxValue += valuePadding;
+
+  const xFor = (epoch) => padding.left + ((epoch - minEpoch) / Math.max(1, maxEpoch - minEpoch)) * plotWidth;
+  const yFor = (value) => padding.top + (1 - ((value - minValue) / (maxValue - minValue))) * plotHeight;
+
+  context.strokeStyle = "#d9dee7";
+  context.lineWidth = 1;
+  context.beginPath();
+  context.moveTo(padding.left, padding.top);
+  context.lineTo(padding.left, padding.top + plotHeight);
+  context.lineTo(padding.left + plotWidth, padding.top + plotHeight);
+  context.stroke();
+
+  context.fillStyle = "#607080";
+  context.font = "11px sans-serif";
+  context.fillText(maxValue.toFixed(2), 6, padding.top + 4);
+  context.fillText(minValue.toFixed(2), 6, padding.top + plotHeight);
+  context.fillText(`E${minEpoch}`, padding.left, height - 10);
+  context.fillText(`E${maxEpoch}`, padding.left + plotWidth - 24, height - 10);
+
+  series.forEach((line, index) => {
+    const points = history
+      .map((item) => ({ epoch: item.epoch, value: chartPoint(item[line.key]) }))
+      .filter((item) => item.value !== null);
+    if (!points.length) {
+      return;
+    }
+
+    context.strokeStyle = line.color;
+    context.lineWidth = 2;
+    context.beginPath();
+    points.forEach((point, pointIndex) => {
+      const x = xFor(point.epoch);
+      const y = yFor(point.value);
+      if (pointIndex === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+    });
+    context.stroke();
+
+    points.forEach((point) => {
+      context.fillStyle = line.color;
+      context.beginPath();
+      context.arc(xFor(point.epoch), yFor(point.value), 2.5, 0, Math.PI * 2);
+      context.fill();
+    });
+
+    const legendX = padding.left + index * 112;
+    context.fillStyle = line.color;
+    context.fillRect(legendX, 6, 10, 3);
+    context.fillStyle = "#17202a";
+    context.font = "11px sans-serif";
+    context.fillText(line.label, legendX + 14, 10);
+  });
+}
+
+function renderMetricCharts(history) {
+  const rows = Array.isArray(history) ? history : [];
+  state.metricsHistory = rows;
+  drawLineChart("accuracy-chart", rows, [
+    { key: "map50", label: "mAP50", color: "#16745f" },
+    { key: "map50_95", label: "mAP50-95", color: "#5b6ee1" },
+    { key: "overall_f1", label: "F1", color: "#b45f06" },
+  ]);
+  drawLineChart("loss-chart", rows, [
+    { key: "training_loss", label: "Train loss", color: "#a43d3d" },
+    { key: "testing_loss", label: "Val loss", color: "#16745f" },
+  ]);
+}
+
+function redrawCharts() {
+  renderMetricCharts(state.metricsHistory);
 }
 
 function saveBlobWithBrowserDownload(blob, filename) {
@@ -330,6 +524,18 @@ async function startTraining() {
         patience: numberValue("patience"),
         save_period: numberValue("save-period"),
         device: $("device").value || null,
+        workers: numberValue("workers"),
+        optimizer: $("optimizer").value,
+        lr0: numberValue("lr0"),
+        lrf: numberValue("lrf"),
+        weight_decay: numberValue("weight-decay"),
+        cos_lr: $("cos-lr").checked,
+        warmup_epochs: numberValue("warmup-epochs"),
+        freeze: optionalNumberValue("freeze"),
+        pretrained: $("pretrained").checked,
+        activation: $("activation").value,
+        exist_ok: $("exist-ok").checked,
+        seed: numberValue("seed"),
         project: $("project").value,
         name: $("run-name").value,
         resume: $("resume").checked,
@@ -364,7 +570,8 @@ async function refreshWeightsStatus() {
     const available = ["best", "last"].filter((weight) => status[weight].available);
     if (available.length) {
       const sizes = available.map((weight) => `${weight}.pt ${formatBytes(status[weight].size)}`);
-      $("weights-status").textContent = `Available: ${sizes.join(", ")}`;
+      const runText = status.run_dir ? ` from ${status.run_dir}` : "";
+      $("weights-status").textContent = `Available: ${sizes.join(", ")}${runText}`;
     } else {
       $("weights-status").textContent = "No trained weights found for this run yet.";
     }
@@ -372,6 +579,41 @@ async function refreshWeightsStatus() {
     $("download-best").disabled = true;
     $("download-last").disabled = true;
     $("weights-status").textContent = error.message;
+  }
+}
+
+async function refreshMetrics() {
+  try {
+    const metrics = await apiJson("/api/train/metrics", {
+      method: "POST",
+      body: JSON.stringify(weightTarget()),
+    });
+
+    if (!metrics.available) {
+      $("metric-f1").textContent = "-";
+      $("metric-weighted-f1").textContent = "-";
+      $("metric-train-loss").textContent = "-";
+      $("metric-test-loss").textContent = "-";
+      $("metric-map50").textContent = "-";
+      $("metric-map").textContent = "-";
+      renderClassMetrics([]);
+      resetCharts();
+      $("metrics-status").textContent = "No results.csv found for this run yet.";
+      return;
+    }
+
+    $("metric-f1").textContent = metricText(metrics.overall_f1);
+    $("metric-weighted-f1").textContent = metricText(metrics.weighted_f1);
+    $("metric-train-loss").textContent = metricText(metrics.training_loss);
+    $("metric-test-loss").textContent = metricText(metrics.testing_loss);
+    $("metric-map50").textContent = metricText(metrics.map50);
+    $("metric-map").textContent = metricText(metrics.map50_95);
+    renderClassMetrics(metrics.per_class);
+    renderMetricCharts(metrics.history);
+    $("metrics-status").textContent = `Epoch ${metrics.epoch}. ${metrics.note}`;
+  } catch (error) {
+    resetCharts();
+    $("metrics-status").textContent = error.message;
   }
 }
 
@@ -421,6 +663,7 @@ async function pollStatus() {
     $("status-pill").textContent = status.running ? "Training" : "Idle";
     $("logs").textContent = status.log_tail || "";
     refreshWeightsStatus();
+    refreshMetrics();
   } catch (error) {
     $("status-pill").textContent = "Error";
     setMessage(error.message, true);
@@ -441,10 +684,14 @@ $("detect-classes").addEventListener("click", detectClasses);
 $("start-training").addEventListener("click", startTraining);
 $("stop-training").addEventListener("click", stopTraining);
 $("refresh-logs").addEventListener("click", refreshLogs);
+$("refresh-metrics").addEventListener("click", refreshMetrics);
 $("download-best").addEventListener("click", () => downloadWeight("best"));
 $("download-last").addEventListener("click", () => downloadWeight("last"));
 $("project").addEventListener("input", refreshWeightsStatus);
 $("run-name").addEventListener("input", refreshWeightsStatus);
+$("project").addEventListener("input", refreshMetrics);
+$("run-name").addEventListener("input", refreshMetrics);
+window.addEventListener("resize", redrawCharts);
 
 loadConfig().catch((error) => setMessage(error.message, true));
 state.pollTimer = window.setInterval(pollStatus, 2500);

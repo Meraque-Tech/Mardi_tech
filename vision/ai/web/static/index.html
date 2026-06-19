@@ -174,6 +174,93 @@
             </label>
           </div>
 
+          <details class="advanced-panel">
+            <summary>Advanced Fine-Tuning</summary>
+
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Number of dataloader workers. Lower values are more stable in Docker; higher values can load data faster.">Workers</span>
+                <select id="workers">
+                  <option value="0">0</option>
+                  <option value="2" selected>2</option>
+                  <option value="4">4</option>
+                  <option value="8">8</option>
+                </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Optimizer used for weight updates. Auto lets Ultralytics choose based on model and training setup.">Optimizer</span>
+                <select id="optimizer">
+                  <option value="auto" selected>auto</option>
+                  <option value="SGD">SGD</option>
+                  <option value="Adam">Adam</option>
+                  <option value="AdamW">AdamW</option>
+                  <option value="NAdam">NAdam</option>
+                  <option value="RAdam">RAdam</option>
+                  <option value="RMSProp">RMSProp</option>
+                </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Random seed for reproducible training runs. Same seed and settings help produce repeatable results.">Seed</span>
+                <input id="seed" type="number" value="0">
+              </label>
+            </div>
+
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Initial learning rate. Smaller values fine-tune more gently; larger values learn faster but can destabilize.">Initial LR</span>
+                <input id="lr0" type="number" min="0" step="0.0001" value="0.01">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Final learning-rate factor. Final LR is lr0 multiplied by this value.">Final LR factor</span>
+                <input id="lrf" type="number" min="0" step="0.0001" value="0.01">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="L2 regularization strength. Higher values can reduce overfitting but may underfit.">Weight decay</span>
+                <input id="weight-decay" type="number" min="0" step="0.0001" value="0.0005">
+              </label>
+            </div>
+
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Warmup duration in epochs. Helps stabilize training at the beginning.">Warmup epochs</span>
+                <input id="warmup-epochs" type="number" min="0" step="0.1" value="3.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Freeze the first N layers for transfer learning. Leave blank to train all layers.">Freeze layers</span>
+                <input id="freeze" type="number" min="0" placeholder="blank">
+              </label>
+              <label class="checkbox-row inline-check">
+                <input id="cos-lr" type="checkbox">
+                <span class="tooltip-label" tabindex="0" data-tooltip="Use cosine learning-rate scheduling for smoother LR decay.">Cosine LR</span>
+              </label>
+            </div>
+
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Activation function used by YOLO convolution layers. SiLU is the default and usually safest.">Activation</span>
+                <select id="activation">
+                  <option value="silu" selected>SiLU</option>
+                  <option value="relu">ReLU</option>
+                  <option value="leaky_relu">Leaky ReLU</option>
+                  <option value="mish">Mish</option>
+                  <option value="gelu">GELU</option>
+                  <option value="hardswish">Hardswish</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="grid two">
+              <label class="checkbox-row inline-check">
+                <input id="pretrained" type="checkbox" checked>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Use pretrained weights when fine-tuning. Usually recommended for custom datasets.">Pretrained</span>
+              </label>
+              <label class="checkbox-row inline-check">
+                <input id="exist-ok" type="checkbox">
+                <span class="tooltip-label" tabindex="0" data-tooltip="Reuse the same project/run folder instead of creating train-2, train-3, and so on.">Reuse output folder</span>
+              </label>
+            </div>
+          </details>
+
           <div class="message" id="message"></div>
 
           <div class="weights-toolbar">
@@ -185,6 +272,33 @@
               <button id="download-best" class="secondary" type="button" disabled>Download best.pt</button>
               <button id="download-last" class="secondary" type="button" disabled>Download last.pt</button>
             </div>
+          </div>
+
+          <div class="metrics-panel">
+            <div class="field-header">
+              <h3>Evaluation Metrics</h3>
+              <button id="refresh-metrics" class="secondary compact" type="button">Refresh</button>
+            </div>
+            <div class="metrics-grid">
+              <div><span>Overall F1</span><strong id="metric-f1">-</strong></div>
+              <div><span>Weighted F1</span><strong id="metric-weighted-f1">-</strong></div>
+              <div><span>Training loss</span><strong id="metric-train-loss">-</strong></div>
+              <div><span>Testing loss</span><strong id="metric-test-loss">-</strong></div>
+              <div><span>mAP50</span><strong id="metric-map50">-</strong></div>
+              <div><span>mAP50-95</span><strong id="metric-map">-</strong></div>
+            </div>
+            <div class="charts-grid">
+              <div class="chart-panel">
+                <h4>Accuracy by Epoch</h4>
+                <canvas id="accuracy-chart" width="520" height="220"></canvas>
+              </div>
+              <div class="chart-panel">
+                <h4>Loss by Epoch</h4>
+                <canvas id="loss-chart" width="520" height="220"></canvas>
+              </div>
+            </div>
+            <div class="class-metrics" id="class-metrics"></div>
+            <p id="metrics-status">No results.csv found for this run yet.</p>
           </div>
         </div>
       </section>

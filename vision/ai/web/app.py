@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """FastAPI web UI backend for YOLOv8 training."""
 
+import csv
 import json
 import os
 import random
+import re
 import shutil
 import signal
 import subprocess
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -42,12 +45,16 @@ MODEL_MAP = {
     "large": "yolov8l.pt",
     "xlarge": "yolov8x.pt",
 }
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
+PROGRESS_LINE_RE = re.compile(r":\s*\d+%\s+.*\b\d+/\d+\b")
 
 app = FastAPI(title="YOLOv8 Training UI")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 training_process: Optional[subprocess.Popen] = None
 training_started_at: Optional[float] = None
+training_log_file: Optional[Path] = None
 
 
 class SplitConfig(BaseModel):
@@ -89,6 +96,18 @@ class TrainRequest(BaseModel):
     patience: int = Field(default=50, ge=0)
     save_period: int = -1
     device: Optional[str] = None
+    workers: int = Field(default=2, ge=0)
+    optimizer: str = "auto"
+    lr0: float = Field(default=0.01, gt=0)
+    lrf: float = Field(default=0.01, gt=0)
+    weight_decay: float = Field(default=0.0005, ge=0)
+    cos_lr: bool = False
+    warmup_epochs: float = Field(default=3.0, ge=0)
+    freeze: Optional[int] = Field(default=None, ge=0)
+    pretrained: bool = True
+    activation: str = "silu"
+    exist_ok: bool = False
+    seed: int = 0
     project: str = "runs/detect"
     name: str = "train"
     resume: bool = False
@@ -126,24 +145,72 @@ def resolve_weight_path(project: str, name: str, weight: str) -> Path:
     if weight not in {"best", "last"}:
         raise HTTPException(status_code=404, detail="Unknown weight file.")
 
-    project_path = Path(project).expanduser()
-    if not project_path.is_absolute():
-        project_path = REPO_ROOT / project_path
-
-    candidate = (project_path / name / "weights" / f"{weight}.pt").resolve()
-    runs_root = RUNS_ROOT.resolve()
-    try:
-        candidate.relative_to(runs_root)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="Weights can only be downloaded from the runs directory.",
-        ) from exc
-
+    run_dir = resolve_run_dir(project, name)
+    candidate = run_dir / "weights" / f"{weight}.pt"
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail=f"Weight file not found: {candidate}")
 
     return candidate
+
+
+def resolve_project_path(project: str) -> Path:
+    project_path = Path(project).expanduser()
+    if not project_path.is_absolute():
+        project_path = REPO_ROOT / project_path
+    return project_path.resolve()
+
+
+def ensure_runs_path(path: Path):
+    runs_root = RUNS_ROOT.resolve()
+    try:
+        path.resolve().relative_to(runs_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Training outputs can only be read from the runs directory.",
+        ) from exc
+
+
+def is_run_dir(path: Path) -> bool:
+    return (
+        (path / "weights" / "best.pt").is_file()
+        or (path / "weights" / "last.pt").is_file()
+        or (path / "results.csv").is_file()
+    )
+
+
+def latest_run_dir(search_root: Path) -> Optional[Path]:
+    if not search_root.exists():
+        return None
+
+    candidates = [path for path in search_root.rglob("*") if path.is_dir() and is_run_dir(path)]
+    if not candidates:
+        return None
+
+    return max(
+        candidates,
+        key=lambda path: max((item.stat().st_mtime for item in path.rglob("*") if item.is_file()), default=0),
+    )
+
+
+def resolve_run_dir(project: str, name: str) -> Path:
+    project_path = resolve_project_path(project)
+    ensure_runs_path(project_path)
+
+    exact = (project_path / name).resolve()
+    ensure_runs_path(exact)
+    if is_run_dir(exact):
+        return exact
+
+    scoped_latest = latest_run_dir(project_path)
+    if scoped_latest:
+        return scoped_latest
+
+    global_latest = latest_run_dir(RUNS_ROOT.resolve())
+    if global_latest:
+        return global_latest
+
+    raise HTTPException(status_code=404, detail="No completed training run found under the runs directory.")
 
 
 def validate_classes(classes: list[str]) -> dict[int, str]:
@@ -206,6 +273,153 @@ def dataset_response(yaml_path: Path, message: str) -> dict:
     except HTTPException:
         classes = []
     return {"dataset_yaml": str(yaml_path), "classes": classes, "message": message}
+
+
+def float_value(row: dict, key: str) -> Optional[float]:
+    value = row.get(key)
+    if value is None:
+        value = row.get(f" {key}")
+    if value is None:
+        return None
+    try:
+        return float(str(value).strip())
+    except ValueError:
+        return None
+
+
+def sum_values(row: dict, keys: list[str]) -> Optional[float]:
+    values = [float_value(row, key) for key in keys]
+    if any(value is None for value in values):
+        return None
+    return sum(value for value in values if value is not None)
+
+
+def format_metric(value: Optional[float], digits: int = 4):
+    return round(value, digits) if value is not None else None
+
+
+def f1_from_precision_recall(precision: Optional[float], recall: Optional[float]) -> Optional[float]:
+    if precision is None or recall is None or precision + recall <= 0:
+        return None
+    return 2 * precision * recall / (precision + recall)
+
+
+def parse_metric_row(line: str) -> Optional[dict]:
+    parts = clean_log_line(line).split()
+    if len(parts) < 7:
+        return None
+
+    try:
+        images = int(float(parts[-6]))
+        instances = int(float(parts[-5]))
+        precision = float(parts[-4])
+        recall = float(parts[-3])
+        map50 = float(parts[-2])
+        map50_95 = float(parts[-1])
+    except ValueError:
+        return None
+
+    class_name = " ".join(parts[:-6]).strip()
+    if not class_name or class_name.lower() in {"class", "epoch"}:
+        return None
+
+    return {
+        "class_name": class_name,
+        "images": images,
+        "instances": instances,
+        "precision": format_metric(precision),
+        "recall": format_metric(recall),
+        "f1": format_metric(f1_from_precision_recall(precision, recall)),
+        "map50": format_metric(map50),
+        "map50_95": format_metric(map50_95),
+    }
+
+
+def parse_class_metrics_from_log(log_path: Path) -> dict:
+    if not log_path.is_file():
+        return {"overall": None, "classes": [], "weighted_f1": None}
+
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    validating_indexes = [index for index, line in enumerate(lines) if "Validating " in clean_log_line(line)]
+    search_lines = lines[validating_indexes[-1] + 1:] if validating_indexes else lines
+
+    overall = None
+    classes_by_name = {}
+    for line in search_lines:
+        row = parse_metric_row(line)
+        if not row:
+            continue
+        if row["class_name"] == "all":
+            overall = row
+        else:
+            classes_by_name[row["class_name"]] = row
+
+    classes = list(classes_by_name.values())
+    total_instances = sum(row["instances"] for row in classes)
+    weighted_f1 = None
+    if total_instances:
+        weighted_f1 = sum((row["f1"] or 0) * row["instances"] for row in classes) / total_instances
+
+    return {
+        "overall": overall,
+        "classes": classes,
+        "weighted_f1": format_metric(weighted_f1),
+    }
+
+
+def build_metric_history(rows: list[dict]) -> list[dict]:
+    history = []
+    for row in rows:
+        precision = float_value(row, "metrics/precision(B)")
+        recall = float_value(row, "metrics/recall(B)")
+        history.append({
+            "epoch": int(float_value(row, "epoch") or 0),
+            "overall_f1": format_metric(f1_from_precision_recall(precision, recall)),
+            "map50": format_metric(float_value(row, "metrics/mAP50(B)")),
+            "map50_95": format_metric(float_value(row, "metrics/mAP50-95(B)")),
+            "training_loss": format_metric(sum_values(row, ["train/box_loss", "train/cls_loss", "train/dfl_loss"])),
+            "testing_loss": format_metric(sum_values(row, ["val/box_loss", "val/cls_loss", "val/dfl_loss"])),
+        })
+    return history
+
+
+def read_run_metrics(run_dir: Path) -> dict:
+    results_path = run_dir / "results.csv"
+    if not results_path.is_file():
+        return {"available": False, "run_dir": str(run_dir), "results_csv": ""}
+
+    with results_path.open("r", encoding="utf-8", newline="") as file:
+        rows = list(csv.DictReader(file))
+    if not rows:
+        return {"available": False, "run_dir": str(run_dir), "results_csv": str(results_path)}
+
+    row = rows[-1]
+    precision = float_value(row, "metrics/precision(B)")
+    recall = float_value(row, "metrics/recall(B)")
+    f1_score = f1_from_precision_recall(precision, recall)
+    training_loss = sum_values(row, ["train/box_loss", "train/cls_loss", "train/dfl_loss"])
+    testing_loss = sum_values(row, ["val/box_loss", "val/cls_loss", "val/dfl_loss"])
+    map50 = float_value(row, "metrics/mAP50(B)")
+    map50_95 = float_value(row, "metrics/mAP50-95(B)")
+    class_metrics = parse_class_metrics_from_log(LOG_FILE)
+
+    return {
+        "available": True,
+        "run_dir": str(run_dir),
+        "results_csv": str(results_path),
+        "epoch": int(float_value(row, "epoch") or 0),
+        "overall_f1": format_metric(f1_score),
+        "weighted_f1": class_metrics["weighted_f1"],
+        "per_class": class_metrics["classes"],
+        "training_loss": format_metric(training_loss),
+        "testing_loss": format_metric(testing_loss),
+        "precision": format_metric(precision),
+        "recall": format_metric(recall),
+        "map50": format_metric(map50),
+        "map50_95": format_metric(map50_95),
+        "history": build_metric_history(rows),
+        "note": "F1 is derived from validation precision and recall. Weighted F1 is calculated from final per-class validation rows when available.",
+    }
 
 
 def validate_split(split: SplitConfig) -> tuple[float, float, float]:
@@ -400,6 +614,44 @@ def prepare_dataset(source: Path, name: str, classes: list[str], split: SplitCon
     return prepare_split_dataset(root, name, names, split)
 
 
+def clean_log_line(raw_line: str) -> str:
+    cleaned = ANSI_ESCAPE_RE.sub("", raw_line)
+    cleaned = cleaned.replace("\r", "")
+    cleaned = CONTROL_CHAR_RE.sub("", cleaned)
+    return cleaned.strip()
+
+
+def should_write_log_line(line: str) -> bool:
+    if not line:
+        return False
+
+    if "it/s" in line and "%" in line:
+        return False
+
+    if PROGRESS_LINE_RE.search(line):
+        return False
+
+    return True
+
+
+def stream_training_logs(process: subprocess.Popen, log_paths: list[Path]):
+    handles = [path.open("a", encoding="utf-8") for path in log_paths]
+    try:
+        if process.stdout is None:
+            return
+
+        for raw_line in process.stdout:
+            line = clean_log_line(raw_line)
+            if not should_write_log_line(line):
+                continue
+            for handle in handles:
+                handle.write(line + "\n")
+                handle.flush()
+    finally:
+        for handle in handles:
+            handle.close()
+
+
 def read_log_tail(max_chars: int = 20000) -> str:
     if not LOG_FILE.is_file():
         return ""
@@ -409,16 +661,20 @@ def read_log_tail(max_chars: int = 20000) -> str:
 
 def current_status() -> dict:
     global training_process
+    log_info = {
+        "log_file": str(LOG_FILE),
+        "history_log_file": str(training_log_file) if training_log_file else "",
+    }
 
     if training_process is None:
-        return {"running": False, "returncode": None, "started_at": training_started_at}
+        return {"running": False, "returncode": None, "started_at": training_started_at, **log_info}
 
     returncode = training_process.poll()
     if returncode is not None:
         training_process = None
-        return {"running": False, "returncode": returncode, "started_at": training_started_at}
+        return {"running": False, "returncode": returncode, "started_at": training_started_at, **log_info}
 
-    return {"running": True, "returncode": None, "started_at": training_started_at}
+    return {"running": True, "returncode": None, "started_at": training_started_at, **log_info}
 
 
 @app.on_event("startup")
@@ -642,7 +898,7 @@ def roboflow_dataset(request: RoboflowRequest):
 
 @app.post("/api/train/start")
 def start_training(request: TrainRequest):
-    global training_process, training_started_at
+    global training_process, training_started_at, training_log_file
 
     status = current_status()
     if status["running"]:
@@ -658,6 +914,8 @@ def start_training(request: TrainRequest):
 
     ensure_dirs()
     LOG_FILE.write_text("", encoding="utf-8")
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    training_log_file = LOG_DIR / f"train-{timestamp}.log"
 
     cmd = [
         TRAINING_PYTHON,
@@ -669,6 +927,15 @@ def start_training(request: TrainRequest):
         "--batch", str(request.batch),
         "--patience", str(request.patience),
         "--save-period", str(request.save_period),
+        "--workers", str(request.workers),
+        "--optimizer", request.optimizer,
+        "--lr0", str(request.lr0),
+        "--lrf", str(request.lrf),
+        "--weight-decay", str(request.weight_decay),
+        "--warmup-epochs", str(request.warmup_epochs),
+        "--pretrained", str(request.pretrained).lower(),
+        "--activation", request.activation,
+        "--seed", str(request.seed),
         "--project", request.project,
         "--name", request.name,
     ]
@@ -676,23 +943,39 @@ def start_training(request: TrainRequest):
     device = request.device or os.getenv("TRAINING_DEVICE")
     if device:
         cmd.extend(["--device", device])
+    if request.cos_lr:
+        cmd.append("--cos-lr")
+    if request.freeze is not None:
+        cmd.extend(["--freeze", str(request.freeze)])
+    if request.exist_ok:
+        cmd.append("--exist-ok")
     if request.resume:
         cmd.append("--resume")
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
-    log_handle = LOG_FILE.open("a", encoding="utf-8")
+    header = (
+        "Training started.\n"
+        f"Command: {' '.join(cmd)}\n\n"
+    )
+    LOG_FILE.write_text(header, encoding="utf-8")
+    training_log_file.write_text(header, encoding="utf-8")
     training_process = subprocess.Popen(
         cmd,
         cwd=REPO_ROOT,
-        stdout=log_handle,
+        stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         env=env,
         start_new_session=True,
         text=True,
+        bufsize=1,
     )
-    log_handle.close()
+    threading.Thread(
+        target=stream_training_logs,
+        args=(training_process, [LOG_FILE, training_log_file]),
+        daemon=True,
+    ).start()
     training_started_at = time.time()
 
     return {
@@ -700,6 +983,7 @@ def start_training(request: TrainRequest):
         "pid": training_process.pid,
         "command": cmd,
         "log_file": str(LOG_FILE),
+        "history_log_file": str(training_log_file),
     }
 
 
@@ -729,7 +1013,12 @@ def train_logs():
 
 @app.post("/api/train/weights/status")
 def weights_status(request: WeightRequest):
-    result = {}
+    try:
+        run_dir = resolve_run_dir(request.project, request.name)
+    except HTTPException:
+        run_dir = None
+
+    result = {"run_dir": str(run_dir) if run_dir else ""}
     for weight in ("best", "last"):
         try:
             path = resolve_weight_path(request.project, request.name, weight)
@@ -737,6 +1026,12 @@ def weights_status(request: WeightRequest):
         except HTTPException:
             result[weight] = {"available": False, "path": "", "size": 0}
     return result
+
+
+@app.post("/api/train/metrics")
+def train_metrics(request: WeightRequest):
+    run_dir = resolve_run_dir(request.project, request.name)
+    return read_run_metrics(run_dir)
 
 
 @app.get("/api/train/weights/{weight}")

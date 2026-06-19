@@ -4,6 +4,7 @@ services:
       context: ../../..
       dockerfile: vision/ai/web/Dockerfile.cuda
     container_name: yolov8-training-web
+    shm_size: "8gb"
     env_file:
       - .env
     ports:

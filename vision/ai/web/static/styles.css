@@ -56,6 +56,12 @@ h3 {
   font-size: 15px;
 }
 
+h4 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
 p {
   margin: 6px 0 0;
   color: var(--muted);
@@ -315,6 +321,29 @@ textarea:focus {
   color: var(--danger);
 }
 
+.advanced-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.advanced-panel summary {
+  min-height: 38px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.advanced-panel summary:focus {
+  outline: 2px solid #b7ded4;
+  outline-offset: 2px;
+}
+
+.advanced-panel[open] summary {
+  margin-bottom: 10px;
+}
+
 .weights-toolbar {
   display: flex;
   align-items: center;
@@ -323,6 +352,88 @@ textarea:focus {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--line);
+}
+
+.metrics-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.metrics-grid div {
+  min-height: 64px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fafb;
+}
+
+.metrics-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.metrics-grid strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.chart-panel {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fafb;
+}
+
+.chart-panel canvas {
+  display: block;
+  width: 100%;
+  height: 220px;
+  margin-top: 8px;
+}
+
+.class-metrics {
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.class-metrics table {
+  width: 100%;
+  min-width: 520px;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.class-metrics th,
+.class-metrics td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.class-metrics th {
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .logs-panel {
@@ -346,7 +457,9 @@ pre {
 @media (max-width: 900px) {
   .workspace,
   .grid.two,
-  .grid.three {
+  .grid.three,
+  .metrics-grid,
+  .charts-grid {
     grid-template-columns: 1fr;
   }
 
