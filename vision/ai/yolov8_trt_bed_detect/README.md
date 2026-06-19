@@ -72,6 +72,7 @@ docker run -it --rm --net=host \
   --privileged \
   -e NVIDIA_VISIBLE_DEVICES=all \
   --device /dev/video0:/dev/video0 \
+  -v $PWD/yolov8/weights:/yolov8/weights \
   -v $PWD/yolov8_trt_bed_detect/weights:/ros2_ws/src/yolov8_trt_bed_detect/weights \
   meraquetech/race_nav:yolov8-trt-nano.v4
 ```
