@@ -24,12 +24,12 @@
           </div>
 
           <div class="source-tabs" role="tablist">
-            <button class="tab" type="button" data-source="upload">Upload ZIP</button>
-            <button class="tab active" type="button" data-source="folder">Upload Folder</button>
+            <button class="tab active" type="button" data-source="upload">Upload ZIP</button>
+            <button class="tab" type="button" data-source="folder">Upload Folder</button>
             <button class="tab" type="button" data-source="roboflow">Roboflow</button>
           </div>
 
-          <div class="source-view" id="source-upload">
+          <div class="source-view active" id="source-upload">
             <label>
               YOLO dataset ZIP
               <input id="upload-file" type="file" accept=".zip">
@@ -40,7 +40,7 @@
             </label>
           </div>
 
-          <div class="source-view active" id="source-folder">
+          <div class="source-view" id="source-folder">
             <label>
               Dataset folder
               <input id="folder-files" type="file" webkitdirectory directory multiple>
@@ -90,11 +90,11 @@
             </label>
             <label>
               Val %
-              <input id="split-val" type="number" min="0" max="100" value="20">
+              <input id="split-val" type="number" min="0" max="100" value="15">
             </label>
             <label>
               Test %
-              <input id="split-test" type="number" min="0" max="100" value="10">
+              <input id="split-test" type="number" min="0" max="100" value="15">
             </label>
           </div>
 
@@ -105,6 +105,8 @@
             </span>
             <textarea id="classes" rows="5" placeholder="flat&#10;missing&#10;ok"></textarea>
           </label>
+
+          <div class="dataset-summary" id="dataset-summary"></div>
         </div>
 
         <div class="panel training-panel">
@@ -151,7 +153,7 @@
           <div class="grid three">
             <label>
               <span class="tooltip-label" tabindex="0" data-tooltip="Early stopping patience. Training stops if validation performance does not improve for this many epochs.">Patience</span>
-              <input id="patience" type="number" min="0" value="50">
+              <input id="patience" type="number" min="0" value="20">
             </label>
             <label>
               <span class="tooltip-label" tabindex="0" data-tooltip="Checkpoint save interval in epochs. Use -1 to save only the standard best.pt and last.pt files.">Save period</span>
@@ -177,6 +179,16 @@
           <details class="advanced-panel">
             <summary>Advanced Fine-Tuning</summary>
 
+            <div class="preset-toolbar" aria-label="Training presets">
+              <button class="secondary compact" type="button" data-preset="stable">Stable</button>
+              <button class="secondary compact" type="button" data-preset="low_vram">Low VRAM</button>
+              <button class="secondary compact" type="button" data-preset="quick">Quick Test</button>
+              <button class="secondary compact" type="button" data-preset="accuracy">High Accuracy</button>
+              <button id="reset-advanced" class="secondary compact" type="button">Reset</button>
+            </div>
+
+            <div class="advanced-group">
+              <h3>Runtime</h3>
             <div class="grid three">
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Number of dataloader workers. Lower values are more stable in Docker; higher values can load data faster.">Workers</span>
@@ -190,7 +202,7 @@
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Optimizer used for weight updates. Auto lets Ultralytics choose based on model and training setup.">Optimizer</span>
                 <select id="optimizer">
-                  <option value="auto" selected>auto</option>
+                  <option value="auto" selected>Auto</option>
                   <option value="SGD">SGD</option>
                   <option value="Adam">Adam</option>
                   <option value="AdamW">AdamW</option>
@@ -204,7 +216,10 @@
                 <input id="seed" type="number" value="0">
               </label>
             </div>
+            </div>
 
+            <div class="advanced-group">
+              <h3>Optimization</h3>
             <div class="grid three">
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Initial learning rate. Smaller values fine-tune more gently; larger values learn faster but can destabilize.">Initial LR</span>
@@ -219,7 +234,10 @@
                 <input id="weight-decay" type="number" min="0" step="0.0001" value="0.0005">
               </label>
             </div>
+            </div>
 
+            <div class="advanced-group">
+              <h3>Schedule</h3>
             <div class="grid three">
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Warmup duration in epochs. Helps stabilize training at the beginning.">Warmup epochs</span>
@@ -234,7 +252,10 @@
                 <span class="tooltip-label" tabindex="0" data-tooltip="Use cosine learning-rate scheduling for smoother LR decay.">Cosine LR</span>
               </label>
             </div>
+            </div>
 
+            <div class="advanced-group">
+              <h3>Model Architecture</h3>
             <div class="grid three">
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Activation function used by YOLO convolution layers. SiLU is the default and usually safest.">Activation</span>
@@ -258,6 +279,7 @@
                 <input id="exist-ok" type="checkbox">
                 <span class="tooltip-label" tabindex="0" data-tooltip="Reuse the same project/run folder instead of creating train-2, train-3, and so on.">Reuse output folder</span>
               </label>
+            </div>
             </div>
           </details>
 
@@ -283,10 +305,11 @@
               <div><span>Overall F1</span><strong id="metric-f1">-</strong></div>
               <div><span>Weighted F1</span><strong id="metric-weighted-f1">-</strong></div>
               <div><span>Training loss</span><strong id="metric-train-loss">-</strong></div>
-              <div><span>Testing loss</span><strong id="metric-test-loss">-</strong></div>
+              <div><span>Validation loss</span><strong id="metric-test-loss">-</strong></div>
               <div><span>mAP50</span><strong id="metric-map50">-</strong></div>
               <div><span>mAP50-95</span><strong id="metric-map">-</strong></div>
             </div>
+            <div class="best-metrics" id="best-metrics"></div>
             <div class="charts-grid">
               <div class="chart-panel">
                 <h4>Accuracy by Epoch</h4>
@@ -297,6 +320,11 @@
                 <canvas id="loss-chart" width="520" height="220"></canvas>
               </div>
             </div>
+            <div class="artifact-toolbar">
+              <button id="download-results-csv" class="secondary compact" type="button" disabled>Download results.csv</button>
+              <button id="download-accuracy-graph" class="secondary compact" type="button" disabled>Download accuracy graph</button>
+              <button id="download-loss-graph" class="secondary compact" type="button" disabled>Download loss graph</button>
+            </div>
             <div class="class-metrics" id="class-metrics"></div>
             <p id="metrics-status">No results.csv found for this run yet.</p>
           </div>
@@ -306,8 +334,16 @@
       <section class="panel logs-panel">
         <div class="panel-header">
           <h2>Logs</h2>
-          <button id="refresh-logs" class="secondary" type="button">Refresh</button>
+          <div class="button-row">
+            <button id="log-mode-recent" class="secondary compact active-control" type="button" data-log-mode="recent">Recent</button>
+            <button id="log-mode-full" class="secondary compact" type="button" data-log-mode="full">Full</button>
+            <button id="log-mode-errors" class="secondary compact" type="button" data-log-mode="errors">Warnings</button>
+            <button id="refresh-logs" class="secondary compact" type="button">Refresh</button>
+            <button id="download-current-log" class="secondary compact" type="button">Download Current</button>
+            <button id="download-history-log" class="secondary compact" type="button">Download Run Log</button>
+          </div>
         </div>
+        <p id="log-status"></p>
         <pre id="logs"></pre>
       </section>
     </main>

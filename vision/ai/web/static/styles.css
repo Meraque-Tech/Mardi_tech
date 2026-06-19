@@ -162,6 +162,12 @@ button.tab.active {
   color: var(--accent-strong);
 }
 
+button.active-control {
+  background: #e7f3ef;
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
 .source-tabs {
   margin-bottom: 14px;
 }
@@ -199,6 +205,8 @@ label {
 .tooltip-label {
   position: relative;
   display: inline-flex;
+  align-items: center;
+  gap: 6px;
   width: fit-content;
   max-width: 100%;
   color: var(--muted);
@@ -226,23 +234,23 @@ label {
 }
 
 .tooltip-label::before {
-  position: absolute;
-  z-index: 21;
-  left: 12px;
-  bottom: calc(100% + 2px);
-  border: 6px solid transparent;
-  border-top-color: #17202a;
-  content: "";
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(4px);
-  transition: opacity 120ms ease, transform 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid #a7beb7;
+  border-radius: 50%;
+  color: var(--accent-strong);
+  content: "i";
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .tooltip-label:hover::after,
-.tooltip-label:hover::before,
-.tooltip-label:focus::after,
-.tooltip-label:focus::before {
+.tooltip-label:focus::after {
   opacity: 1;
   transform: translateY(0);
 }
@@ -261,6 +269,67 @@ label {
 
 .classes-field textarea {
   margin-top: 6px;
+}
+
+.dataset-summary {
+  margin-top: 14px;
+}
+
+.dataset-summary:empty {
+  display: none;
+}
+
+.summary-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.summary-grid,
+.best-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.summary-grid div,
+.best-grid div {
+  min-height: 70px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fafb;
+}
+
+.summary-grid span,
+.summary-grid small,
+.best-grid span,
+.best-grid small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.summary-grid strong,
+.best-grid strong {
+  display: block;
+  margin: 4px 0;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.dataset-summary ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 input,
@@ -344,6 +413,26 @@ textarea:focus {
   margin-bottom: 10px;
 }
 
+.preset-toolbar,
+.artifact-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.advanced-group {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfcfd;
+}
+
+.advanced-group h3 {
+  color: var(--text);
+}
+
 .weights-toolbar {
   display: flex;
   align-items: center;
@@ -358,6 +447,14 @@ textarea:focus {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--line);
+}
+
+.best-metrics {
+  margin-top: 12px;
+}
+
+.best-metrics:empty {
+  display: none;
 }
 
 .metrics-grid {
@@ -459,7 +556,9 @@ pre {
   .grid.two,
   .grid.three,
   .metrics-grid,
-  .charts-grid {
+  .charts-grid,
+  .summary-grid,
+  .best-grid {
     grid-template-columns: 1fr;
   }
 

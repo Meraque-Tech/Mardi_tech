@@ -1,7 +1,8 @@
 # YOLOv8 Training Web UI
 
-This folder contains a simple FastAPI web UI for preparing a YOLO dataset and
-starting training through:
+This folder contains a FastAPI web UI for preparing YOLO datasets, starting
+YOLOv8 training, monitoring metrics/logs, and downloading training artifacts.
+Training is launched through:
 
 ```text
 vision/ai/train/train_yolov8.py
@@ -10,21 +11,20 @@ vision/ai/train/train_yolov8.py
 ## Files
 
 ```text
-app.py                    FastAPI backend
-static/                   HTML, CSS, and JavaScript UI
-requirements.txt          Python dependencies
-.env                      Local Roboflow/runtime settings
-.env.example              Example environment settings
-Dockerfile.cuda           CUDA container image
-docker-compose.cuda.yml   CUDA compose launcher
-plan.md                   Implementation plan
+app.py                       FastAPI backend
+static/                      HTML, CSS, and JavaScript UI
+requirements.txt             Python dependencies
+.env                         Local Roboflow/runtime settings
+.env.example                 Example environment settings
+Dockerfile.cuda              CUDA container image
+docker-compose.train_web.yml CUDA compose launcher
 ```
 
 The `.env` file is ignored by Git.
 
 ## Environment
 
-Edit `.env` if you want to use Roboflow or set a default training device:
+Create or edit `.env` when you want Roboflow defaults or runtime defaults:
 
 ```text
 ROBOFLOW_API_KEY=
@@ -37,6 +37,10 @@ WEB_DATA_ROOT=
 TRAINING_PYTHON=python3
 TRAINING_DEVICE=
 ```
+
+Only `ROBOFLOW_API_KEY` and `ROBOFLOW_WORKSPACE` are required when using
+Roboflow from environment defaults. `ROBOFLOW_PROJECT` and
+`ROBOFLOW_VERSION` can also be entered in the UI.
 
 `WEB_DATA_ROOT` is optional. If empty, prepared datasets are stored under:
 
@@ -72,8 +76,16 @@ http://localhost:8000
 Use this when you want the UI and training process to run inside a CUDA-enabled
 container.
 
+From the repository root:
+
 ```bash
 docker compose -f vision/ai/web/docker-compose.train_web.yml up --build
+```
+
+Or from `vision/ai/web`:
+
+```bash
+docker compose -f docker-compose.train_web.yml up --build
 ```
 
 Then open:
@@ -83,14 +95,30 @@ http://localhost:8000
 ```
 
 The host machine must have NVIDIA drivers and NVIDIA Container Toolkit
-configured.
+configured. The compose file mounts the repository into `/app`, maps
+`vision/ai/web/logs`, maps `runs`, and sets:
+
+```yaml
+shm_size: "8gb"
+```
+
+Because the source tree is mounted into the container, most Python/HTML/CSS/JS
+changes only require a container restart:
+
+```bash
+docker compose -f docker-compose.train_web.yml restart
+```
+
+Rebuild only when dependencies, the Dockerfile, or image-level setup changes.
 
 ## Dataset Options
 
-### Local Path
+The UI supports three dataset sources.
 
-Use this when the dataset already exists on the same machine or inside the same
-container running FastAPI.
+### Upload ZIP
+
+This is the default option. Upload a ZIP file containing a YOLO dataset. The
+backend extracts it and generates a dataset YAML.
 
 Supported pre-split layout:
 
@@ -114,16 +142,17 @@ dataset/
   labels/
 ```
 
-If the dataset is flat, enable rebuild split and set the train/val/test
+For flat datasets, keep `Rebuild train/val/test split` enabled and set split
 percentages in the UI.
 
-### Upload ZIP
+### Upload Folder
 
-Upload a ZIP file containing a YOLO dataset. The backend extracts it and
-generates a dataset YAML.
+Select a dataset folder from your local computer. The browser uploads the files
+to the backend, then the backend prepares the dataset in the same way as ZIP
+uploads.
 
-The ZIP should contain either a pre-split YOLO dataset or a flat YOLO dataset
-with `images/` and `labels/` folders.
+This uses browser folder upload, so very large folders can hit browser/server
+upload limits. If that happens, ZIP the dataset and use `Upload ZIP`.
 
 ### Roboflow
 
@@ -133,47 +162,156 @@ default.
 
 ## Class IDs
 
-Enter one class name per line in the UI. The line order becomes the class ID.
+Class IDs are one class name per line. The line order becomes the numeric class
+ID.
 
 Example:
 
 ```text
-flat
-missing
-ok
+bee
+drone
+pollenbee
+queen
 ```
 
 This generates:
 
 ```yaml
 names:
-  0: flat
-  1: missing
-  2: ok
+  0: bee
+  1: drone
+  2: pollenbee
+  3: queen
 ```
+
+If the dataset already contains `data.yaml` or `dataset.yaml`, you can leave the
+class list empty and click `Prepare Dataset`; the backend will read class names
+from the YAML. For folder uploads, `Auto Fetch` can read classes from the
+selected folder before upload.
+
+## Split Validation
+
+The UI checks that train/val/test percentages total exactly `100%` before
+preparing a dataset.
+
+Default split:
+
+```text
+train 70%
+val   15%
+test  15%
+```
+
+Validation data is used during training for metrics and early stopping. Test
+data is reserved for final evaluation when present in the dataset.
 
 ## Training
 
 1. Choose a dataset source.
-2. Enter class names.
-3. Set train/val/test split percentages if needed.
+2. Enter or auto-fetch class names.
+3. Set train/val/test percentages if rebuilding the split.
 4. Click `Prepare Dataset`.
-5. Choose model size:
+5. Review the dataset summary and warnings.
+6. Choose model size:
    - Nano: `yolov8n.pt`
    - Small: `yolov8s.pt`
    - Medium: `yolov8m.pt`
    - Large: `yolov8l.pt`
    - Extra large: `yolov8x.pt`
-6. Set training parameters.
-7. Click `Start`.
+7. Set training parameters.
+8. Click `Start`.
 
-The backend runs `train_yolov8.py` in the background and writes logs to:
+The backend runs `train_yolov8.py` in the background.
+
+## Training Parameters
+
+Basic controls:
+
+```text
+model size   YOLOv8 checkpoint size
+device       GPU/CPU selector, for example 0 or cpu
+epochs       maximum number of training epochs
+image size   training image size
+batch        images per training step
+patience     early stopping patience
+save period  extra checkpoint interval; -1 keeps standard best.pt/last.pt
+project      output directory, default runs/detect
+run name     output run name, default train
+resume       pass --resume to the training script
+```
+
+Advanced controls:
+
+```text
+workers        dataloader worker count
+optimizer      auto, SGD, Adam, AdamW, NAdam, RAdam, RMSProp
+seed           reproducibility seed
+lr0            initial learning rate
+lrf            final learning-rate factor
+weight decay   regularization strength
+warmup epochs  learning-rate warmup duration
+freeze layers  freeze the first N layers
+cosine LR      enable cosine learning-rate schedule
+activation     SiLU, ReLU, Leaky ReLU, Mish, GELU, Hardswish
+pretrained     use pretrained weights
+exist_ok       reuse the same output folder instead of train-2/train-3
+```
+
+The UI also includes presets:
+
+```text
+Stable
+Low VRAM
+Quick Test
+High Accuracy
+```
+
+## Logs
+
+Current log:
 
 ```text
 vision/ai/web/logs/current.log
 ```
 
-## Outputs
+Each training session also writes a timestamped log:
+
+```text
+vision/ai/web/logs/train-YYYYMMDD-HHMMSS.log
+```
+
+The UI can show:
+
+```text
+Recent    latest log tail
+Full      full current log
+Warnings  filtered warnings/errors/tracebacks
+```
+
+It can also download the current log or the latest timestamped run log.
+
+## Metrics
+
+The UI reads Ultralytics `results.csv` and final validation log rows to show:
+
+```text
+Overall F1
+Weighted F1
+Per-class F1
+Training loss
+Validation loss
+mAP50
+mAP50-95
+Accuracy graph by epoch
+Loss graph by epoch
+Best epoch summary
+```
+
+`Overall F1` is derived from validation precision and recall. `Weighted F1` is
+calculated from final per-class validation rows when available, weighted by
+class instance counts.
+
+## Outputs And Downloads
 
 Training outputs are saved under the selected project and run name. By default:
 
@@ -188,31 +326,58 @@ runs/detect/train/weights/best.pt
 runs/detect/train/weights/last.pt
 ```
 
-Use `best.pt` for inference or deployment. Use `last.pt` to resume training.
+The UI can download:
+
+```text
+best.pt
+last.pt
+results.csv
+accuracy_by_epoch.png
+loss_by_epoch.png
+current.log
+train-YYYYMMDD-HHMMSS.log
+```
+
+Use `best.pt` for inference or deployment. Use `last.pt` to resume training
+from the most recent checkpoint.
 
 ## Resume Training
 
-To resume from a previous run:
+To resume from the selected project/run:
 
-1. Set model/checkpoint path to `runs/detect/train/weights/last.pt`.
+1. Keep `Project` and `Run name` pointing at the previous run.
 2. Enable `Resume from checkpoint`.
 3. Click `Start`.
 
-The UI sends `--resume` to the training script.
+The UI sends `--resume` to the training script. The checkpoint used by
+Ultralytics depends on the existing run folder and resume behavior.
 
 ## Stop Training
 
 Click `Stop` to send a stop signal to the running training process.
 
-After stopping, resume from:
+After stopping, resume from the run's latest checkpoint when available:
 
 ```text
 runs/detect/train/weights/last.pt
 ```
 
+## Git-Ignored Runtime Files
+
+Uploaded datasets, prepared datasets, logs, generated runs, and model weights
+should not be committed. The repository ignores runtime artifacts such as:
+
+```text
+vision/ai/web/datasets/
+vision/ai/web/logs/
+runs/
+*.pt
+```
+
 ## Notes
 
-- The browser cannot directly browse your whole computer for folders. Local
-  path input must point to a path visible to the FastAPI backend.
-- Uploaded datasets, prepared datasets, logs, and `.env` are ignored by Git.
 - Roboflow download requires network access and valid Roboflow credentials.
+- The web browser cannot write directly to arbitrary folders without browser
+  support. For weight downloads, supported browsers may prompt for a directory;
+  otherwise the normal browser download flow is used.
+- If the UI looks stale after a restart, hard-refresh the browser page.

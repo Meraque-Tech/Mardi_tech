@@ -118,6 +118,12 @@ class WeightRequest(BaseModel):
     name: str = "train"
 
 
+class ArtifactRequest(BaseModel):
+    project: str = "runs/detect"
+    name: str = "train"
+    artifact: str
+
+
 def ensure_dirs():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -272,7 +278,102 @@ def dataset_response(yaml_path: Path, message: str) -> dict:
         classes = read_yaml_class_names(yaml_path)
     except HTTPException:
         classes = []
-    return {"dataset_yaml": str(yaml_path), "classes": classes, "message": message}
+    return {
+        "dataset_yaml": str(yaml_path),
+        "classes": classes,
+        "summary": inspect_dataset_yaml(yaml_path, classes),
+        "message": message,
+    }
+
+
+def resolve_yaml_dataset_root(yaml_path: Path, payload: dict) -> Path:
+    root = payload.get("path") or yaml_path.parent
+    root_path = Path(root).expanduser()
+    if not root_path.is_absolute():
+        root_path = yaml_path.parent / root_path
+    return root_path.resolve()
+
+
+def split_image_folder(dataset_root: Path, value) -> Optional[Path]:
+    if not value:
+        return None
+    candidates = value if isinstance(value, list) else [value]
+    for item in candidates:
+        path = Path(str(item)).expanduser()
+        if not path.is_absolute():
+            path = dataset_root / path
+        if path.exists():
+            return path
+    return None
+
+
+def label_folder_for_images(dataset_root: Path, images_path: Optional[Path]) -> Optional[Path]:
+    if images_path is None:
+        return None
+    parts = list(images_path.parts)
+    if "images" in parts:
+        index = parts.index("images")
+        parts[index] = "labels"
+        return Path(*parts)
+    relative = images_path.relative_to(dataset_root) if images_path.is_relative_to(dataset_root) else images_path.name
+    return dataset_root / "labels" / relative
+
+
+def count_missing_labels(images_path: Optional[Path], labels_path: Optional[Path]) -> int:
+    if images_path is None or not images_path.is_dir():
+        return 0
+    images = image_files(images_path)
+    missing = 0
+    for image in images:
+        label = labels_path / f"{image.stem}.txt" if labels_path else None
+        if label is None or not label.is_file():
+            missing += 1
+    return missing
+
+
+def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
+    warnings = []
+    try:
+        payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return {"warnings": [f"Could not inspect dataset YAML: {exc}"]}
+
+    dataset_root = resolve_yaml_dataset_root(yaml_path, payload)
+    splits = {}
+    total_images = 0
+    total_missing = 0
+    for split in ("train", "val", "test"):
+        images_path = split_image_folder(dataset_root, payload.get(split))
+        labels_path = label_folder_for_images(dataset_root, images_path)
+        images = image_files(images_path) if images_path and images_path.is_dir() else []
+        missing_labels = count_missing_labels(images_path, labels_path)
+        total_images += len(images)
+        total_missing += missing_labels
+        splits[split] = {
+            "images": len(images),
+            "missing_labels": missing_labels,
+            "image_path": str(images_path) if images_path else "",
+            "label_path": str(labels_path) if labels_path else "",
+        }
+
+    if not classes:
+        warnings.append("No class names found.")
+    if splits["train"]["images"] == 0:
+        warnings.append("No training images found.")
+    if splits["val"]["images"] == 0:
+        warnings.append("No validation images found.")
+    if total_missing:
+        warnings.append(f"{total_missing} images are missing label files.")
+
+    return {
+        "dataset_root": str(dataset_root),
+        "class_count": len(classes),
+        "classes": classes,
+        "splits": splits,
+        "total_images": total_images,
+        "missing_labels": total_missing,
+        "warnings": warnings,
+    }
 
 
 def float_value(row: dict, key: str) -> Optional[float]:
@@ -383,10 +484,46 @@ def build_metric_history(rows: list[dict]) -> list[dict]:
     return history
 
 
+def best_metric_summary(history: list[dict]) -> dict:
+    def best_by(key: str, higher_is_better: bool = True):
+        candidates = [row for row in history if row.get(key) is not None]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda row: row[key]) if higher_is_better else min(candidates, key=lambda row: row[key])
+
+    best_map95 = best_by("map50_95")
+    best_map50 = best_by("map50")
+    best_f1 = best_by("overall_f1")
+    best_val_loss = best_by("testing_loss", higher_is_better=False)
+    return {
+        "best_map50_95": best_map95,
+        "best_map50": best_map50,
+        "best_f1": best_f1,
+        "lowest_validation_loss": best_val_loss,
+    }
+
+
+def artifact_status(path: Path) -> dict:
+    return {
+        "available": path.is_file(),
+        "path": str(path),
+        "size": path.stat().st_size if path.is_file() else 0,
+    }
+
+
 def read_run_metrics(run_dir: Path) -> dict:
     results_path = run_dir / "results.csv"
     if not results_path.is_file():
-        return {"available": False, "run_dir": str(run_dir), "results_csv": ""}
+        return {
+            "available": False,
+            "run_dir": str(run_dir),
+            "results_csv": "",
+            "artifacts": {
+                "results_csv": artifact_status(results_path),
+                "accuracy_graph": artifact_status(run_dir / "accuracy_by_epoch.png"),
+                "loss_graph": artifact_status(run_dir / "loss_by_epoch.png"),
+            },
+        }
 
     with results_path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
@@ -402,6 +539,7 @@ def read_run_metrics(run_dir: Path) -> dict:
     map50 = float_value(row, "metrics/mAP50(B)")
     map50_95 = float_value(row, "metrics/mAP50-95(B)")
     class_metrics = parse_class_metrics_from_log(LOG_FILE)
+    history = build_metric_history(rows)
 
     return {
         "available": True,
@@ -417,7 +555,13 @@ def read_run_metrics(run_dir: Path) -> dict:
         "recall": format_metric(recall),
         "map50": format_metric(map50),
         "map50_95": format_metric(map50_95),
-        "history": build_metric_history(rows),
+        "history": history,
+        "best": best_metric_summary(history),
+        "artifacts": {
+            "results_csv": artifact_status(results_path),
+            "accuracy_graph": artifact_status(run_dir / "accuracy_by_epoch.png"),
+            "loss_graph": artifact_status(run_dir / "loss_by_epoch.png"),
+        },
         "note": "F1 is derived from validation precision and recall. Weighted F1 is calculated from final per-class validation rows when available.",
     }
 
@@ -657,6 +801,43 @@ def read_log_tail(max_chars: int = 20000) -> str:
         return ""
     data = LOG_FILE.read_text(encoding="utf-8", errors="replace")
     return data[-max_chars:]
+
+
+def read_log_file(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def read_error_log(path: Path) -> str:
+    keywords = ("error", "warning", "traceback", "exception", "failed", "no space", "not found")
+    lines = read_log_file(path).splitlines()
+    return "\n".join(line for line in lines if any(keyword in line.lower() for keyword in keywords))
+
+
+def latest_timestamped_log() -> Optional[Path]:
+    logs = [path for path in LOG_DIR.glob("train-*.log") if path.is_file()]
+    if not logs:
+        return None
+    return max(logs, key=lambda path: path.stat().st_mtime)
+
+
+def resolve_artifact_path(request: ArtifactRequest) -> Path:
+    run_dir = resolve_run_dir(request.project, request.name)
+    artifact_map = {
+        "results_csv": run_dir / "results.csv",
+        "accuracy_graph": run_dir / "accuracy_by_epoch.png",
+        "loss_graph": run_dir / "loss_by_epoch.png",
+        "best": run_dir / "weights" / "best.pt",
+        "last": run_dir / "weights" / "last.pt",
+    }
+    path = artifact_map.get(request.artifact)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Unknown artifact.")
+    ensure_runs_path(path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {path}")
+    return path
 
 
 def current_status() -> dict:
@@ -1011,6 +1192,31 @@ def train_logs():
     return read_log_tail()
 
 
+@app.get("/api/train/logs/full", response_class=PlainTextResponse)
+def train_logs_full():
+    return read_log_file(LOG_FILE)
+
+
+@app.get("/api/train/logs/errors", response_class=PlainTextResponse)
+def train_logs_errors():
+    return read_error_log(LOG_FILE)
+
+
+@app.get("/api/train/logs/download")
+def download_current_log():
+    if not LOG_FILE.is_file():
+        raise HTTPException(status_code=404, detail="No current log file found.")
+    return FileResponse(LOG_FILE, media_type="text/plain", filename=LOG_FILE.name)
+
+
+@app.get("/api/train/logs/history/download")
+def download_history_log():
+    path = training_log_file if training_log_file and training_log_file.is_file() else latest_timestamped_log()
+    if not path:
+        raise HTTPException(status_code=404, detail="No timestamped training log found.")
+    return FileResponse(path, media_type="text/plain", filename=path.name)
+
+
 @app.post("/api/train/weights/status")
 def weights_status(request: WeightRequest):
     try:
@@ -1032,6 +1238,13 @@ def weights_status(request: WeightRequest):
 def train_metrics(request: WeightRequest):
     run_dir = resolve_run_dir(request.project, request.name)
     return read_run_metrics(run_dir)
+
+
+@app.post("/api/train/artifacts/download")
+def download_artifact(request: ArtifactRequest):
+    path = resolve_artifact_path(request)
+    media_type = "text/csv" if path.suffix == ".csv" else "image/png" if path.suffix == ".png" else "application/octet-stream"
+    return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 @app.get("/api/train/weights/{weight}")

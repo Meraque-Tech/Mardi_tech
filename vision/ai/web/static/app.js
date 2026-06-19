@@ -1,11 +1,104 @@
 const state = {
-  source: "folder",
+  source: "upload",
   datasetYaml: "",
+  datasetSummary: null,
   pollTimer: null,
   metricsHistory: [],
+  metricsAvailable: false,
+  logMode: "recent",
 };
 
 const $ = (id) => document.getElementById(id);
+
+const CONTROL_DEFAULTS = {
+  "model-size": "nano",
+  epochs: 100,
+  imgsz: 640,
+  batch: 16,
+  patience: 20,
+  "save-period": -1,
+  "run-name": "train",
+  project: "runs/detect",
+  workers: "2",
+  optimizer: "auto",
+  seed: 0,
+  lr0: 0.01,
+  lrf: 0.01,
+  "weight-decay": 0.0005,
+  "warmup-epochs": 3.0,
+  freeze: "",
+  "cos-lr": false,
+  activation: "silu",
+  pretrained: true,
+  "exist-ok": false,
+  resume: false,
+};
+
+const TRAINING_PRESETS = {
+  stable: {
+    epochs: 100,
+    imgsz: 640,
+    batch: 16,
+    patience: 20,
+    workers: "2",
+    optimizer: "auto",
+    lr0: 0.01,
+    lrf: 0.01,
+    "weight-decay": 0.0005,
+    "warmup-epochs": 3.0,
+    "cos-lr": false,
+    pretrained: true,
+    activation: "silu",
+  },
+  low_vram: {
+    "model-size": "nano",
+    epochs: 100,
+    imgsz: 512,
+    batch: 4,
+    patience: 20,
+    workers: "0",
+    optimizer: "auto",
+    lr0: 0.005,
+    lrf: 0.01,
+    "weight-decay": 0.0005,
+    "warmup-epochs": 3.0,
+    "cos-lr": true,
+    pretrained: true,
+    activation: "silu",
+  },
+  quick: {
+    "model-size": "nano",
+    epochs: 10,
+    imgsz: 640,
+    batch: 8,
+    patience: 5,
+    workers: "2",
+    optimizer: "auto",
+    lr0: 0.01,
+    lrf: 0.01,
+    "weight-decay": 0.0005,
+    "warmup-epochs": 1.0,
+    "cos-lr": false,
+    pretrained: true,
+    activation: "silu",
+  },
+  accuracy: {
+    "model-size": "small",
+    epochs: 150,
+    imgsz: 768,
+    batch: 8,
+    patience: 40,
+    workers: "4",
+    optimizer: "auto",
+    lr0: 0.006,
+    lrf: 0.01,
+    "weight-decay": 0.0005,
+    "warmup-epochs": 3.0,
+    "cos-lr": true,
+    pretrained: true,
+    activation: "silu",
+  },
+};
 
 function setMessage(text, isError = false) {
   const message = $("message");
@@ -33,6 +126,33 @@ function setClassNames(classes) {
   if (Array.isArray(classes) && classes.length) {
     $("classes").value = classes.join("\n");
   }
+}
+
+function setControlValue(id, value) {
+  const element = $(id);
+  if (!element) {
+    return;
+  }
+  if (element.type === "checkbox") {
+    element.checked = Boolean(value);
+    return;
+  }
+  element.value = value;
+}
+
+function applyControlValues(values) {
+  Object.entries(values).forEach(([id, value]) => setControlValue(id, value));
+  refreshWeightsStatus();
+  refreshMetrics();
+}
+
+function applyPreset(name) {
+  const preset = TRAINING_PRESETS[name];
+  if (!preset) {
+    return;
+  }
+  applyControlValues(preset);
+  setMessage(`Applied ${name.replace("_", " ")} preset.`);
 }
 
 function cleanYamlValue(value) {
@@ -212,6 +332,75 @@ function renderClassMetrics(classes) {
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+function renderDatasetSummary(summary) {
+  const container = $("dataset-summary");
+  state.datasetSummary = summary || null;
+  if (!summary || !summary.splits) {
+    container.innerHTML = "";
+    return;
+  }
+
+  const splitRows = ["train", "val", "test"].map((split) => {
+    const row = summary.splits[split] || {};
+    return `
+      <div>
+        <span>${split.toUpperCase()}</span>
+        <strong>${row.images || 0}</strong>
+        <small>${row.missing_labels || 0} missing labels</small>
+      </div>
+    `;
+  }).join("");
+  const classPreview = Array.isArray(summary.classes) ? summary.classes.slice(0, 8).join(", ") : "";
+  const classSuffix = Array.isArray(summary.classes) && summary.classes.length > 8 ? "..." : "";
+  const warnings = Array.isArray(summary.warnings) && summary.warnings.length
+    ? `<ul>${summary.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
+    : "<p>No dataset warnings found.</p>";
+
+  container.innerHTML = `
+    <div class="summary-header">
+      <h3>Dataset Summary</h3>
+      <p>${summary.total_images || 0} images, ${summary.class_count || 0} classes</p>
+    </div>
+    <div class="summary-grid">${splitRows}</div>
+    <p>${escapeHtml(classPreview)}${classSuffix}</p>
+    ${warnings}
+  `;
+}
+
+function formatBestMetric(row, key, label) {
+  if (!row || row[key] === null || row[key] === undefined) {
+    return "";
+  }
+  return `<div><span>${label}</span><strong>${metricText(row[key])}</strong><small>Epoch ${row.epoch}</small></div>`;
+}
+
+function renderBestMetrics(best) {
+  const container = $("best-metrics");
+  if (!best) {
+    container.innerHTML = "";
+    return;
+  }
+  const rows = [
+    formatBestMetric(best.best_map50_95, "map50_95", "Best mAP50-95"),
+    formatBestMetric(best.best_map50, "map50", "Best mAP50"),
+    formatBestMetric(best.best_f1, "overall_f1", "Best F1"),
+    formatBestMetric(best.lowest_validation_loss, "testing_loss", "Lowest validation loss"),
+  ].filter(Boolean);
+  container.innerHTML = rows.length ? `<h4>Best Epochs</h4><div class="best-grid">${rows.join("")}</div>` : "";
+}
+
+function setArtifactButtons(artifacts) {
+  const isEnabled = (key) => {
+    if (typeof artifacts === "boolean") {
+      return artifacts;
+    }
+    return Boolean(artifacts && artifacts[key] && artifacts[key].available);
+  };
+  $("download-results-csv").disabled = !isEnabled("results_csv");
+  $("download-accuracy-graph").disabled = !isEnabled("accuracy_graph");
+  $("download-loss-graph").disabled = !isEnabled("loss_graph");
 }
 
 function resetCharts() {
@@ -481,6 +670,7 @@ async function prepareDataset() {
     state.datasetYaml = result.dataset_yaml;
     $("dataset-yaml").value = result.dataset_yaml;
     setClassNames(result.classes);
+    renderDatasetSummary(result.summary);
     setMessage(result.message);
   } catch (error) {
     setMessage(error.message, true);
@@ -590,29 +780,36 @@ async function refreshMetrics() {
     });
 
     if (!metrics.available) {
+      state.metricsAvailable = false;
       $("metric-f1").textContent = "-";
       $("metric-weighted-f1").textContent = "-";
       $("metric-train-loss").textContent = "-";
       $("metric-test-loss").textContent = "-";
       $("metric-map50").textContent = "-";
       $("metric-map").textContent = "-";
+      renderBestMetrics(null);
       renderClassMetrics([]);
       resetCharts();
+      setArtifactButtons(metrics.artifacts || false);
       $("metrics-status").textContent = "No results.csv found for this run yet.";
       return;
     }
 
+    state.metricsAvailable = true;
     $("metric-f1").textContent = metricText(metrics.overall_f1);
     $("metric-weighted-f1").textContent = metricText(metrics.weighted_f1);
     $("metric-train-loss").textContent = metricText(metrics.training_loss);
     $("metric-test-loss").textContent = metricText(metrics.testing_loss);
     $("metric-map50").textContent = metricText(metrics.map50);
     $("metric-map").textContent = metricText(metrics.map50_95);
+    renderBestMetrics(metrics.best);
     renderClassMetrics(metrics.per_class);
     renderMetricCharts(metrics.history);
+    setArtifactButtons(metrics.artifacts || true);
     $("metrics-status").textContent = `Epoch ${metrics.epoch}. ${metrics.note}`;
   } catch (error) {
     resetCharts();
+    setArtifactButtons(false);
     $("metrics-status").textContent = error.message;
   }
 }
@@ -657,11 +854,56 @@ async function downloadWeight(weight) {
   }
 }
 
+async function downloadArtifact(artifact, filename) {
+  try {
+    const response = await fetch("/api/train/artifacts/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...weightTarget(), artifact }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `Download failed: ${response.status}`);
+    }
+    saveBlobWithBrowserDownload(await response.blob(), filename);
+    setMessage(`Downloading ${filename}.`);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+function logEndpoint() {
+  if (state.logMode === "full") {
+    return "/api/train/logs/full";
+  }
+  if (state.logMode === "errors") {
+    return "/api/train/logs/errors";
+  }
+  return "/api/train/logs";
+}
+
+function setLogMode(mode) {
+  state.logMode = mode;
+  document.querySelectorAll("[data-log-mode]").forEach((button) => {
+    button.classList.toggle("active-control", button.dataset.logMode === mode);
+  });
+  refreshLogs();
+}
+
+function downloadLog(url) {
+  window.location.href = url;
+}
+
 async function pollStatus() {
   try {
     const status = await apiJson("/api/train/status");
     $("status-pill").textContent = status.running ? "Training" : "Idle";
-    $("logs").textContent = status.log_tail || "";
+    if (state.logMode === "recent") {
+      $("logs").textContent = status.log_tail || "";
+    }
+    $("log-status").textContent = status.history_log_file
+      ? `Current log: ${status.log_file} | Run log: ${status.history_log_file}`
+      : `Current log: ${status.log_file}`;
     refreshWeightsStatus();
     refreshMetrics();
   } catch (error) {
@@ -671,8 +913,9 @@ async function pollStatus() {
 }
 
 async function refreshLogs() {
-  const response = await fetch("/api/train/logs");
-  $("logs").textContent = await response.text();
+  const response = await fetch(logEndpoint());
+  const text = await response.text();
+  $("logs").textContent = text || (state.logMode === "errors" ? "No warnings or errors found." : "");
 }
 
 document.querySelectorAll(".tab").forEach((button) => {
@@ -687,10 +930,25 @@ $("refresh-logs").addEventListener("click", refreshLogs);
 $("refresh-metrics").addEventListener("click", refreshMetrics);
 $("download-best").addEventListener("click", () => downloadWeight("best"));
 $("download-last").addEventListener("click", () => downloadWeight("last"));
+$("download-results-csv").addEventListener("click", () => downloadArtifact("results_csv", "results.csv"));
+$("download-accuracy-graph").addEventListener("click", () => downloadArtifact("accuracy_graph", "accuracy_by_epoch.png"));
+$("download-loss-graph").addEventListener("click", () => downloadArtifact("loss_graph", "loss_by_epoch.png"));
+$("download-current-log").addEventListener("click", () => downloadLog("/api/train/logs/download"));
+$("download-history-log").addEventListener("click", () => downloadLog("/api/train/logs/history/download"));
 $("project").addEventListener("input", refreshWeightsStatus);
 $("run-name").addEventListener("input", refreshWeightsStatus);
 $("project").addEventListener("input", refreshMetrics);
 $("run-name").addEventListener("input", refreshMetrics);
+document.querySelectorAll("[data-log-mode]").forEach((button) => {
+  button.addEventListener("click", () => setLogMode(button.dataset.logMode));
+});
+document.querySelectorAll("[data-preset]").forEach((button) => {
+  button.addEventListener("click", () => applyPreset(button.dataset.preset));
+});
+$("reset-advanced").addEventListener("click", () => {
+  applyControlValues(CONTROL_DEFAULTS);
+  setMessage("Reset training controls to defaults.");
+});
 window.addEventListener("resize", redrawCharts);
 
 loadConfig().catch((error) => setMessage(error.message, true));
