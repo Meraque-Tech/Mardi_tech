@@ -178,18 +178,20 @@ docker run -it --rm --net=host \
   -v $PWD/yolov8_trt_bed_detect/weights:/ros2_ws/src/yolov8_trt_bed_detect/weights:ro \
   meraquetech/race_nav:yolov8-trt-bed-detect-nano.v1 \
   bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && \
-  ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
-  -d /ros2_ws/src/yolov8_trt_bed_detect/weights/yolov8s_bed.engine ./ g -conf 0.85"
+  ros2 launch yolov8_trt_bed_detect bed_detect.launch.py \
+  engine_name:=/ros2_ws/src/yolov8_trt_bed_detect/weights/yolov8s_bed.engine"
 ```
 
 ---
 
 ## Webcam index
 
-Default is `/dev/video0` (index `0`). To use a different camera, change the index in `main.cpp`:
+Default is `/dev/video0` (index `0`). Change via the params file — no recompile needed:
 
-```cpp
-cv::VideoCapture cap(0);  // change 0 to 1, 2, etc.
+```yaml
+camera_index:  1   # /dev/video1
+camera_width:  1280
+camera_height: 720
 ```
 
 ---
