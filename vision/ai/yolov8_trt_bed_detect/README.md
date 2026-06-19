@@ -76,6 +76,7 @@ docker run -it --rm --net=host \
   -v $PWD/yolov8_trt_bed_detect/weights:/ros2_ws/src/yolov8_trt_bed_detect/weights \
   -v $PWD/yolov8_trt_bed_detect/config:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/config \
   meraquetech/race_nav:yolov8-trt-bed-detect-nano.v4
+
 ```
 
 Inside the container, serialize the engine:
@@ -162,12 +163,14 @@ ros2 launch yolov8_trt_bed_detect bed_detect.launch.py
 Override a single parameter without editing the YAML:
 
 ```bash
-ros2 launch yolov8_trt_bed_detect bed_detect.launch.py \
-  engine_name:=weights/yolov8n_bed_416.engine
-
 # Use a completely different params file
 ros2 launch yolov8_trt_bed_detect bed_detect.launch.py \
   params_file:=/path/to/int8_params.yaml
+
+# Override just the engine path at runtime
+ros2 launch yolov8_trt_bed_detect bed_detect.launch.py \
+  params_file:=/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/config/trt_params.yaml \
+  --ros-args -p engine_name:=/ros2_ws/src/yolov8_trt_bed_detect/weights/yolov8n.engine
 ```
 
 **Alternative — run directly with params file:**
