@@ -88,7 +88,7 @@ Inside the container, serialize the engine:
 ```bash
 # for nano ->
 ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
-  -s /weights/yolov8n.wts /weights/yolov8n.engine n 416 416
+  -s /weights/yolov8n.wts /weights/yolov8n_416.engine n 416 416
 
 ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
   -s /weights/yolov8n.wts /weights/yolov8n.engine n 512 512
@@ -96,7 +96,7 @@ ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
 # for small ->
 ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
   -s /weights/yolov8s.wts /weights/yolov8s.engine s
-  
+
 ```
 
 <!-- RUN -->
