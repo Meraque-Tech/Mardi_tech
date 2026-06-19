@@ -3,12 +3,13 @@ yolov8_trt:
 
     # ── Engine file ──────────────────────────────────────────────────────────
     # engine_name: "yolov8n.engine"        # path to serialised TRT engine
-    engine_name: "/weights/yolov8n.engine"        # path to serialised TRT engine
+    # engine_name: "/weights/yolov8n.engine"        # path to serialised TRT engine
+    engine_name: "/weights/yolov8n_416.engine"        # path to serialised TRT engine
 
     # ── Input resolution (must match engine build) ───────────────────────────
     # 640 → 416 saves ~34% compute | 320 saves ~61%
     # Change here AND rebuild the engine (-s step).
-    
+
     input_h: 416
     input_w: 416
 
