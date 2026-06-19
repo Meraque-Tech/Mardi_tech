@@ -15,6 +15,39 @@ int start_bed_detection_ = 0;
 float conf_score_value = 0.8f;
 bool bed_detection_fb_ = 0;
 
+struct TrtParams {
+    std::string engine_name;
+    int         input_h;
+    int         input_w;
+    std::string precision;
+    std::string cuda_post_process;
+    float       conf_thresh;
+    float       nms_thresh;
+    int         max_output_bbox;
+    int         mjpeg_port;
+    int         camera_index;
+    int         camera_width;
+    int         camera_height;
+};
+
+TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
+    TrtParams p;
+    p.engine_name       = n->declare_parameter<std::string>("engine_name",       "yolov8n.engine");
+    p.input_h           = n->declare_parameter<int>        ("input_h",           416);
+    p.input_w           = n->declare_parameter<int>        ("input_w",           416);
+    p.precision         = n->declare_parameter<std::string>("precision",         "fp16");
+    p.cuda_post_process = n->declare_parameter<std::string>("cuda_post_process", "g");
+    p.conf_thresh       = n->declare_parameter<double>     ("conf_thresh",       0.5);
+    p.nms_thresh        = n->declare_parameter<double>     ("nms_thresh",        0.45);
+    p.max_output_bbox   = n->declare_parameter<int>        ("max_output_bbox",   100);
+    p.mjpeg_port        = n->declare_parameter<int>        ("mjpeg_port",        8080);
+    p.camera_index      = n->declare_parameter<int>        ("camera_index",      0);
+    p.camera_width      = n->declare_parameter<int>        ("camera_width",      1280);
+    p.camera_height     = n->declare_parameter<int>        ("camera_height",     720);
+    conf_score_value    = n->declare_parameter<double>     ("conf_score_value",  0.8);
+    return p;
+}
+
 
 void sig_handler(int signal){
     std::cout << "\nCtrl+C pressed. Exiting..." << std::endl;
@@ -43,46 +76,43 @@ int main(int argc, char *argv[]) {
 
     cv::Mat frame;
 
+    TrtParams p = declare_and_get_params(node);
+    RCLCPP_INFO(node->get_logger(), "engine: %s  res: %dx%d  precision: %s  post: %s",
+        p.engine_name.c_str(), p.input_w, p.input_h, p.precision.c_str(), p.cuda_post_process.c_str());
+
     cudaSetDevice(kGpuId);
-    std::string wts_name = "";
-    std::string engine_name = "";
-    std::string img_dir;
-    std::string sub_type = "";
-    std::string cuda_post_process = "";
     int model_bboxes;
 
-    if (!parse_args(argc, argv, wts_name, engine_name, img_dir, sub_type, cuda_post_process)) {
-        std::cerr << "Arguments not right!" << std::endl;
-        std::cerr << "./yolov8_trt -s [.wts] [.engine] [n/s/m/l/x]  // serialize model to plan file" << std::endl;
-        std::cerr << "./yolov8_trt -d [.engine] ../samples  [c/g]// deserialize plan file and run inference" << std::endl;
-        return -1;
+    // Serialize mode: pass -s <wts> <engine> <variant> as before
+    {
+        std::string wts_name, engine_name, img_dir, sub_type, cuda_pp;
+        if (argc >= 4 && parse_args(argc, argv, wts_name, engine_name, img_dir, sub_type, cuda_pp)) {
+            if (!wts_name.empty()) {
+                serialize_engine(wts_name, engine_name, sub_type);
+                return 0;
+            }
+        }
     }
 
-    if (!wts_name.empty()) {
-        serialize_engine(wts_name, engine_name, sub_type);
-        return 0;
-    }
-
-    // Open webcam (device index 0 by default) — only needed for inference mode
-    cv::VideoCapture cap(0);
+    cv::VideoCapture cap(p.camera_index);
     if (!cap.isOpened()) {
         std::cout << "Failed to open webcam." << std::endl;
         return 1;
     }
-    cap.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
+    cap.set(cv::CAP_PROP_FRAME_WIDTH,  p.camera_width);
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, p.camera_height);
 
     MjpegServer mjpeg_server;
-    if (!mjpeg_server.start(8080)) {
-        std::cerr << "Failed to start MJPEG server on port 8080." << std::endl;
+    if (!mjpeg_server.start(p.mjpeg_port)) {
+        std::cerr << "Failed to start MJPEG server on port " << p.mjpeg_port << std::endl;
     } else {
-        std::cout << "MJPEG stream available at http://<host-ip>:8080/" << std::endl;
+        std::cout << "MJPEG stream available at http://<host-ip>:" << p.mjpeg_port << "/" << std::endl;
     }
 
     IRuntime *runtime = nullptr;
     ICudaEngine *engine = nullptr;
     IExecutionContext *context = nullptr;
-    deserialize_engine(engine_name, &runtime, &engine, &context);
+    deserialize_engine(p.engine_name, &runtime, &engine, &context);
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
     cuda_preprocess_init(kMaxInputImageSize);
@@ -93,17 +123,7 @@ int main(int argc, char *argv[]) {
     float *decode_ptr_host = nullptr;
     float *decode_ptr_device = nullptr;
 
-    prepare_buffer(engine, &device_buffers[0], &device_buffers[1], &output_buffer_host, &decode_ptr_host, &decode_ptr_device, cuda_post_process);
-
-    try {
-        if (argc > 5 && std::string(argv[5]) == "-conf") {
-            conf_score_value = std::stof(argv[6]);
-            std::cout << "conf_score_value -> " << conf_score_value << std::endl;
-        }
-    } catch (const std::exception &e) {
-        std::cerr << "Error parsing arguments: " << e.what() << std::endl;
-        return -1;
-    }
+    prepare_buffer(engine, &device_buffers[0], &device_buffers[1], &output_buffer_host, &decode_ptr_host, &decode_ptr_device, p.cuda_post_process);
 
     while (rclcpp::ok()) {
         cap >> frame;
@@ -112,14 +132,15 @@ int main(int argc, char *argv[]) {
         if (start_bed_detection_ == 1) {
             std::vector<cv::Mat> img_batch{frame};
 
-            cuda_batch_preprocess(img_batch, device_buffers[0], kInputW, kInputH, stream);
+            cuda_batch_preprocess(img_batch, device_buffers[0], p.input_w, p.input_h, stream);
             infer(*context, stream, (void **)device_buffers, output_buffer_host, kBatchSize,
-                  decode_ptr_host, decode_ptr_device, model_bboxes, cuda_post_process);
+                  decode_ptr_host, decode_ptr_device, model_bboxes, p.cuda_post_process,
+                  p.conf_thresh, p.nms_thresh, p.max_output_bbox);
 
             std::vector<std::vector<Detection>> res_batch;
-            if (cuda_post_process == "c") {
-                batch_nms(res_batch, output_buffer_host, img_batch.size(), kOutputSize, kConfThresh, kNmsThresh);
-            } else if (cuda_post_process == "g") {
+            if (p.cuda_post_process == "c") {
+                batch_nms(res_batch, output_buffer_host, img_batch.size(), kOutputSize, p.conf_thresh, p.nms_thresh);
+            } else if (p.cuda_post_process == "g") {
                 batch_process(res_batch, decode_ptr_host, img_batch.size(), bbox_element, img_batch);
             }
 

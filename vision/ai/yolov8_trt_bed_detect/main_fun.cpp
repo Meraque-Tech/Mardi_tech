@@ -91,19 +91,18 @@ void prepare_buffer(ICudaEngine *engine, float **input_buffer_device, float **ou
     }
 }
 
-void infer(IExecutionContext &context, cudaStream_t &stream, void **buffers, float *output, int batchsize, float* decode_ptr_host, float* decode_ptr_device, int model_bboxes, std::string cuda_post_process) {
-    // infer on the batch asynchronously, and DMA output back to host
+void infer(IExecutionContext &context, cudaStream_t &stream, void **buffers, float *output, int batchsize, float* decode_ptr_host, float* decode_ptr_device, int model_bboxes, std::string cuda_post_process, float conf_thresh, float nms_thresh, int max_output_bbox) {
     auto start = std::chrono::system_clock::now();
     context.enqueue(batchsize, buffers, stream, nullptr);
     if (cuda_post_process == "c") {
-        CUDA_CHECK(cudaMemcpyAsync(output, buffers[1], batchsize * kOutputSize * sizeof(float), cudaMemcpyDeviceToHost,stream));
+        CUDA_CHECK(cudaMemcpyAsync(output, buffers[1], batchsize * kOutputSize * sizeof(float), cudaMemcpyDeviceToHost, stream));
         auto end = std::chrono::system_clock::now();
         std::cout << "inference time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
     } else if (cuda_post_process == "g") {
-        CUDA_CHECK(cudaMemsetAsync(decode_ptr_device, 0, sizeof(float) * (1 + kMaxNumOutputBbox * bbox_element), stream));
-        cuda_decode((float *)buffers[1], model_bboxes, kConfThresh, decode_ptr_device, kMaxNumOutputBbox, stream);
-        cuda_nms(decode_ptr_device, kNmsThresh, kMaxNumOutputBbox, stream);//cuda nms
-        CUDA_CHECK(cudaMemcpyAsync(decode_ptr_host, decode_ptr_device, sizeof(float) * (1 + kMaxNumOutputBbox * bbox_element), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaMemsetAsync(decode_ptr_device, 0, sizeof(float) * (1 + max_output_bbox * bbox_element), stream));
+        cuda_decode((float *)buffers[1], model_bboxes, conf_thresh, decode_ptr_device, max_output_bbox, stream);
+        cuda_nms(decode_ptr_device, nms_thresh, max_output_bbox, stream);
+        CUDA_CHECK(cudaMemcpyAsync(decode_ptr_host, decode_ptr_device, sizeof(float) * (1 + max_output_bbox * bbox_element), cudaMemcpyDeviceToHost, stream));
         auto end = std::chrono::system_clock::now();
         std::cout << "inference and gpu postprocess time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
     }
