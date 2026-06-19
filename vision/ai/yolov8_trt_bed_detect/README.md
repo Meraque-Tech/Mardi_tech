@@ -125,7 +125,26 @@ yolov8_trt:
 
 ---
 
-## Step 5 — Run the detection node
+## Step 5 — Build and source the workspace
+
+Inside the container (or on the Jetson directly):
+
+```bash
+cd /ros2_ws
+colcon build --packages-select yolov8_trt_bed_detect --symlink-install
+source install/setup.bash
+```
+
+> Run `source install/setup.bash` in every new terminal before using `ros2 launch` or `ros2 run`.
+> Add it to `~/.bashrc` to avoid repeating it:
+> ```bash
+> echo "source /ros2_ws/install/setup.bash" >> ~/.bashrc
+> ```
+
+---
+
+## Step 6 — Run the detection node
+
 
 **Recommended — launch file (loads config automatically):**
 
@@ -153,7 +172,7 @@ ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
 
 ---
 
-## Step 6 — Trigger detection from another node / terminal
+## Step 7 — Trigger detection from another node / terminal
 
 ```bash
 ros2 service call /bed_detection std_srvs/srv/Trigger {}
