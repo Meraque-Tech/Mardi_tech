@@ -73,7 +73,6 @@ docker run -it --rm --net=host \
   -e NVIDIA_VISIBLE_DEVICES=all \
   --device /dev/video0:/dev/video0 \
   -v $PWD/yolov8/weights:/weights \
-  -v $PWD/yolov8_trt_bed_detect/weights:/ros2_ws/src/yolov8_trt_bed_detect/weights \
   -v $PWD/yolov8_trt_bed_detect/config:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/config \
   -v $PWD/yolov8_trt_bed_detect/launch:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/launch \
   meraquetech/race_nav:yolov8-trt-bed-detect-nano.v4
