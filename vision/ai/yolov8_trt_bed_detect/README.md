@@ -274,27 +274,74 @@ Live counts update continuously in the dashboard, but they are persisted only wh
 
 The dashboard is self-contained and does not require internet access or CDN scripts.
 
-### WebSocket
+### REST API reference
 
-| URL | Direction | Payload |
+Base URL: `http://<host-ip>:8090`
+
+| Method | Endpoint | Request input | Successful response | Purpose |
+|---|---|---|---|---|
+| `GET` | `/api/status` | None | Live state object plus `mjpeg_port` | Read detection, object-result, confidence, counts, and tracking state |
+| `GET` | `/api/counts` | None | `{"0":2,"1":1}` | Read the latest live per-class count |
+| `POST` | `/api/start` | None | `{"success":true,"message":"bed detection started"}` | Start inference through ROS |
+| `POST` | `/api/stop` | None | `{"success":true,"message":"bed detection stopped"}` | Stop inference through ROS |
+| `POST` | `/api/set_track` | JSON: `{"enabled":true}` | `{"success":true,"message":"...","is_track":true}` | Select unique-object or per-frame counting |
+| `POST` | `/api/reset_tracker` | None | `{"success":true,"message":"tracker reset requested"}` | Clear cumulative unique-object counts |
+| `POST` | `/api/save_count` | None | Saved record ID, time, counts, and total | Save exactly one current live-count snapshot to SQLite |
+| `GET` | `/api/history` | Query: `limit` (1–5000), `offset` (≥0) | Paginated history object | Read manually saved counts, newest first |
+| `POST` | `/api/save` | None | `{"success":true,"filename":"frame_....jpg"}` | Save the current MJPEG frame as JPEG |
+| `GET` | `/api/images` | None | Array of saved-image metadata | List saved JPEG frames |
+| `DELETE` | `/api/images/{filename}` | Filename in URL | `{"success":true}` | Delete one saved JPEG frame |
+| `GET` | `/saved/{filename}` | Filename in URL | JPEG bytes | Display or download a saved frame |
+
+#### Live state object
+
+The `/api/status` endpoint and WebSocket messages share these fields:
+
+| Field | Type | Meaning |
 |---|---|---|
-| `ws://<host>:8090/ws` | Server → Client | Live count, confidence, bed-result, tracking-mode, and running-state snapshots |
+| `type` | string | WebSocket event type: `snapshot` or `status`; omitted by `/api/status` |
+| `counts` | object | Latest class-to-count map, for example `{"0":2,"1":1}` |
+| `bed_status` | integer | Internal ROS-compatible field: `1` = object found, `0` = clear |
+| `conf` | number | Highest confidence from the latest detection frame |
+| `detecting` | boolean | Whether TensorRT inference is running |
+| `is_track` | boolean | `true` = cumulative unique tracking; `false` = per-frame counting |
+| `last_updated` | string/null | ISO-8601 time of the latest live count |
+| `mjpeg_port` | integer | MJPEG port; present only in `/api/status` |
 
-### REST Endpoints
+#### History response
 
-| Method | URL | Description |
+| Field | Type | Meaning |
 |---|---|---|
-| `GET` | `/api/counts` | Current per-class counts snapshot (JSON) |
-| `GET` | `/api/history?limit=50&offset=0` | Persistent count history, newest first |
-| `POST` | `/api/save_count` | Save the current live count to persistent history |
-| `GET` | `/api/status` | Node status — detecting, bed status, confidence |
-| `POST` | `/api/start` | Start bed detection (calls `/bed_detection` ROS service) |
-| `POST` | `/api/stop` | Stop detection (calls `/bed_detection_stop` ROS service) |
-| `POST` | `/api/save` | Save current annotated frame to `/saved_frames` |
-| `POST` | `/api/set_track` | Toggle MOSSE tracker through ROS — body: `{"enabled": true}` |
-| `POST` | `/api/reset_tracker` | Reset tracker cumulative counts through ROS |
-| `GET` | `/api/images` | List all saved frames (JSON array) |
-| `DELETE` | `/api/images/{filename}` | Delete a saved frame |
+| `total` | integer | Total manually saved records in SQLite |
+| `limit` | integer | Maximum records returned on this page |
+| `offset` | integer | Number of newer records skipped |
+| `items` | array | History records containing `id`, `time`, `counts`, `total`, `bed`, `conf`, and `tracking` |
+
+Common error responses use `{"success":false,"message":"..."}`. Expected status codes include `400` for invalid pagination or filenames, `409` when saving before any live count exists, `500` for frame/database failures, and `503` when a ROS service is unavailable.
+
+### WebSocket reference
+
+Connection URL: `ws://<host-ip>:8090/ws` (use `wss://` when the dashboard is served through HTTPS).
+
+| Direction | Event/input | When sent | Payload |
+|---|---|---|---|
+| Server → client | `snapshot` | Immediately after connection and after every `/class_counts` update | Complete live state object with `type: "snapshot"` |
+| Server → client | `status` | Detection or tracking state changes | Complete live state object with `type: "status"` |
+| Client → server | `ping` | Dashboard sends every 20 seconds | Plain text `ping`; keeps the socket open |
+
+Example server message:
+
+```json
+{
+  "type": "snapshot",
+  "counts": {"0": 2, "1": 1},
+  "bed_status": 1,
+  "conf": 0.9123,
+  "detecting": true,
+  "is_track": false,
+  "last_updated": "2026-06-22T08:00:00+00:00"
+}
+```
 
 ### Example curl calls
 
