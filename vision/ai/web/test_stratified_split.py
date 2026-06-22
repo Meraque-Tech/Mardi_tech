@@ -82,6 +82,70 @@ class StratifiedSplitTests(unittest.TestCase):
                 )
             self.assertEqual(rare_counts, {"train": 1, "val": 1, "test": 1})
 
+    def test_progress_reports_each_stratification_stage(self):
+        ratios = {"train": 0.7, "val": 0.15, "test": 0.15}
+        with TemporaryDirectory() as directory:
+            items = self.build_items(Path(directory), [[0], [0, 1], [], [1]])
+            updates = []
+            stratified_split(
+                items,
+                ratios,
+                {0, 1},
+                progress_callback=lambda stage, current, total: updates.append((stage, current, total)),
+            )
+
+            reading = [(current, total) for stage, current, total in updates if stage == "reading_labels"]
+            assigning = [(current, total) for stage, current, total in updates if stage == "assigning"]
+            self.assertEqual(reading, [(current, len(items)) for current in range(1, len(items) + 1)])
+            self.assertEqual(assigning, [(current, len(items)) for current in range(1, len(items) + 1)])
+            self.assertIn(("calculating_targets", 1, 1), updates)
+            self.assertEqual(updates[-1], ("finalizing_split", 1, 1))
+
+    def test_common_and_rare_class_proportions_follow_requested_ratios(self):
+        ratios = {"train": 0.7, "val": 0.15, "test": 0.15}
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            items = self.build_items(
+                root,
+                [[0, 1] if index < 20 else [0] for index in range(100)],
+            )
+            groups, _ = stratified_split(items, ratios, {0, 1}, seed=42)
+
+            class_counts = {name: {0: 0, 1: 0} for name in groups}
+            for split, pairs in groups.items():
+                for image_path, label_dir in pairs:
+                    labels, _ = read_yolo_profile(
+                        label_dir / f"{image_path.stem}.txt",
+                        {0, 1},
+                    )
+                    for class_id in labels:
+                        class_counts[split][class_id] += 1
+
+            self.assertEqual(class_counts["train"], {0: 70, 1: 14})
+            self.assertEqual(class_counts["val"], {0: 15, 1: 3})
+            self.assertEqual(class_counts["test"], {0: 15, 1: 3})
+
+    def test_instance_heavy_images_are_balanced(self):
+        ratios = {"train": 0.5, "val": 0.5, "test": 0.0}
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            items = self.build_items(
+                root,
+                [[0] * count for count in (10, 10, 1, 1, 1, 1)],
+            )
+            groups, _ = stratified_split(items, ratios, {0}, seed=42)
+            instance_counts = {}
+            for split, pairs in groups.items():
+                instance_counts[split] = sum(
+                    read_yolo_profile(
+                        label_dir / f"{image_path.stem}.txt",
+                        {0},
+                    )[1][0]
+                    for image_path, label_dir in pairs
+                )
+
+            self.assertEqual(instance_counts, {"train": 12, "val": 12, "test": 0})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -149,8 +149,10 @@ dataset/
   labels/
 ```
 
-For flat datasets, keep `Rebuild train/val/test split` enabled and set split
-percentages in the UI.
+Existing train/validation/test folders are preserved by default. Flat datasets
+use the default 70/15/15 split automatically. Enable `Rebuild existing
+train/val/test split` only when you want to replace an existing split or choose
+different percentages.
 
 ### Upload Folder
 
@@ -160,6 +162,11 @@ uploads.
 
 This uses browser folder upload, so very large folders can hit browser/server
 upload limits. If that happens, ZIP the dataset and use `Upload ZIP`.
+
+ZIP and folder preparation show measured, stage-specific percentages for the
+upload, server-side save, ZIP extraction, stratification, split-file copying,
+and dataset inspection. Stages that do not apply to the selected dataset are
+skipped.
 
 ### Roboflow
 

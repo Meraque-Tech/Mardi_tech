@@ -14,7 +14,7 @@ import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -63,6 +63,10 @@ training_process: Optional[subprocess.Popen] = None
 training_started_at: Optional[float] = None
 training_log_file: Optional[Path] = None
 training_run_info: Optional[dict] = None
+dataset_preparation_jobs: dict[str, dict] = {}
+dataset_preparation_lock = threading.Lock()
+
+DatasetProgressCallback = Callable[[str, int, int, str], None]
 
 
 class SplitConfig(BaseModel):
@@ -119,6 +123,58 @@ class ArtifactRequest(BaseModel):
 def ensure_dirs():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def update_dataset_preparation(
+    job_id: str,
+    stage: str,
+    current: int,
+    total: int,
+    detail: str,
+    status: str = "running",
+):
+    if not job_id:
+        return
+    safe_total = max(0, int(total))
+    safe_current = max(0, min(int(current), safe_total)) if safe_total else max(0, int(current))
+    percent = round((safe_current / safe_total) * 100, 1) if safe_total else 0.0
+    with dataset_preparation_lock:
+        if job_id not in dataset_preparation_jobs and len(dataset_preparation_jobs) >= 100:
+            finished_jobs = [
+                item for item in dataset_preparation_jobs.values()
+                if item.get("status") != "running"
+            ]
+            if finished_jobs:
+                oldest = min(finished_jobs, key=lambda item: item.get("updated_at", 0))
+                dataset_preparation_jobs.pop(oldest["job_id"], None)
+        dataset_preparation_jobs[job_id] = {
+            "job_id": job_id,
+            "status": status,
+            "stage": stage,
+            "current": safe_current,
+            "total": safe_total,
+            "percent": percent,
+            "detail": detail,
+            "updated_at": time.time(),
+        }
+
+
+def dataset_progress_callback(job_id: str) -> DatasetProgressCallback:
+    last_stage = None
+    last_update = 0.0
+
+    def report(stage: str, current: int, total: int, detail: str):
+        nonlocal last_stage, last_update
+        now = time.monotonic()
+        stage_changed = stage != last_stage
+        finished_stage = total > 0 and current >= total
+        if not stage_changed and not finished_stage and now - last_update < 0.1:
+            return
+        update_dataset_preparation(job_id, stage, current, total, detail)
+        last_stage = stage
+        last_update = now
+
+    return report
 
 
 def clean_name(value: str, fallback: str) -> str:
@@ -300,7 +356,11 @@ def resolve_dataset_classes(root: Path, classes: list[str]) -> dict[int, str]:
     return validate_classes(names)
 
 
-def dataset_response(yaml_path: Path, message: str) -> dict:
+def dataset_response(
+    yaml_path: Path,
+    message: str,
+    progress_callback: Optional[DatasetProgressCallback] = None,
+) -> dict:
     try:
         classes = read_yaml_class_names(yaml_path)
     except HTTPException:
@@ -308,7 +368,7 @@ def dataset_response(yaml_path: Path, message: str) -> dict:
     return {
         "dataset_yaml": str(yaml_path),
         "classes": classes,
-        "summary": inspect_dataset_yaml(yaml_path, classes),
+        "summary": inspect_dataset_yaml(yaml_path, classes, progress_callback),
         "message": message,
     }
 
@@ -346,28 +406,21 @@ def label_folder_for_images(dataset_root: Path, images_path: Optional[Path]) -> 
     return dataset_root / "labels" / relative
 
 
-def count_missing_labels(images_path: Optional[Path], labels_path: Optional[Path]) -> int:
-    if images_path is None or not images_path.is_dir():
-        return 0
-    images = image_files(images_path)
-    missing = 0
-    for image in images:
-        label = labels_path / f"{image.stem}.txt" if labels_path else None
-        if label is None or not label.is_file():
-            missing += 1
-    return missing
-
-
 def update_class_distribution(
     images: list[Path],
     labels_path: Optional[Path],
     distribution: dict[int, dict],
-) -> tuple[int, int]:
+    progress_callback: Optional[Callable[[int], None]] = None,
+) -> tuple[int, int, int]:
+    missing_labels = 0
     malformed_rows = 0
     unknown_class_rows = 0
-    for image in images:
+    for index, image in enumerate(images, start=1):
         label_path = labels_path / f"{image.stem}.txt" if labels_path else None
         if label_path is None or not label_path.is_file():
+            missing_labels += 1
+            if progress_callback:
+                progress_callback(index)
             continue
 
         classes_in_image: set[int] = set()
@@ -388,8 +441,10 @@ def update_class_distribution(
 
         for class_id in classes_in_image:
             distribution[class_id]["images"] += 1
+        if progress_callback:
+            progress_callback(index)
 
-    return malformed_rows, unknown_class_rows
+    return missing_labels, malformed_rows, unknown_class_rows
 
 
 def read_split_metadata(dataset_root: Path, yaml_path: Path) -> dict:
@@ -406,7 +461,11 @@ def read_split_metadata(dataset_root: Path, yaml_path: Path) -> dict:
     return {}
 
 
-def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
+def inspect_dataset_yaml(
+    yaml_path: Path,
+    classes: list[str],
+    progress_callback: Optional[DatasetProgressCallback] = None,
+) -> dict:
     warnings = []
     try:
         payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
@@ -429,11 +488,11 @@ def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
         for class_id, class_name in enumerate(classes)
     }
     split_distributions = {}
+    split_contexts = []
     for split in SPLIT_NAMES:
         images_path = split_image_folder(dataset_root, payload.get(split))
         labels_path = label_folder_for_images(dataset_root, images_path)
         images = image_files(images_path) if images_path and images_path.is_dir() else []
-        missing_labels = count_missing_labels(images_path, labels_path)
         split_distribution = {
             class_id: {
                 "class_id": class_id,
@@ -444,8 +503,32 @@ def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
             for class_id, class_name in enumerate(classes)
         }
         total_images += len(images)
+        split_contexts.append((split, images_path, labels_path, images, split_distribution))
+
+    inspected_images = 0
+    if progress_callback:
+        progress_callback("inspecting", 0, total_images, f"Inspecting 0 of {total_images} images")
+
+    for split, images_path, labels_path, images, split_distribution in split_contexts:
+        split_start = inspected_images
+        inspection_progress = None
+        if progress_callback:
+            def inspection_progress(count: int, offset: int = split_start):
+                current = offset + count
+                progress_callback(
+                    "inspecting",
+                    current,
+                    total_images,
+                    f"Inspecting {current} of {total_images} images",
+                )
+        missing_labels, split_malformed, split_unknown = update_class_distribution(
+            images,
+            labels_path,
+            split_distribution,
+            inspection_progress,
+        )
+        inspected_images += len(images)
         total_missing += missing_labels
-        split_malformed, split_unknown = update_class_distribution(images, labels_path, split_distribution)
         malformed_rows += split_malformed
         unknown_class_rows += split_unknown
         split_distributions[split] = split_distribution
@@ -891,23 +974,50 @@ def collect_source_images(root: Path) -> list[tuple[Path, Path]]:
     return unique
 
 
-def prepare_split_dataset(root: Path, name: str, names: dict[int, str], split: SplitConfig) -> Path:
+def prepare_split_dataset(
+    root: Path,
+    name: str,
+    names: dict[int, str],
+    split: SplitConfig,
+    progress_callback: Optional[DatasetProgressCallback] = None,
+) -> Path:
     source_images = collect_source_images(root)
     if not source_images:
         raise HTTPException(status_code=400, detail="No images found in the dataset path.")
 
     train_ratio, val_ratio, test_ratio = validate_split(split)
+    split_progress = None
+    if progress_callback:
+        stage_details = {
+            "reading_labels": lambda current, total: f"Reading labels: {current} of {total} images",
+            "calculating_targets": lambda current, total: "Calculating per-class split targets",
+            "assigning": lambda current, total: f"Assigning images: {current} of {total}",
+            "finalizing_split": lambda current, total: "Finalizing split assignments",
+        }
+
+        def split_progress(stage: str, current: int, total: int):
+            progress_callback(
+                stage,
+                current,
+                total,
+                stage_details[stage](current, total),
+            )
     groups, diagnostics = stratified_split(
         source_images,
         {"train": train_ratio, "val": val_ratio, "test": test_ratio},
         set(names),
         seed=42,
+        progress_callback=split_progress,
     )
 
     output_root = DATA_ROOT / "prepared" / clean_name(name, "dataset")
     if output_root.exists():
         shutil.rmtree(output_root)
 
+    copied = 0
+    copy_total = len(source_images)
+    if progress_callback:
+        progress_callback("copying", 0, copy_total, f"Copying 0 of {copy_total} images")
     for split_name, pairs in groups.items():
         for image_path, label_dir in pairs:
             copy_pair(
@@ -916,6 +1026,14 @@ def prepare_split_dataset(root: Path, name: str, names: dict[int, str], split: S
                 output_root / "images" / split_name,
                 output_root / "labels" / split_name,
             )
+            copied += 1
+            if progress_callback:
+                progress_callback(
+                    "copying",
+                    copied,
+                    copy_total,
+                    f"Copying {copied} of {copy_total} images",
+                )
 
     yaml_path = write_dataset_yaml(
         output_root,
@@ -930,7 +1048,14 @@ def prepare_split_dataset(root: Path, name: str, names: dict[int, str], split: S
     return yaml_path
 
 
-def prepare_dataset(source: Path, name: str, classes: list[str], split: SplitConfig, force_split: bool) -> Path:
+def prepare_dataset(
+    source: Path,
+    name: str,
+    classes: list[str],
+    split: SplitConfig,
+    force_split: bool,
+    progress_callback: Optional[DatasetProgressCallback] = None,
+) -> Path:
     if source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
         return source
 
@@ -940,7 +1065,7 @@ def prepare_dataset(source: Path, name: str, classes: list[str], split: SplitCon
     if not force_split and "train" in split_dirs(root) and "val" in split_dirs(root):
         return prepare_existing_split(root, name, names)
 
-    return prepare_split_dataset(root, name, names, split)
+    return prepare_split_dataset(root, name, names, split, progress_callback)
 
 
 def clean_log_line(raw_line: str) -> str:
@@ -1159,15 +1284,91 @@ def config():
     }
 
 
+@app.get("/api/dataset/preparation/status")
+def dataset_preparation_status(job_id: str):
+    with dataset_preparation_lock:
+        progress = dataset_preparation_jobs.get(job_id)
+        if progress is None:
+            raise HTTPException(status_code=404, detail="Dataset preparation job not found.")
+        return dict(progress)
+
+
+def upload_size(upload: UploadFile) -> int:
+    position = upload.file.tell()
+    upload.file.seek(0, os.SEEK_END)
+    size = upload.file.tell()
+    upload.file.seek(position)
+    return max(0, int(size))
+
+
+def save_upload(
+    upload: UploadFile,
+    target: Path,
+    progress_callback: DatasetProgressCallback,
+    stage: str,
+    detail_prefix: str,
+    offset: int = 0,
+    total: Optional[int] = None,
+) -> int:
+    size = upload_size(upload)
+    work_total = total if total is not None else size
+    copied = 0
+    upload.file.seek(0)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as output:
+        while True:
+            chunk = upload.file.read(1024 * 1024)
+            if not chunk:
+                break
+            output.write(chunk)
+            copied += len(chunk)
+            progress_callback(
+                stage,
+                offset + copied,
+                work_total,
+                f"{detail_prefix}: {offset + copied} of {work_total} bytes",
+            )
+    return copied
+
+
+def extract_zip_with_progress(
+    zip_path: Path,
+    extract_dir: Path,
+    progress_callback: DatasetProgressCallback,
+):
+    with zipfile.ZipFile(zip_path) as archive:
+        entries = archive.infolist()
+        total_bytes = sum(entry.file_size for entry in entries)
+        work_total = total_bytes or len(entries)
+        extracted_bytes = 0
+        progress_callback("extracting", 0, work_total, f"Extracting 0 of {len(entries)} ZIP entries")
+        for index, entry in enumerate(entries, start=1):
+            archive.extract(entry, extract_dir)
+            extracted_bytes += entry.file_size
+            current = extracted_bytes if total_bytes else index
+            progress_callback(
+                "extracting",
+                current,
+                work_total,
+                f"Extracting {index} of {len(entries)} ZIP entries",
+            )
+
+
+def mark_dataset_preparation_failed(job_id: str, exc: Exception):
+    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+    update_dataset_preparation(job_id, "failed", 0, 0, str(detail), status="failed")
+
+
 @app.post("/api/dataset/upload")
-async def upload_dataset(
+def upload_dataset(
     file: UploadFile = File(...),
     classes: str = Form(...),
     train: int = Form(70),
     val: int = Form(15),
     test: int = Form(15),
     name: str = Form("dataset"),
-    force_split: bool = Form(True),
+    force_split: bool = Form(False),
+    job_id: str = Form(""),
 ):
     if not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="Please upload a ZIP file.")
@@ -1180,36 +1381,43 @@ async def upload_dataset(
     clean = clean_name(name, "uploaded_dataset")
     upload_dir = DATA_ROOT / "uploads" / clean
     extract_dir = DATA_ROOT / "extracted" / clean
-
-    if upload_dir.exists():
-        shutil.rmtree(upload_dir)
-    if extract_dir.exists():
-        shutil.rmtree(extract_dir)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    extract_dir.mkdir(parents=True, exist_ok=True)
-
-    zip_path = upload_dir / file.filename
-    with zip_path.open("wb") as output:
-        shutil.copyfileobj(file.file, output)
-
+    progress_callback = dataset_progress_callback(job_id)
     try:
-        with zipfile.ZipFile(zip_path) as archive:
-            archive.extractall(extract_dir)
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="Uploaded file is not a valid ZIP.") from exc
+        zip_size = upload_size(file)
+        progress_callback("saving", 0, zip_size, "Preparing the upload destination")
+        if upload_dir.exists():
+            shutil.rmtree(upload_dir)
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        extract_dir.mkdir(parents=True, exist_ok=True)
 
-    yaml_path = prepare_dataset(
-        source=extract_dir,
-        name=clean,
-        classes=class_names,
-        split=split,
-        force_split=force_split,
-    )
-    return dataset_response(yaml_path, "Uploaded dataset is ready.")
+        zip_path = upload_dir / file.filename
+        progress_callback("saving", 0, zip_size, f"Saving uploaded ZIP: 0 of {zip_size} bytes")
+        save_upload(file, zip_path, progress_callback, "saving", "Saving uploaded ZIP")
+        extract_zip_with_progress(zip_path, extract_dir, progress_callback)
+
+        yaml_path = prepare_dataset(
+            source=extract_dir,
+            name=clean,
+            classes=class_names,
+            split=split,
+            force_split=force_split,
+            progress_callback=progress_callback,
+        )
+        response = dataset_response(yaml_path, "Uploaded dataset is ready.", progress_callback)
+        update_dataset_preparation(job_id, "complete", 1, 1, "Dataset preparation complete.", status="complete")
+        return response
+    except zipfile.BadZipFile as exc:
+        mark_dataset_preparation_failed(job_id, exc)
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid ZIP.") from exc
+    except Exception as exc:
+        mark_dataset_preparation_failed(job_id, exc)
+        raise
 
 
 @app.post("/api/dataset/folder")
-async def upload_folder_dataset(
+def upload_folder_dataset(
     files: list[UploadFile] = File(...),
     classes: str = Form(...),
     train: int = Form(70),
@@ -1217,6 +1425,7 @@ async def upload_folder_dataset(
     test: int = Form(15),
     name: str = Form("dataset"),
     force_split: bool = Form(False),
+    job_id: str = Form(""),
 ):
     if not files:
         raise HTTPException(status_code=400, detail="Choose a dataset folder first.")
@@ -1229,36 +1438,54 @@ async def upload_folder_dataset(
     split = SplitConfig(train=train, val=val, test=test)
     clean = clean_name(name, "uploaded_folder_dataset")
     upload_dir = DATA_ROOT / "folder_uploads" / clean
-    if upload_dir.exists():
-        shutil.rmtree(upload_dir)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    upload_root = upload_dir.resolve()
+    progress_callback = dataset_progress_callback(job_id)
+    try:
+        total_bytes = sum(upload_size(upload) for upload in files)
+        progress_callback("saving", 0, total_bytes, "Preparing the upload destination")
+        if upload_dir.exists():
+            shutil.rmtree(upload_dir)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_root = upload_dir.resolve()
+        saved_bytes = 0
+        saved_count = 0
+        progress_callback("saving", 0, total_bytes, f"Saving 0 of {len(files)} files")
 
-    saved_count = 0
-    for upload in files:
-        relative_path = safe_upload_path(upload.filename or "")
-        target = (upload_dir / relative_path).resolve()
-        try:
-            target.relative_to(upload_root)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid upload path: {upload.filename}") from exc
+        for upload in files:
+            relative_path = safe_upload_path(upload.filename or "")
+            target = (upload_dir / relative_path).resolve()
+            try:
+                target.relative_to(upload_root)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid upload path: {upload.filename}") from exc
 
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("wb") as output:
-            shutil.copyfileobj(upload.file, output)
-        saved_count += 1
+            saved_bytes += save_upload(
+                upload,
+                target,
+                progress_callback,
+                "saving",
+                f"Saving file {saved_count + 1} of {len(files)}",
+                offset=saved_bytes,
+                total=total_bytes,
+            )
+            saved_count += 1
 
-    if saved_count == 0:
-        raise HTTPException(status_code=400, detail="No files were uploaded.")
+        if saved_count == 0:
+            raise HTTPException(status_code=400, detail="No files were uploaded.")
 
-    yaml_path = prepare_dataset(
-        source=upload_dir,
-        name=clean,
-        classes=class_names,
-        split=split,
-        force_split=force_split,
-    )
-    return dataset_response(yaml_path, "Uploaded folder dataset is ready.")
+        yaml_path = prepare_dataset(
+            source=upload_dir,
+            name=clean,
+            classes=class_names,
+            split=split,
+            force_split=force_split,
+            progress_callback=progress_callback,
+        )
+        response = dataset_response(yaml_path, "Uploaded folder dataset is ready.", progress_callback)
+        update_dataset_preparation(job_id, "complete", 1, 1, "Dataset preparation complete.", status="complete")
+        return response
+    except Exception as exc:
+        mark_dataset_preparation_failed(job_id, exc)
+        raise
 
 
 @app.post("/api/dataset/roboflow")

@@ -88,9 +88,10 @@
             </label>
             <p class="file-selection" id="upload-selection">No ZIP selected.</p>
             <label class="checkbox-row">
-              <input id="upload-force-split" type="checkbox" checked>
-              Rebuild train/val/test split
+              <input id="upload-force-split" type="checkbox">
+              Rebuild existing train/val/test split
             </label>
+            <p class="source-note">Existing splits are preserved by default. Flat datasets use 70/15/15 unless you enable rebuilding and choose different ratios.</p>
           </div>
 
           <div class="source-view" id="source-folder" role="tabpanel" aria-labelledby="tab-folder" hidden>
@@ -101,8 +102,9 @@
             <p class="file-selection" id="folder-selection">No folder selected. Folder upload supports up to 1,000 files; use ZIP for larger datasets.</p>
             <label class="checkbox-row">
               <input id="folder-force-split" type="checkbox">
-              Rebuild train/val/test split
+              Rebuild existing train/val/test split
             </label>
+            <p class="source-note">Existing splits are preserved by default. Enable rebuilding only when you want new split ratios.</p>
           </div>
 
           <div class="source-view" id="source-roboflow" role="tabpanel" aria-labelledby="tab-roboflow" hidden>
@@ -121,6 +123,17 @@
               </label>
             </div>
             <p class="source-note">Roboflow provides the YOLOv8 format and train/validation/test split for this dataset version.</p>
+          </div>
+
+          <div id="dataset-preparation-progress" class="dataset-preparation-progress" role="status" aria-live="polite" aria-busy="false" hidden>
+            <div class="dataset-preparation-header">
+              <strong id="dataset-preparation-stage">Uploading</strong>
+              <span id="dataset-preparation-percent">0%</span>
+            </div>
+            <div id="dataset-preparation-track" class="dataset-preparation-track" role="progressbar" aria-label="Dataset preparation" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Uploading: 0%">
+              <span></span>
+            </div>
+            <p id="dataset-preparation-detail">Preparing the selected dataset. Large datasets may take several minutes.</p>
           </div>
 
           <label class="dataset-name-field">

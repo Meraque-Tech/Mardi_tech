@@ -2,6 +2,8 @@ const state = {
   source: "upload",
   datasetYaml: "",
   datasetSummary: null,
+  preparationPollTimer: null,
+  preparationPollRevision: 0,
   pollTimer: null,
   metricsHistory: [],
   metricsAvailable: false,
@@ -133,6 +135,147 @@ function setMessage(text, isError = false) {
   const message = $("message");
   message.textContent = text;
   message.classList.toggle("error", isError);
+}
+
+function updateDatasetPreparationProgress(stage, percent, detail, indeterminate = false) {
+  const progress = $("dataset-preparation-progress");
+  const track = $("dataset-preparation-track");
+  const safePercent = Math.min(100, Math.max(0, Number(percent) || 0));
+  $("dataset-preparation-stage").textContent = stage;
+  $("dataset-preparation-percent").textContent = indeterminate ? "In progress" : `${Math.round(safePercent)}%`;
+  $("dataset-preparation-detail").textContent = detail;
+  track.classList.toggle("indeterminate", indeterminate);
+  track.querySelector("span").style.width = indeterminate ? "" : `${safePercent}%`;
+  track.setAttribute("aria-valuetext", indeterminate ? `${stage}: in progress` : `${stage}: ${Math.round(safePercent)}%`);
+  if (indeterminate) {
+    track.removeAttribute("aria-valuenow");
+  } else {
+    track.setAttribute("aria-valuenow", String(Math.round(safePercent)));
+  }
+  progress.hidden = false;
+}
+
+function setDatasetPreparationProgress(active, source = state.source) {
+  const progress = $("dataset-preparation-progress");
+  progress.setAttribute("aria-busy", String(active));
+  if (!active) {
+    progress.hidden = true;
+    return;
+  }
+  if (source === "roboflow") {
+    updateDatasetPreparationProgress(
+      "Fetching from Roboflow",
+      0,
+      "Roboflow is exporting, downloading, and inspecting the dataset. This may take several minutes.",
+      true,
+    );
+    return;
+  }
+  updateDatasetPreparationProgress(
+    source === "folder" ? "Uploading folder" : "Uploading ZIP",
+    0,
+    "Uploading dataset to the server.",
+  );
+}
+
+function stopDatasetPreparationPolling() {
+  state.preparationPollRevision += 1;
+  window.clearTimeout(state.preparationPollTimer);
+  state.preparationPollTimer = null;
+}
+
+function startDatasetPreparationPolling(jobId) {
+  stopDatasetPreparationPolling();
+  const revision = state.preparationPollRevision;
+  const stageLabels = {
+    saving: "Saving upload",
+    extracting: "Extracting ZIP",
+    reading_labels: "Reading labels",
+    calculating_targets: "Calculating class targets",
+    assigning: "Assigning images",
+    finalizing_split: "Finalizing split",
+    copying: "Copying split files",
+    inspecting: "Inspecting dataset",
+    complete: "Complete",
+    failed: "Failed",
+  };
+
+  const poll = async () => {
+    if (revision !== state.preparationPollRevision) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/dataset/preparation/status?job_id=${encodeURIComponent(jobId)}`);
+      if (response.status === 404) {
+        state.preparationPollTimer = window.setTimeout(poll, 300);
+        return;
+      }
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || `Progress request failed: ${response.status}`);
+      }
+      updateDatasetPreparationProgress(
+        stageLabels[payload.stage] || payload.stage || "Preparing dataset",
+        payload.percent,
+        payload.detail || "Preparing dataset.",
+      );
+      if (payload.status === "running") {
+        state.preparationPollTimer = window.setTimeout(poll, 300);
+      }
+    } catch (error) {
+      if (revision === state.preparationPollRevision) {
+        state.preparationPollTimer = window.setTimeout(poll, 800);
+      }
+    }
+  };
+  poll();
+}
+
+function uploadWithProgress(url, form, jobId, label) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url);
+    request.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) {
+        updateDatasetPreparationProgress(label, 0, "Uploading dataset to the server.", true);
+        return;
+      }
+      const percent = (event.loaded / event.total) * 100;
+      updateDatasetPreparationProgress(
+        label,
+        percent,
+        `Uploaded ${formatBytes(event.loaded)} of ${formatBytes(event.total)}.`,
+      );
+    });
+    request.upload.addEventListener("load", () => {
+      updateDatasetPreparationProgress("Upload complete", 100, "The server is starting dataset preparation.");
+      startDatasetPreparationPolling(jobId);
+    });
+    request.addEventListener("load", () => {
+      const payload = (() => {
+        try {
+          return JSON.parse(request.responseText || "{}");
+        } catch (error) {
+          return {};
+        }
+      })();
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(payload.detail || `Upload failed: ${request.status}`));
+        return;
+      }
+      resolve(payload);
+    });
+    request.addEventListener("error", () => reject(new Error("Dataset upload failed due to a network error.")));
+    request.addEventListener("abort", () => reject(new Error("Dataset upload was cancelled.")));
+    request.send(form);
+  });
+}
+
+function preparationJobId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  return `dataset-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function setStatusPhase(phase) {
@@ -1034,16 +1177,9 @@ async function prepareUploadedDataset() {
   form.append("test", $("split-test").value);
   form.append("name", $("dataset-name").value);
   form.append("force_split", $("upload-force-split").checked ? "true" : "false");
-
-  const response = await fetch("/api/dataset/upload", {
-    method: "POST",
-    body: form,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.detail || "Upload failed.");
-  }
-  return payload;
+  const jobId = preparationJobId();
+  form.append("job_id", jobId);
+  return uploadWithProgress("/api/dataset/upload", form, jobId, "Uploading ZIP");
 }
 
 async function prepareFolderDataset() {
@@ -1062,16 +1198,9 @@ async function prepareFolderDataset() {
   form.append("test", $("split-test").value);
   form.append("name", $("dataset-name").value);
   form.append("force_split", $("folder-force-split").checked ? "true" : "false");
-
-  const response = await fetch("/api/dataset/folder", {
-    method: "POST",
-    body: form,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.detail || "Folder upload failed.");
-  }
-  return payload;
+  const jobId = preparationJobId();
+  form.append("job_id", jobId);
+  return uploadWithProgress("/api/dataset/folder", form, jobId, "Uploading folder");
 }
 
 async function prepareRoboflowDataset() {
@@ -1091,9 +1220,15 @@ async function prepareDataset() {
   if (state.isPreparing) {
     return;
   }
+  const preparingRoboflow = state.source === "roboflow";
+  const preparationSource = state.source;
+  let preparationSucceeded = false;
   state.isPreparing = true;
+  setDatasetPreparationProgress(true, preparationSource);
   syncActionStates();
-  setMessage("Preparing dataset...");
+  setMessage(preparingRoboflow
+    ? "In progress: fetching and preparing the Roboflow dataset..."
+    : "Preparing dataset...");
   try {
     if (usesCustomSplit()) {
       validateSplitTotal();
@@ -1112,10 +1247,17 @@ async function prepareDataset() {
     setClassNames(result.classes);
     renderDatasetSummary(result.summary);
     setMessage(result.message);
+    preparationSucceeded = true;
+    updateDatasetPreparationProgress("Complete", 100, "Dataset preparation complete.");
   } catch (error) {
     setMessage(error.message, true);
   } finally {
+    stopDatasetPreparationPolling();
+    if (preparationSucceeded) {
+      await new Promise((resolve) => window.setTimeout(resolve, 450));
+    }
     state.isPreparing = false;
+    setDatasetPreparationProgress(false);
     if (!state.running) {
       setStatusPhase("idle");
     }
