@@ -60,7 +60,6 @@ const CONTROL_DEFAULTS = {
   freeze: "",
   "cos-lr": false,
   activation: "silu",
-  pretrained: true,
   "exist-ok": false,
   resume: false,
 };
@@ -78,7 +77,6 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 3.0,
     "cos-lr": false,
-    pretrained: true,
     activation: "silu",
   },
   low_vram: {
@@ -94,7 +92,6 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 3.0,
     "cos-lr": true,
-    pretrained: true,
     activation: "silu",
   },
   quick: {
@@ -110,7 +107,6 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 1.0,
     "cos-lr": false,
-    pretrained: true,
     activation: "silu",
   },
   accuracy: {
@@ -126,7 +122,6 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 3.0,
     "cos-lr": true,
-    pretrained: true,
     activation: "silu",
   },
 };
@@ -1082,7 +1077,6 @@ async function startTraining() {
         cos_lr: $("cos-lr").checked,
         warmup_epochs: numberValue("warmup-epochs"),
         freeze: optionalNumberValue("freeze"),
-        pretrained: $("pretrained").checked,
         activation: $("activation").value,
         exist_ok: $("exist-ok").checked,
         seed: numberValue("seed"),

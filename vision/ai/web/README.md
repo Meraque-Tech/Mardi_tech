@@ -261,9 +261,11 @@ warmup epochs  learning-rate warmup duration
 freeze layers  freeze the first N layers
 cosine LR      enable cosine learning-rate schedule
 activation     SiLU, ReLU, Leaky ReLU, Mish, GELU, Hardswish
-pretrained     use pretrained weights
 exist_ok       reuse the same output folder instead of train-2/train-3
 ```
+
+Training launched from the web UI always starts from the pretrained weights
+for the selected YOLOv8 model size.
 
 The UI also includes presets:
 

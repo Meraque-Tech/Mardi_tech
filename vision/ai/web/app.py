@@ -110,7 +110,6 @@ class TrainRequest(BaseModel):
     cos_lr: bool = False
     warmup_epochs: float = Field(default=3.0, ge=0)
     freeze: Optional[int] = Field(default=None, ge=0)
-    pretrained: bool = True
     activation: str = "silu"
     exist_ok: bool = False
     seed: int = 0
@@ -1315,7 +1314,7 @@ def start_training(request: TrainRequest):
         "--lrf", str(request.lrf),
         "--weight-decay", str(request.weight_decay),
         "--warmup-epochs", str(request.warmup_epochs),
-        "--pretrained", str(request.pretrained).lower(),
+        "--pretrained", "true",
         "--activation", request.activation,
         "--seed", str(request.seed),
         "--project", str(training_project_path),
