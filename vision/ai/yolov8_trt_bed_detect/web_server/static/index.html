@@ -141,7 +141,7 @@
 <script>
   const COLORS=['#6d72f6','#24c875','#f3a712','#f05252','#25b9d7','#ad64e8','#ec5ca4','#24b6a2'];
   const HISTORY_PAGE=50;
-  let historyOffset=0, historyTotal=0, historyItems=[], refreshTimer=0, wsRetries=0;
+  let historyOffset=0, historyTotal=0, chartItems=[], refreshTimer=0, wsRetries=0;
 
   function escapeHtml(value) { const el=document.createElement('span');el.textContent=String(value);return el.innerHTML; }
   function formatTime(value) { if(!value)return '—';const d=new Date(value);return Number.isNaN(d.getTime())?value:d.toLocaleString(); }
@@ -183,9 +183,9 @@
 
   async function setDetection(start) {
     const button=document.getElementById(start?'start-btn':'stop-btn');button.disabled=true;
-    try { const result=await api(start?'/api/start':'/api/stop',{method:'POST'});toast(result.message);await loadStatus(); }
-    catch(error){toast(error.message,true);await loadStatus().catch(()=>{});}
-    finally{button.disabled=false;}
+    try { const result=await api(start?'/api/start':'/api/stop',{method:'POST'});toast(result.message); }
+    catch(error){toast(error.message,true);}
+    finally{try{await loadStatus();}catch(_error){button.disabled=false;}}
   }
 
   async function setTracking(enabled) {
@@ -202,22 +202,22 @@
 
   function connectWebSocket() {
     const scheme=location.protocol==='https:'?'wss':'ws', socket=new WebSocket(`${scheme}://${location.host}/ws`);
-    socket.onopen=()=>{wsRetries=0;document.getElementById('ws-dot').classList.add('on');document.getElementById('ws-label').textContent='Connected';};
+    socket.onopen=()=>{wsRetries=0;socket.keepalive=setInterval(()=>{if(socket.readyState===WebSocket.OPEN)socket.send('ping');},20000);document.getElementById('ws-dot').classList.add('on');document.getElementById('ws-label').textContent='Connected';};
     socket.onmessage=event=>{try{const data=JSON.parse(event.data);applySnapshot(data);if(data.type==='snapshot')scheduleHistoryRefresh();}catch(_error){}};
-    socket.onclose=()=>{document.getElementById('ws-dot').classList.remove('on');document.getElementById('ws-label').textContent='Disconnected';setTimeout(connectWebSocket,Math.min(5000,500*2**wsRetries++));};
+    socket.onclose=()=>{clearInterval(socket.keepalive);document.getElementById('ws-dot').classList.remove('on');document.getElementById('ws-label').textContent='Disconnected';setTimeout(connectWebSocket,Math.min(5000,500*2**wsRetries++));};
     socket.onerror=()=>socket.close();
   }
 
-  function scheduleHistoryRefresh() { if(historyOffset!==0)return;clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>loadHistory(0),1200); }
+  function scheduleHistoryRefresh() { if(historyOffset!==0||refreshTimer)return;refreshTimer=setTimeout(()=>{refreshTimer=0;loadHistory(0);},1200); }
 
   async function loadHistory(offset=0) {
     try {
-      const data=await api(`/api/history?limit=${HISTORY_PAGE}&offset=${offset}`);historyOffset=data.offset;historyTotal=data.total;historyItems=data.items;
+      const data=await api(`/api/history?limit=${HISTORY_PAGE}&offset=${offset}`);historyOffset=data.offset;historyTotal=data.total;
       const start=historyTotal?historyOffset+1:0,end=Math.min(historyOffset+data.items.length,historyTotal);
       document.getElementById('history-summary').textContent=`Showing ${start}–${end} of ${historyTotal} stored samples`;
       document.getElementById('newer-btn').disabled=historyOffset===0;document.getElementById('older-btn').disabled=end>=historyTotal;
       document.getElementById('history-body').innerHTML=data.items.length?data.items.map(item=>`<tr><td>${escapeHtml(formatTime(item.time))}</td><td class="code">${escapeHtml(countText(item.counts))}</td><td>${item.total}</td><td>${item.bed?'Found':'Clear'}</td><td>${Number(item.conf).toFixed(3)}</td><td>${item.tracking?'Unique':'Per frame'}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No count history has been recorded yet. Start detection to collect samples.</td></tr>';
-      if(offset===0)drawChart(data.items.slice().reverse());
+      if(offset===0){chartItems=data.items.slice().reverse();drawChart(chartItems);}
     } catch(error){document.getElementById('history-summary').textContent=error.message;}
   }
 
@@ -247,7 +247,7 @@
 
   connectWebSocket();initStream();loadHistory(0);loadImages();
   setInterval(()=>loadStatus().catch(()=>{}),3000);
-  window.addEventListener('resize',()=>drawChart(historyItems.slice().reverse()));
+  window.addEventListener('resize',()=>drawChart(chartItems));
 </script>
 </body>
 </html>
