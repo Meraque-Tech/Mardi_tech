@@ -13,3 +13,6 @@ docker run -it --rm --net=host \
   meraquetech/race_nav:yolov8-trt-bed-detect-nano.v5 \
   bash -c "ros2 launch yolov8_trt_bed_detect yolov8_trt_bed_detect.launch.py"
 
+
+# docker exec -it yolov8-trt-bed-detect-nano bash
+# ros2 service call /bed_detection std_srvs/srv/Trigger {}
