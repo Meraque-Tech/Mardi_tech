@@ -97,6 +97,7 @@
         <div class="actions">
           <button id="start-btn" class="green" onclick="setDetection(true)">▶ Start detection</button>
           <button id="stop-btn" class="red" onclick="setDetection(false)">■ Stop detection</button>
+          <button onclick="saveCount()">＋ Save current count</button>
           <button onclick="saveFrame()">▣ Save frame</button>
           <button class="gray" onclick="resetTracker()">↺ Reset tracker</button>
         </div>
@@ -171,7 +172,7 @@
     const entries=Object.entries(counts), total=entries.reduce((sum,item)=>sum+Number(item[1]),0);
     document.getElementById('count-metric').textContent=total;document.getElementById('current-total').textContent=total;
     const el=document.getElementById('counts');
-    if(!entries.length){el.innerHTML='<span class="muted">No detections in the latest sample.</span>';return;}
+    if(!entries.length){el.innerHTML='<span class="muted">No detections in the latest live update.</span>';return;}
     el.innerHTML=entries.map(([name,value],index)=>{const width=total?Math.round(value/total*100):0,color=COLORS[index%COLORS.length];return `<div class="count-row"><strong style="color:${color}">Class ${escapeHtml(name)}</strong><div class="bar"><span style="width:${width}%;background:${color}"></span></div><span>${Number(value)}</span></div>`}).join('');
   }
 
@@ -216,7 +217,7 @@
       const start=historyTotal?historyOffset+1:0,end=Math.min(historyOffset+data.items.length,historyTotal);
       document.getElementById('history-summary').textContent=`Showing ${start}–${end} of ${historyTotal} stored samples`;
       document.getElementById('newer-btn').disabled=historyOffset===0;document.getElementById('older-btn').disabled=end>=historyTotal;
-      document.getElementById('history-body').innerHTML=data.items.length?data.items.map(item=>`<tr><td>${escapeHtml(formatTime(item.time))}</td><td class="code">${escapeHtml(countText(item.counts))}</td><td>${item.total}</td><td>${item.bed?'Found':'Clear'}</td><td>${Number(item.conf).toFixed(3)}</td><td>${item.tracking?'Unique':'Per frame'}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No count history has been recorded yet. Start detection to collect samples.</td></tr>';
+      document.getElementById('history-body').innerHTML=data.items.length?data.items.map(item=>`<tr><td>${escapeHtml(formatTime(item.time))}</td><td class="code">${escapeHtml(countText(item.counts))}</td><td>${item.total}</td><td>${item.bed?'Found':'Clear'}</td><td>${Number(item.conf).toFixed(3)}</td><td>${item.tracking?'Unique':'Per frame'}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No saved count history yet. Press Save current count when you want to keep a live value.</td></tr>';
       if(offset===0){chartItems=data.items.slice().reverse();drawChart(chartItems);}
     } catch(error){document.getElementById('history-summary').textContent=error.message;}
   }
@@ -241,6 +242,7 @@
   }
 
   async function saveFrame() { try{toast('Saving frame…');const result=await api('/api/save',{method:'POST'});toast(`Saved ${result.filename}`);loadImages();}catch(error){toast(error.message,true);} }
+  async function saveCount() { try{const result=await api('/api/save_count',{method:'POST'});toast(`${result.message}: ${result.total} total`);historyOffset=0;loadHistory(0);}catch(error){toast(error.message,true);} }
   async function loadImages() { try{const images=await api('/api/images');const gallery=document.getElementById('gallery');gallery.innerHTML=images.length?images.map(item=>`<div class="thumb"><img src="${item.url}" alt="${escapeHtml(item.filename)}" onclick="openImage('${item.url}')"><button onclick="deleteImage('${escapeHtml(item.filename)}')">×</button><small>${escapeHtml(formatTime(item.time))}</small></div>`).join(''):'<span class="muted">No saved frames yet.</span>';}catch(error){toast(error.message,true);} }
   async function deleteImage(name) { try{await api(`/api/images/${encodeURIComponent(name)}`,{method:'DELETE'});loadImages();}catch(error){toast(error.message,true);} }
   function openImage(url) { document.getElementById('lightbox-image').src=url;document.getElementById('lightbox').classList.add('open'); }

@@ -34,7 +34,6 @@ def generate_launch_description():
             'MJPEG_PORT':  '8080',
             'API_PORT':    '8090',
             'HISTORY_DB':  '/saved_frames/count_history.db',
-            'HISTORY_SAMPLE_SECONDS': '1.0',
         }
     )
 

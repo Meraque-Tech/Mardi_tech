@@ -270,7 +270,7 @@ http://<host-ip>:8080/          ← MJPEG live stream
 ```
 
 Saved frames are written to `./vision/ai/saved_frames/` on the host (mounted into the container at `/saved_frames`).
-Count history is sampled once per second and persisted in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
+Live counts update continuously in the dashboard, but they are persisted only when `POST /api/save_count` is called or **Save current count** is pressed. Saved history lives in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
 
 The dashboard is self-contained and does not require internet access or CDN scripts.
 
@@ -286,6 +286,7 @@ The dashboard is self-contained and does not require internet access or CDN scri
 |---|---|---|
 | `GET` | `/api/counts` | Current per-class counts snapshot (JSON) |
 | `GET` | `/api/history?limit=50&offset=0` | Persistent count history, newest first |
+| `POST` | `/api/save_count` | Save the current live count to persistent history |
 | `GET` | `/api/status` | Node status — detecting, bed status, confidence |
 | `POST` | `/api/start` | Start bed detection (calls `/bed_detection` ROS service) |
 | `POST` | `/api/stop` | Stop detection (calls `/bed_detection_stop` ROS service) |
@@ -312,6 +313,9 @@ curl http://<host-ip>:8090/api/counts
 
 # read stored count history
 curl 'http://<host-ip>:8090/api/history?limit=50&offset=0'
+
+# save the current live count to history
+curl -X POST http://<host-ip>:8090/api/save_count
 
 # enable tracking
 curl -X POST http://<host-ip>:8090/api/set_track \

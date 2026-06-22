@@ -6,7 +6,6 @@ import json
 import os
 import sqlite3
 import threading
-import time
 import urllib.request
 from pathlib import Path
 from typing import List, Optional
@@ -26,7 +25,6 @@ SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
-HISTORY_SAMPLE_SECONDS = max(0.1, float(os.environ.get("HISTORY_SAMPLE_SECONDS", "1.0")))
 STATIC_DIR = Path(__file__).parent / "static"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -49,7 +47,6 @@ ws_lock = threading.Lock()
 
 # Persistent count history
 db_lock = threading.Lock()
-last_history_write = 0.0
 
 
 def _db_connect():
@@ -77,13 +74,8 @@ def _init_db():
 
 
 def _store_history(snapshot):
-    global last_history_write
-    now = time.monotonic()
-    if now - last_history_write < HISTORY_SAMPLE_SECONDS:
-        return
-    last_history_write = now
     with db_lock, _db_connect() as db:
-        db.execute(
+        cursor = db.execute(
             """
             INSERT INTO count_history
                 (recorded_at, counts_json, total, bed_status, confidence, tracking)
@@ -98,6 +90,7 @@ def _store_history(snapshot):
                 int(snapshot["is_track"]),
             ),
         )
+        return cursor.lastrowid
 
 
 def _history_rows(limit, offset):
@@ -189,11 +182,6 @@ class BridgeNode(Node):
             snapshot = dict(state)
             snapshot["counts"] = dict(counts)
 
-        if snapshot["detecting"]:
-            try:
-                _store_history(snapshot)
-            except sqlite3.Error as exc:
-                self.get_logger().error("Could not store count history: %s" % exc)
         broadcast_state()
 
     def _status_cb(self, msg):
@@ -345,6 +333,32 @@ def get_history():
         return jsonify({"success": False, "message": "limit and offset must be integers"}), 400
     total, items = _history_rows(limit, offset)
     return jsonify({"total": total, "limit": limit, "offset": offset, "items": items})
+
+
+@app.route("/api/save_count", methods=["POST"])
+def save_count():
+    with state_lock:
+        if state["last_updated"] is None:
+            return jsonify({"success": False, "message": "no live count has been received yet"}), 409
+        snapshot = dict(state)
+        snapshot["counts"] = dict(state["counts"])
+
+    source_updated = snapshot["last_updated"]
+    snapshot["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    try:
+        record_id = _store_history(snapshot)
+    except sqlite3.Error as exc:
+        return jsonify({"success": False, "message": "could not save count: %s" % exc}), 500
+
+    return jsonify({
+        "success": True,
+        "message": "current count saved",
+        "id": record_id,
+        "saved_at": snapshot["last_updated"],
+        "source_updated": source_updated,
+        "counts": snapshot["counts"],
+        "total": sum(snapshot["counts"].values()),
+    })
 
 
 @app.route("/api/status")
