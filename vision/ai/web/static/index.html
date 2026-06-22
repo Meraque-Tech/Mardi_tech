@@ -123,6 +123,11 @@
               </label>
             </div>
             <p class="source-note">Roboflow provides the YOLOv8 format and train/validation/test split for this dataset version.</p>
+            <label class="checkbox-row">
+              <input id="roboflow-force-split" type="checkbox">
+              Rebuild downloaded train/val/test split
+            </label>
+            <p class="source-note">Rebuilding happens locally and does not modify the Roboflow version. Avoid rebuilding datasets whose augmented copies could leak across splits.</p>
           </div>
 
           <div id="dataset-preparation-progress" class="dataset-preparation-progress" role="status" aria-live="polite" aria-busy="false" hidden>

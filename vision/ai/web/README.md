@@ -174,6 +174,16 @@ Fill in Roboflow credentials in `.env`, or enter workspace/project/version in
 the UI. The backend always downloads the dataset in YOLOv8 format and uses the
 split configured in that Roboflow dataset version.
 
+After download, the backend validates the exported `data.yaml`. If Roboflow's
+relative paths do not resolve but standard `train`, `valid`/`val`, and `test`
+folders are present, the backend generates a normalized prepared YAML without
+modifying the original export.
+
+Enable `Rebuild downloaded train/val/test split` to combine the downloaded
+splits and apply the percentages configured in the UI. This rebuild is local;
+it does not modify the Roboflow dataset version. Avoid rebuilding augmented
+datasets when related copies could be assigned to different splits.
+
 ## Class IDs
 
 Class IDs are one class name per line. The line order becomes the numeric class

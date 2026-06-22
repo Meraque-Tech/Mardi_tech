@@ -82,6 +82,11 @@ class RoboflowRequest(BaseModel):
     version: Optional[str] = None
     classes: list[str] = Field(default_factory=list)
     name: str = "dataset"
+    train: int = Field(default=70, ge=1, le=100)
+    val: int = Field(default=15, ge=0, le=100)
+    test: int = Field(default=15, ge=0, le=100)
+    force_split: bool = False
+    job_id: str = ""
 
 
 class TrainRequest(BaseModel):
@@ -897,6 +902,17 @@ def image_files(folder: Path) -> list[Path]:
     )
 
 
+def has_image_files(folder: Optional[Path]) -> bool:
+    return bool(
+        folder
+        and folder.is_dir()
+        and any(
+            item.is_file() and item.suffix.lower() in IMAGE_EXTENSIONS
+            for item in folder.rglob("*")
+        )
+    )
+
+
 def copy_pair(image_path: Path, label_dir: Path, output_images: Path, output_labels: Path):
     output_images.mkdir(parents=True, exist_ok=True)
     output_labels.mkdir(parents=True, exist_ok=True)
@@ -1066,6 +1082,65 @@ def prepare_dataset(
         return prepare_existing_split(root, name, names)
 
     return prepare_split_dataset(root, name, names, split, progress_callback)
+
+
+def prepare_roboflow_download(
+    dataset_root: Path,
+    name: str,
+    classes: list[str],
+) -> tuple[Path, bool]:
+    root = find_dataset_root(dataset_root)
+    source_yaml = find_dataset_yaml(root)
+
+    if source_yaml:
+        try:
+            payload = yaml.safe_load(source_yaml.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Roboflow data.yaml could not be read: {exc}",
+            ) from exc
+
+        yaml_root = resolve_yaml_dataset_root(source_yaml, payload)
+        train_path = split_image_folder(yaml_root, payload.get("train"))
+        val_path = split_image_folder(yaml_root, payload.get("val"))
+        test_value = payload.get("test")
+        test_path = split_image_folder(yaml_root, test_value)
+        test_is_valid = not test_value or (test_path and test_path.is_dir())
+        if has_image_files(train_path) and has_image_files(val_path) and test_is_valid:
+            return source_yaml, False
+
+    layouts = split_dirs(root)
+    if (
+        "train" in layouts
+        and "val" in layouts
+        and has_image_files(layouts["train"]["images"])
+        and has_image_files(layouts["val"]["images"])
+    ):
+        names = resolve_dataset_classes(root, classes)
+        return prepare_existing_split(root, name, names), True
+
+    if source_yaml:
+        train_value = payload.get("train") or "<missing>"
+        val_value = payload.get("val") or "<missing>"
+        test_value = payload.get("test") or "<not configured>"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Roboflow dataset paths are invalid and no usable train/validation "
+                f"folders were detected under {root}. data.yaml specifies "
+                f"train={train_value!r}, val={val_value!r}, test={test_value!r}."
+            ),
+        )
+
+    yaml_path = prepare_dataset(
+        source=root,
+        name=name,
+        classes=classes,
+        split=SplitConfig(),
+        force_split=False,
+    )
+    return yaml_path, False
 
 
 def clean_log_line(raw_line: str) -> str:
@@ -1518,11 +1593,18 @@ def roboflow_dataset(request: RoboflowRequest):
 
     clean = clean_name(request.name, "dataset")
     download_dir = DATA_ROOT / "roboflow" / clean
-    if download_dir.exists():
-        shutil.rmtree(download_dir)
-    download_dir.mkdir(parents=True, exist_ok=True)
+    progress_callback = dataset_progress_callback(request.job_id)
+    progress_callback(
+        "fetching_roboflow",
+        0,
+        0,
+        "Roboflow is exporting and downloading the dataset.",
+    )
 
     try:
+        if download_dir.exists():
+            shutil.rmtree(download_dir)
+        download_dir.mkdir(parents=True, exist_ok=True)
         rf = Roboflow(api_key=api_key)
         project = rf.workspace(workspace).project(project_name)
         version_obj = project.version(int(version))
@@ -1531,27 +1613,66 @@ def roboflow_dataset(request: RoboflowRequest):
         except TypeError:
             dataset = version_obj.download(dataset_format, location=str(download_dir))
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Roboflow download failed: {exc}") from exc
+        error = HTTPException(status_code=502, detail=f"Roboflow download failed: {exc}")
+        mark_dataset_preparation_failed(request.job_id, error)
+        raise error from exc
 
-    dataset_root = Path(getattr(dataset, "location", download_dir))
-    yaml_path = find_dataset_yaml(dataset_root)
-    if yaml_path:
-        return dataset_response(yaml_path, "Roboflow dataset is ready.")
+    try:
+        dataset_root = Path(getattr(dataset, "location", download_dir))
+        if request.force_split:
+            split = SplitConfig(train=request.train, val=request.val, test=request.test)
+            yaml_path = prepare_dataset(
+                source=dataset_root,
+                name=clean,
+                classes=request.classes,
+                split=split,
+                force_split=True,
+                progress_callback=progress_callback,
+            )
+            message = (
+                "Roboflow dataset is ready. The downloaded split was rebuilt locally "
+                f"to {request.train}/{request.val}/{request.test}; the Roboflow version "
+                "was not modified."
+            )
+        else:
+            progress_callback(
+                "validating_dataset",
+                0,
+                0,
+                "Validating the downloaded dataset paths and split folders.",
+            )
+            yaml_path, normalized = prepare_roboflow_download(
+                dataset_root,
+                clean,
+                request.classes,
+            )
+            if normalized:
+                progress_callback(
+                    "normalizing_paths",
+                    1,
+                    1,
+                    "Normalized invalid export paths to the detected split folders.",
+                )
+            message = (
+                "Roboflow dataset is ready. Invalid export paths were normalized "
+                "to the detected train/validation/test folders."
+                if normalized
+                else "Roboflow dataset is ready."
+            )
 
-    if not request.classes:
-        raise HTTPException(
-            status_code=400,
-            detail="Roboflow download did not include data.yaml. Please provide class names.",
+        response = dataset_response(yaml_path, message, progress_callback)
+        update_dataset_preparation(
+            request.job_id,
+            "complete",
+            1,
+            1,
+            "Dataset preparation complete.",
+            status="complete",
         )
-
-    yaml_path = prepare_dataset(
-        source=dataset_root,
-        name=clean,
-        classes=request.classes,
-        split=SplitConfig(),
-        force_split=False,
-    )
-    return dataset_response(yaml_path, "Roboflow dataset is ready.")
+        return response
+    except Exception as exc:
+        mark_dataset_preparation_failed(request.job_id, exc)
+        raise
 
 
 @app.post("/api/train/start")

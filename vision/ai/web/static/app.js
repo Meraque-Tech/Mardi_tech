@@ -188,6 +188,9 @@ function startDatasetPreparationPolling(jobId) {
   stopDatasetPreparationPolling();
   const revision = state.preparationPollRevision;
   const stageLabels = {
+    fetching_roboflow: "Fetching from Roboflow",
+    validating_dataset: "Validating dataset",
+    normalizing_paths: "Normalizing dataset paths",
     saving: "Saving upload",
     extracting: "Extracting ZIP",
     reading_labels: "Reading labels",
@@ -218,6 +221,7 @@ function startDatasetPreparationPolling(jobId) {
         stageLabels[payload.stage] || payload.stage || "Preparing dataset",
         payload.percent,
         payload.detail || "Preparing dataset.",
+        payload.status === "running" && !payload.total,
       );
       if (payload.status === "running") {
         state.preparationPollTimer = window.setTimeout(poll, 300);
@@ -373,7 +377,7 @@ function usesCustomSplit() {
   if (state.source === "folder") {
     return $("folder-force-split").checked;
   }
-  return false;
+  return state.source === "roboflow" && $("roboflow-force-split").checked;
 }
 
 function cleanDatasetName(value) {
@@ -1204,6 +1208,8 @@ async function prepareFolderDataset() {
 }
 
 async function prepareRoboflowDataset() {
+  const jobId = preparationJobId();
+  startDatasetPreparationPolling(jobId);
   return apiJson("/api/dataset/roboflow", {
     method: "POST",
     body: JSON.stringify({
@@ -1212,6 +1218,11 @@ async function prepareRoboflowDataset() {
       version: $("rf-version").value,
       classes: classNames(),
       name: $("dataset-name").value,
+      train: numberValue("split-train"),
+      val: numberValue("split-val"),
+      test: numberValue("split-test"),
+      force_split: $("roboflow-force-split").checked,
+      job_id: jobId,
     }),
   });
 }
@@ -1746,7 +1757,7 @@ $("project").addEventListener("input", scheduleTargetRefresh);
 $("run-name").addEventListener("input", scheduleTargetRefresh);
 $("upload-file").addEventListener("change", updateFileSelection);
 $("folder-files").addEventListener("change", updateFileSelection);
-["upload-force-split", "folder-force-split"].forEach((id) => {
+["upload-force-split", "folder-force-split", "roboflow-force-split"].forEach((id) => {
   $(id).addEventListener("change", syncDatasetSourceControls);
 });
 $("dataset-name").addEventListener("input", () => {
