@@ -108,7 +108,9 @@ http://localhost:8000
 
 The host machine must have NVIDIA drivers and NVIDIA Container Toolkit
 configured. The compose file mounts the repository into `/app`, maps
-`vision/ai/web/logs`, maps `runs`, and sets:
+`vision/ai/web/logs`, maps `runs`, and uses host networking. Uvicorn therefore
+listens directly on the host's port `8000` without a Compose port mapping. The
+service also sets:
 
 ```yaml
 shm_size: "8gb"

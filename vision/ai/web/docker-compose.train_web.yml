@@ -13,8 +13,7 @@ services:
       - .env
     environment:
       YOLO_CONFIG_DIR: /tmp
-    ports:
-      - "8000:8000"
+    network_mode: host
     volumes:
       - ../../..:/app
       - ./datasets:/app/vision/ai/web/datasets
