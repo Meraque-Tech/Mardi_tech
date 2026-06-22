@@ -3,11 +3,14 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/u_int8.hpp>
+#include <std_msgs/msg/string.hpp>
 #include "std_srvs/srv/trigger.hpp"
 #include "mjpeg_server.h"
 
 #include <signal.h>
 #include <stdio.h>
+#include <map>
+#include "simple_tracker.h"
 
 // Global state
 rclcpp::Node::SharedPtr node;
@@ -28,6 +31,7 @@ struct TrtParams {
     int         camera_index;
     int         camera_width;
     int         camera_height;
+    bool        is_track;
 };
 
 TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
@@ -45,9 +49,21 @@ TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
     p.camera_width      = n->declare_parameter<int>        ("camera_width",      1280);
     p.camera_height     = n->declare_parameter<int>        ("camera_height",     720);
     conf_score_value    = n->declare_parameter<double>     ("conf_score_value",  0.8);
+    p.is_track          = n->declare_parameter<bool>       ("is_track",          false);
     return p;
 }
 
+
+SimpleTracker tracker;
+
+std::map<int, int> count_detections(const cv::Mat &frame, const std::vector<Detection> &res, bool is_track, SimpleTracker &trk) {
+    if (is_track) {
+        return trk.update(frame, res);  // cumulative unique counts per class (CSRT tracker)
+    }
+    std::map<int, int> counts;
+    for (auto &it : res) counts[static_cast<int>(it.class_id)]++;
+    return counts;  // per-frame counts per class
+}
 
 void sig_handler(int signal){
     std::cout << "\nCtrl+C pressed. Exiting..." << std::endl;
@@ -70,6 +86,7 @@ int main(int argc, char *argv[]) {
 
     auto conf_pub = node->create_publisher<std_msgs::msg::Float32>("conf", 10);
     auto bed_status_pub = node->create_publisher<std_msgs::msg::UInt8>("bed_detection_status", 10);
+    auto class_count_pub = node->create_publisher<std_msgs::msg::String>("class_counts", 10);
 
     auto bed_detection_service =
         node->create_service<std_srvs::srv::Trigger>("bed_detection", &bed_detection_cb);
@@ -149,6 +166,16 @@ int main(int argc, char *argv[]) {
 
             auto &res = res_batch[0];
             auto bed_msg = std_msgs::msg::UInt8();
+
+            // per-class counts
+            std::map<int, int> class_counts = count_detections(frame, res, p.is_track, tracker);
+            std::string counts_str;
+            for (auto &kv : class_counts)
+                counts_str += "class" + std::to_string(kv.first) + ":" + std::to_string(kv.second) + " ";
+            auto count_msg = std_msgs::msg::String();
+            count_msg.data = counts_str;
+            class_count_pub->publish(count_msg);
+            if (!counts_str.empty()) std::cout << "counts: " << counts_str << std::endl;
 
             if (!res.empty()) {
                 for (auto &it : res) {

@@ -33,6 +33,11 @@ yolov8_trt:
     # ── Confidence gate (published on /conf, triggers /bed_detection) ─────────
     conf_score_value: 0.8
 
+    # ── Tracking ──────────────────────────────────────────────────────────────
+    # true  → count unique objects across frames (IoU-based tracker)
+    # false → count detections per frame only
+    is_track: false
+
     # ── Output box cap ────────────────────────────────────────────────────────
     # 1000 is generous for a single-class detector; 100 cuts postprocess cost.
     max_output_bbox: 100
