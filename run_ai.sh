@@ -24,3 +24,10 @@ docker logs -f yolov8-trt-bed-detect-nano
 
 # docker exec -it yolov8-trt-bed-detect-nano bash
 # docker rm -f yolov8-trt-bed-detect-nano
+# ros2 topic echo /class_counts
+
+# enable unique object tracking (cumulative counts)
+# ros2 param set /yolov8_trt is_track true
+
+# disable (per-frame counts only)
+# ros2 param set /yolov8_trt is_track false
