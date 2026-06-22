@@ -143,6 +143,7 @@
   const COLORS=['#6d72f6','#24c875','#f3a712','#f05252','#25b9d7','#ad64e8','#ec5ca4','#24b6a2'];
   const HISTORY_PAGE=50;
   let historyOffset=0, historyTotal=0, chartItems=[], refreshTimer=0, wsRetries=0;
+  let streamPort=8080, streamRetries=0, streamRetryTimer=0;
 
   function escapeHtml(value) { const el=document.createElement('span');el.textContent=String(value);return el.innerHTML; }
   function formatTime(value) { if(!value)return '—';const d=new Date(value);return Number.isNaN(d.getTime())?value:d.toLocaleString(); }
@@ -184,7 +185,7 @@
 
   async function setDetection(start) {
     const button=document.getElementById(start?'start-btn':'stop-btn');button.disabled=true;
-    try { const result=await api(start?'/api/start':'/api/stop',{method:'POST'});toast(result.message); }
+    try { const result=await api(start?'/api/start':'/api/stop',{method:'POST'});toast(result.message);if(start)connectStream(true); }
     catch(error){toast(error.message,true);}
     finally{try{await loadStatus();}catch(_error){button.disabled=false;}}
   }
@@ -199,7 +200,11 @@
     catch(error){toast(error.message,true);}
   }
 
-  async function loadStatus() { applySnapshot(await api('/api/status')); }
+  async function loadStatus() {
+    const status=await api('/api/status');applySnapshot(status);
+    const nextPort=Number(status.mjpeg_port||8080);
+    if(nextPort!==streamPort){streamPort=nextPort;connectStream(true);}
+  }
 
   function connectWebSocket() {
     const scheme=location.protocol==='https:'?'wss':'ws', socket=new WebSocket(`${scheme}://${location.host}/ws`);
@@ -236,9 +241,21 @@
     document.getElementById('legend').innerHTML=classes.map((name,index)=>`<span><i style="background:${COLORS[index%COLORS.length]}"></i>Class ${escapeHtml(name)}</span>`).join('')||'<span>No class data yet</span>';
   }
 
+  function connectStream(immediate=false) {
+    clearTimeout(streamRetryTimer);
+    const delay=immediate?0:Math.min(5000,500*2**Math.min(streamRetries,4));
+    streamRetryTimer=setTimeout(()=>{
+      const img=document.getElementById('stream'),message=document.getElementById('stream-message');
+      message.style.display='block';message.textContent=streamRetries?'Reconnecting to camera…':'Connecting to camera…';
+      img.onload=()=>{clearTimeout(streamRetryTimer);streamRetries=0;message.style.display='none';};
+      img.onerror=()=>{streamRetries++;message.style.display='block';message.textContent='Camera unavailable — retrying automatically…';connectStream(false);};
+      img.src=`http://${location.hostname}:${streamPort}/?t=${Date.now()}`;
+    },delay);
+  }
+
   async function initStream() {
-    try { const status=await api('/api/status');applySnapshot(status);const img=document.getElementById('stream'),message=document.getElementById('stream-message');img.onload=()=>message.style.display='none';img.onerror=()=>{message.style.display='block';message.textContent='Camera stream unavailable';};img.src=`http://${location.hostname}:${status.mjpeg_port||8080}/?t=${Date.now()}`; }
-    catch(error){document.getElementById('stream-message').textContent=error.message;}
+    try { const status=await api('/api/status');applySnapshot(status);streamPort=Number(status.mjpeg_port||8080);connectStream(true); }
+    catch(error){document.getElementById('stream-message').textContent=`${error.message} — retrying…`;setTimeout(initStream,1500);}
   }
 
   async function saveFrame() { try{toast('Saving frame…');const result=await api('/api/save',{method:'POST'});toast(`Saved ${result.filename}`);loadImages();}catch(error){toast(error.message,true);} }
