@@ -82,7 +82,7 @@ From `vision/ai/`:
 ```bash
 docker build \
   -f Dockerfile.yolov8_trt_bed_detect_jetson_nano \
-  -t meraquetech/race_nav:yolov8-trt-bed-detect-nano.v5 \
+  -t meraquetech/race_nav:yolov8-trt-bed-detect-nano.v6 \
   .
 ```
 
@@ -104,7 +104,7 @@ docker run -it --rm --net=host \
   -v $PWD/yolov8/weights:/weights \
   -v $PWD/yolov8_trt_bed_detect/config:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/config \
   -v $PWD/yolov8_trt_bed_detect/launch:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/launch \
-  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v5
+  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v6
 
 
 
@@ -252,6 +252,60 @@ ros2 param set /yolov8_trt is_track false
 
 ---
 
+## Web Dashboard & REST API
+
+After launch, the dashboard is available at:
+
+```
+http://<host-ip>:8090/          ← dashboard UI
+http://<host-ip>:8080/          ← MJPEG live stream
+```
+
+Saved frames are written to `./vision/ai/saved_frames/` on the host (mounted into the container at `/saved_frames`).
+
+### WebSocket
+
+| URL | Direction | Payload |
+|---|---|---|
+| `ws://<host>:8090/ws` | Server → Client | `{"type":"counts","counts":{"0":2,"1":1},"bed":1,"conf":0.812,"time":"..."}` |
+
+### REST Endpoints
+
+| Method | URL | Description |
+|---|---|---|
+| `GET` | `/api/counts` | Current per-class counts snapshot (JSON) |
+| `GET` | `/api/status` | Node status — detecting, bed status, confidence |
+| `POST` | `/api/start` | Start bed detection (calls `/bed_detection` ROS service) |
+| `POST` | `/api/stop` | Stop detection (UI flag) |
+| `POST` | `/api/save` | Save current annotated frame to `/saved_frames` |
+| `POST` | `/api/set_track` | Toggle MOSSE tracker — body: `{"enabled": true}` |
+| `POST` | `/api/reset_tracker` | Reset tracker cumulative counts |
+| `GET` | `/api/images` | List all saved frames (JSON array) |
+| `DELETE` | `/api/images/{filename}` | Delete a saved frame |
+
+### Example curl calls
+
+```bash
+# start detection
+curl -X POST http://<host-ip>:8090/api/start
+
+# save a frame
+curl -X POST http://<host-ip>:8090/api/save
+
+# get current counts
+curl http://<host-ip>:8090/api/counts
+
+# enable tracking
+curl -X POST http://<host-ip>:8090/api/set_track \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+
+# list saved frames
+curl http://<host-ip>:8090/api/images
+```
+
+---
+
 ## One-line Docker run (after engine is built)
 
 ```bash
@@ -263,7 +317,7 @@ docker run -it --rm --net=host \
   -v $PWD/yolov8_trt_bed_detect/weights:/ros2_ws/src/yolov8_trt_bed_detect/weights:ro \
   -v $PWD/yolov8_trt_bed_detect/config:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/config \
   -v $PWD/yolov8_trt_bed_detect/launch:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/launch \
-  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v5 \
+  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v6 \
   bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && \
   ros2 launch yolov8_trt_bed_detect bed_detect.launch.py \
   engine_name:=/ros2_ws/src/yolov8_trt_bed_detect/weights/yolov8s_bed.engine"

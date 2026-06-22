@@ -1,6 +1,6 @@
 #!/bin/bash
 
-IMAGE_TAG="meraquetech/race_nav:yolov8-trt-bed-detect-nano.v5"
+IMAGE_TAG="meraquetech/race_nav:yolov8-trt-bed-detect-nano.v6"
 DOCKERFILE="Dockerfile.yolov8_trt_bed_detect_jetson_nano"
 CONTEXT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
