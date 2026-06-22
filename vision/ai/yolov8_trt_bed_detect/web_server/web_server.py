@@ -25,6 +25,7 @@ SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
+AUTO_SAVE_INTERVAL = max(0.5, float(os.environ.get("AUTO_SAVE_INTERVAL", "0.5")))
 STATIC_DIR = Path(__file__).parent / "static"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -38,15 +39,18 @@ state = {
     "conf": 0.0,
     "detecting": False,
     "is_track": False,
+    "auto_save": False,
     "last_updated": None,
 }
 state_lock = threading.Lock()
+auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
 
 
 # Persistent count history
 db_lock = threading.Lock()
+storage_lock = threading.Lock()
 
 
 def _db_connect():
@@ -67,19 +71,23 @@ def _init_db():
                 total INTEGER NOT NULL,
                 bed_status INTEGER NOT NULL,
                 confidence REAL NOT NULL,
-                tracking INTEGER NOT NULL
+                tracking INTEGER NOT NULL,
+                frame_filename TEXT
             )
             """
         )
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(count_history)")}
+        if "frame_filename" not in columns:
+            db.execute("ALTER TABLE count_history ADD COLUMN frame_filename TEXT")
 
 
-def _store_history(snapshot):
+def _store_history(snapshot, frame_filename=None):
     with db_lock, _db_connect() as db:
         cursor = db.execute(
             """
             INSERT INTO count_history
-                (recorded_at, counts_json, total, bed_status, confidence, tracking)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (recorded_at, counts_json, total, bed_status, confidence, tracking, frame_filename)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot["last_updated"],
@@ -88,6 +96,7 @@ def _store_history(snapshot):
                 snapshot["bed_status"],
                 snapshot["conf"],
                 int(snapshot["is_track"]),
+                frame_filename,
             ),
         )
         return cursor.lastrowid
@@ -98,7 +107,8 @@ def _history_rows(limit, offset):
         total = db.execute("SELECT COUNT(*) FROM count_history").fetchone()[0]
         rows = db.execute(
             """
-            SELECT id, recorded_at, counts_json, total, bed_status, confidence, tracking
+            SELECT id, recorded_at, counts_json, total, bed_status, confidence, tracking,
+                   frame_filename
             FROM count_history ORDER BY id DESC LIMIT ? OFFSET ?
             """,
             (limit, offset),
@@ -112,6 +122,7 @@ def _history_rows(limit, offset):
             "bed": row["bed_status"],
             "conf": row["confidence"],
             "tracking": bool(row["tracking"]),
+            "frame": row["frame_filename"],
         }
         for row in rows
     ]
@@ -195,6 +206,7 @@ class BridgeNode(Node):
     def _active_cb(self, msg):
         with state_lock:
             state["detecting"] = bool(msg.data)
+        auto_save_wakeup.set()
         broadcast_state("status")
 
     def _tracking_cb(self, msg):
@@ -287,6 +299,53 @@ def _grab_frame_bytes():
     return None
 
 
+def _write_frame(jpeg):
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = "frame_%s.jpg" % timestamp
+    path = os.path.join(SAVE_DIR, filename)
+    with open(path, "wb") as output:
+        output.write(jpeg)
+    return filename, path
+
+
+def _auto_save_loop():
+    """Save one matching frame and count while detection and auto-save are active."""
+    while True:
+        auto_save_wakeup.wait(timeout=AUTO_SAVE_INTERVAL)
+        auto_save_wakeup.clear()
+
+        with state_lock:
+            should_save = state["auto_save"] and state["detecting"]
+        if not should_save:
+            continue
+
+        jpeg = _grab_frame_bytes()
+        if jpeg is None:
+            app.logger.warning("Auto-save skipped: MJPEG frame unavailable")
+            continue
+
+        # Re-check after the blocking frame read so Stop prevents a late save.
+        with state_lock:
+            if not state["auto_save"] or not state["detecting"] or state["last_updated"] is None:
+                continue
+            snapshot = dict(state)
+            snapshot["counts"] = dict(state["counts"])
+
+        snapshot["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        frame_path = None
+        try:
+            with storage_lock:
+                with state_lock:
+                    if not state["auto_save"] or not state["detecting"]:
+                        continue
+                frame_filename, frame_path = _write_frame(jpeg)
+                _store_history(snapshot, frame_filename)
+        except (OSError, sqlite3.Error) as exc:
+            if frame_path and os.path.exists(frame_path):
+                os.unlink(frame_path)
+            app.logger.error("Auto-save failed: %s", exc)
+
+
 # Flask app
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
 sock = Sock(app)
@@ -346,7 +405,8 @@ def save_count():
     source_updated = snapshot["last_updated"]
     snapshot["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     try:
-        record_id = _store_history(snapshot)
+        with storage_lock:
+            record_id = _store_history(snapshot)
     except sqlite3.Error as exc:
         return jsonify({"success": False, "message": "could not save count: %s" % exc}), 500
 
@@ -358,6 +418,53 @@ def save_count():
         "source_updated": source_updated,
         "counts": snapshot["counts"],
         "total": sum(snapshot["counts"].values()),
+    })
+
+
+@app.route("/api/auto_save", methods=["POST"])
+def set_auto_save():
+    data = request.get_json(silent=True) or {}
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return jsonify({"success": False, "message": "enabled must be a boolean"}), 400
+    with state_lock:
+        state["auto_save"] = enabled
+    auto_save_wakeup.set()
+    broadcast_state("status")
+    return jsonify({
+        "success": True,
+        "message": "automatic saving enabled" if enabled else "automatic saving disabled",
+        "auto_save": enabled,
+        "interval_seconds": AUTO_SAVE_INTERVAL,
+    })
+
+
+@app.route("/api/data", methods=["DELETE"])
+def delete_all_data():
+    with state_lock:
+        state["auto_save"] = False
+    auto_save_wakeup.set()
+
+    deleted_images = 0
+    try:
+        with storage_lock:
+            with db_lock, _db_connect() as db:
+                deleted_records = db.execute("SELECT COUNT(*) FROM count_history").fetchone()[0]
+                db.execute("DELETE FROM count_history")
+                db.execute("DELETE FROM sqlite_sequence WHERE name = 'count_history'")
+            for image_path in Path(SAVE_DIR).glob("*.jpg"):
+                image_path.unlink()
+                deleted_images += 1
+    except (OSError, sqlite3.Error) as exc:
+        return jsonify({"success": False, "message": "could not delete all data: %s" % exc}), 500
+
+    broadcast_state("status")
+    return jsonify({
+        "success": True,
+        "message": "all saved counts and images deleted",
+        "deleted_records": deleted_records,
+        "deleted_images": deleted_images,
+        "auto_save": False,
     })
 
 
@@ -404,13 +511,11 @@ def set_track():
 
 @app.route("/api/save", methods=["POST"])
 def save_frame():
-    jpeg = _grab_frame_bytes()
-    if jpeg is None:
-        return jsonify({"success": False, "message": "could not grab frame"}), 500
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    filename = "frame_%s.jpg" % timestamp
-    with open(os.path.join(SAVE_DIR, filename), "wb") as output:
-        output.write(jpeg)
+    with storage_lock:
+        jpeg = _grab_frame_bytes()
+        if jpeg is None:
+            return jsonify({"success": False, "message": "could not grab frame"}), 500
+        filename, _path = _write_frame(jpeg)
     return jsonify({"success": True, "filename": filename})
 
 
@@ -433,13 +538,15 @@ def delete_image(filename):
     if Path(filename).name != filename:
         return jsonify({"success": False, "message": "invalid filename"}), 400
     path = Path(SAVE_DIR) / filename
-    if not path.exists():
-        return jsonify({"success": False, "message": "image not found"}), 404
-    path.unlink()
+    with storage_lock:
+        if not path.exists():
+            return jsonify({"success": False, "message": "image not found"}), 404
+        path.unlink()
     return jsonify({"success": True})
 
 
 if __name__ == "__main__":
     _init_db()
     threading.Thread(target=_ros_spin, daemon=True).start()
+    threading.Thread(target=_auto_save_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=API_PORT, threaded=True, use_reloader=False)

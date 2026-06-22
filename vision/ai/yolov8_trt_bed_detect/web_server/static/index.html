@@ -100,6 +100,7 @@
           <button onclick="saveCount()">＋ Save current count</button>
           <button onclick="saveFrame()">▣ Save frame</button>
           <button class="gray" onclick="resetTracker()">↺ Reset tracker</button>
+          <button class="red" onclick="deleteAllData()">⚠ Delete all saved data</button>
         </div>
       </section>
       <section class="card">
@@ -121,6 +122,13 @@
         </div>
       </section>
       <section class="card">
+        <h2>Automatic saving</h2>
+        <div class="toggle-row">
+          <div><strong>Frame + count</strong><div class="muted">Every 0.5 seconds while detection runs</div></div>
+          <label class="switch"><input id="auto-save-toggle" type="checkbox" onchange="setAutoSave(this.checked)"><span class="slider"></span></label>
+        </div>
+      </section>
+      <section class="card">
         <div class="card-head"><h2>Recent count chart</h2><span class="muted">Persistent samples</span></div>
         <canvas id="chart"></canvas><div id="legend" class="legend"></div>
       </section>
@@ -129,7 +137,7 @@
     <section class="card history-card">
       <div class="card-head"><div><h2>All counted class history</h2><span id="history-summary" class="muted">Loading…</span></div><button class="link" onclick="loadHistory(historyOffset)">Refresh</button></div>
       <div class="table-wrap">
-        <table><thead><tr><th>Time</th><th>Classes</th><th>Total</th><th>Obj</th><th>Confidence</th><th>Mode</th></tr></thead><tbody id="history-body"></tbody></table>
+        <table><thead><tr><th>Time</th><th>Classes</th><th>Total</th><th>Obj</th><th>Confidence</th><th>Mode</th><th>Frame</th></tr></thead><tbody id="history-body"></tbody></table>
       </div>
       <div class="pager"><button id="newer-btn" class="gray" onclick="changeHistory(-1)">Newer</button><button id="older-btn" class="gray" onclick="changeHistory(1)">Older</button></div>
     </section>
@@ -165,6 +173,7 @@
     if(data.last_updated)document.getElementById('last-update').textContent=formatTime(data.last_updated);
     renderCounts(data.counts||{});
     if(typeof data.is_track==='boolean')applyTracking(data.is_track);
+    if(typeof data.auto_save==='boolean')document.getElementById('auto-save-toggle').checked=data.auto_save;
     document.getElementById('start-btn').disabled=running;
     document.getElementById('stop-btn').disabled=!running;
   }
@@ -195,6 +204,11 @@
     catch(error){applyTracking(!enabled);toast(error.message,true);}
   }
 
+  async function setAutoSave(enabled) {
+    try { const result=await api('/api/auto_save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});document.getElementById('auto-save-toggle').checked=enabled;toast(result.message); }
+    catch(error){document.getElementById('auto-save-toggle').checked=!enabled;toast(error.message,true);}
+  }
+
   async function resetTracker() {
     try { const result=await api('/api/reset_tracker',{method:'POST'});toast(result.message); }
     catch(error){toast(error.message,true);}
@@ -222,7 +236,7 @@
       const start=historyTotal?historyOffset+1:0,end=Math.min(historyOffset+data.items.length,historyTotal);
       document.getElementById('history-summary').textContent=`Showing ${start}–${end} of ${historyTotal} stored samples`;
       document.getElementById('newer-btn').disabled=historyOffset===0;document.getElementById('older-btn').disabled=end>=historyTotal;
-      document.getElementById('history-body').innerHTML=data.items.length?data.items.map(item=>`<tr><td>${escapeHtml(formatTime(item.time))}</td><td class="code">${escapeHtml(countText(item.counts))}</td><td>${item.total}</td><td>${item.bed?'Found':'Clear'}</td><td>${Number(item.conf).toFixed(3)}</td><td>${item.tracking?'Unique':'Per frame'}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No saved count history yet. Press Save current count when you want to keep a live value.</td></tr>';
+      document.getElementById('history-body').innerHTML=data.items.length?data.items.map(item=>`<tr><td>${escapeHtml(formatTime(item.time))}</td><td class="code">${escapeHtml(countText(item.counts))}</td><td>${item.total}</td><td>${item.bed?'Found':'Clear'}</td><td>${Number(item.conf).toFixed(3)}</td><td>${item.tracking?'Unique':'Per frame'}</td><td>${item.frame?`<a href="/saved/${encodeURIComponent(item.frame)}" target="_blank" style="color:#9da1ff">View</a>`:'—'}</td></tr>`).join(''):'<tr><td colspan="7" class="muted">No saved count history yet. Save a current count or enable automatic saving.</td></tr>';
       if(offset===0){chartItems=data.items.slice().reverse();drawChart(chartItems);}
     } catch(error){document.getElementById('history-summary').textContent=error.message;}
   }
@@ -260,6 +274,7 @@
 
   async function saveFrame() { try{toast('Saving frame…');const result=await api('/api/save',{method:'POST'});toast(`Saved ${result.filename}`);loadImages();}catch(error){toast(error.message,true);} }
   async function saveCount() { try{const result=await api('/api/save_count',{method:'POST'});toast(`${result.message}: ${result.total} total`);historyOffset=0;loadHistory(0);}catch(error){toast(error.message,true);} }
+  async function deleteAllData() { if(!window.confirm('Permanently delete ALL saved count history and images? Automatic saving will be disabled.'))return;try{const result=await api('/api/data',{method:'DELETE'});document.getElementById('auto-save-toggle').checked=false;historyOffset=0;await Promise.all([loadHistory(0),loadImages()]);toast(`${result.deleted_records} records and ${result.deleted_images} images deleted`);}catch(error){toast(error.message,true);} }
   async function loadImages() { try{const images=await api('/api/images');const gallery=document.getElementById('gallery');gallery.innerHTML=images.length?images.map(item=>`<div class="thumb"><img src="${item.url}" alt="${escapeHtml(item.filename)}" onclick="openImage('${item.url}')"><button onclick="deleteImage('${escapeHtml(item.filename)}')">×</button><small>${escapeHtml(formatTime(item.time))}</small></div>`).join(''):'<span class="muted">No saved frames yet.</span>';}catch(error){toast(error.message,true);} }
   async function deleteImage(name) { try{await api(`/api/images/${encodeURIComponent(name)}`,{method:'DELETE'});loadImages();}catch(error){toast(error.message,true);} }
   function openImage(url) { document.getElementById('lightbox-image').src=url;document.getElementById('lightbox').classList.add('open'); }

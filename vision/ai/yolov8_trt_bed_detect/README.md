@@ -270,7 +270,9 @@ http://<host-ip>:8080/          ← MJPEG live stream
 ```
 
 Saved frames are written to `./vision/ai/saved_frames/` on the host (mounted into the container at `/saved_frames`).
-Live counts update continuously in the dashboard, but they are persisted only when `POST /api/save_count` is called or **Save current count** is pressed. Saved history lives in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
+Live counts update continuously in the dashboard. They are persisted when `POST /api/save_count` is called, **Save current count** is pressed, or optional automatic saving is enabled. Automatic saving stores a paired frame and count every 0.5 seconds while detection runs; stopping detection pauses it. Saved history lives in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
+
+> Automatic saving can create up to 172,800 JPEG files per day. Keep it disabled when it is not required and monitor free disk space.
 
 The dashboard is self-contained and does not require internet access or CDN scripts.
 
@@ -287,10 +289,12 @@ Base URL: `http://<host-ip>:8090`
 | `POST` | `/api/set_track` | JSON: `{"enabled":true}` | `{"success":true,"message":"...","is_track":true}` | Select unique-object or per-frame counting |
 | `POST` | `/api/reset_tracker` | None | `{"success":true,"message":"tracker reset requested"}` | Clear cumulative unique-object counts |
 | `POST` | `/api/save_count` | None | Saved record ID, time, counts, and total | Save exactly one current live-count snapshot to SQLite |
+| `POST` | `/api/auto_save` | JSON: `{"enabled":true}` | Mode, message, and `interval_seconds` | Enable or disable paired frame-and-count saving while detection runs |
 | `GET` | `/api/history` | Query: `limit` (1–5000), `offset` (≥0) | Paginated history object | Read manually saved counts, newest first |
 | `POST` | `/api/save` | None | `{"success":true,"filename":"frame_....jpg"}` | Save the current MJPEG frame as JPEG |
 | `GET` | `/api/images` | None | Array of saved-image metadata | List saved JPEG frames |
 | `DELETE` | `/api/images/{filename}` | Filename in URL | `{"success":true}` | Delete one saved JPEG frame |
+| `DELETE` | `/api/data` | None | Numbers of deleted records and images | Disable auto-save and permanently clear all count history and JPEG frames |
 | `GET` | `/saved/{filename}` | Filename in URL | JPEG bytes | Display or download a saved frame |
 
 #### Live state object
@@ -305,6 +309,7 @@ The `/api/status` endpoint and WebSocket messages share these fields:
 | `conf` | number | Highest confidence from the latest detection frame |
 | `detecting` | boolean | Whether TensorRT inference is running |
 | `is_track` | boolean | `true` = cumulative unique tracking; `false` = per-frame counting |
+| `auto_save` | boolean | Whether paired frame-and-count automatic saving is enabled |
 | `last_updated` | string/null | ISO-8601 time of the latest live count |
 | `mjpeg_port` | integer | MJPEG port; present only in `/api/status` |
 
@@ -315,9 +320,11 @@ The `/api/status` endpoint and WebSocket messages share these fields:
 | `total` | integer | Total manually saved records in SQLite |
 | `limit` | integer | Maximum records returned on this page |
 | `offset` | integer | Number of newer records skipped |
-| `items` | array | History records containing `id`, `time`, `counts`, `total`, `bed`, `conf`, and `tracking` |
+| `items` | array | History records containing `id`, `time`, `counts`, `total`, `bed`, `conf`, `tracking`, and optional `frame` filename |
 
 Common error responses use `{"success":false,"message":"..."}`. Expected status codes include `400` for invalid pagination or filenames, `409` when saving before any live count exists, `500` for frame/database failures, and `503` when a ROS service is unavailable.
+
+> `DELETE /api/data` is destructive and cannot be undone. The SQLite schema is retained so new records can be saved immediately afterward.
 
 ### WebSocket reference
 
@@ -339,6 +346,7 @@ Example server message:
   "conf": 0.9123,
   "detecting": true,
   "is_track": false,
+  "auto_save": true,
   "last_updated": "2026-06-22T08:00:00+00:00"
 }
 ```
@@ -363,6 +371,14 @@ curl 'http://<host-ip>:8090/api/history?limit=50&offset=0'
 
 # save the current live count to history
 curl -X POST http://<host-ip>:8090/api/save_count
+
+# enable paired frame + count saving every 0.5 seconds while detecting
+curl -X POST http://<host-ip>:8090/api/auto_save \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+
+# permanently delete all saved counts and JPEG frames
+curl -X DELETE http://<host-ip>:8090/api/data
 
 # enable tracking
 curl -X POST http://<host-ip>:8090/api/set_track \
