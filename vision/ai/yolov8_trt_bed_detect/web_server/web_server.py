@@ -12,12 +12,13 @@ import time
 from pathlib import Path
 
 import urllib.request
+from typing import Optional, List, Dict
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, UInt8, Float32
 from std_srvs.srv import Trigger
 
-from flask import Flask, jsonify, send_from_directory, request, Response
+from flask import Flask, jsonify, send_from_directory, request
 from flask_sock import Sock
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -37,7 +38,7 @@ state = {
     "last_updated": None,
 }
 state_lock = threading.Lock()
-ws_clients = []
+ws_clients = []  # type: List
 ws_lock    = threading.Lock()
 
 
@@ -113,7 +114,8 @@ def _ros_spin():
 
 
 # ── Snapshot from MJPEG ───────────────────────────────────────────────────────
-def _grab_frame_bytes() -> bytes | None:
+def _grab_frame_bytes():
+    # type: () -> Optional[bytes]
     """
     Read the MJPEG stream until we find one complete JPEG frame.
     Returns raw JPEG bytes — no cv2 needed.
