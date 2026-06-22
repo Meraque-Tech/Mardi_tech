@@ -376,6 +376,7 @@ yolo train data=pineapple.yaml model=yolov8n.pt imgsz=640
 
   # Connect to Wi-Fi
   sudo nmcli device wifi connect "M@RQ" password "<wifi password>"
+  <!-- sudo nmcli device wifi connect "M@RQ" password "marq8222" -->
 
   # Turn all networking off
   sudo nmcli networking off
@@ -414,5 +415,5 @@ yolo train data=pineapple.yaml model=yolov8n.pt imgsz=640
   resolvectl status
 
   nmcli device status
-  
+
 ```
