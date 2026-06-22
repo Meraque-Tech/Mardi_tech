@@ -77,6 +77,17 @@ http://localhost:8000
 Use this when you want the UI and training process to run inside a CUDA-enabled
 container.
 
+From `vision/ai/web`, use the run script:
+
+```bash
+./run.sh build     # first run or rebuild dependencies
+./run.sh start     # start the existing image
+./run.sh restart
+./run.sh status
+./run.sh logs
+./run.sh stop
+```
+
 From the repository root:
 
 ```bash
