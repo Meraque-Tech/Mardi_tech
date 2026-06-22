@@ -733,6 +733,42 @@ function renderDatasetSummary(summary) {
       </div>
     `
     : "<p>No class distribution is available.</p>";
+  const classBalance = Array.isArray(summary.class_balance) ? summary.class_balance : [];
+  const balanceRows = classBalance.map((item) => {
+    const splitCells = ["train", "val", "test"].map((split) => {
+      const row = item.splits?.[split] || {};
+      const imageShare = Number(row.image_share) || 0;
+      const targetShare = Number(row.target_share) || 0;
+      return `
+        <td>
+          <strong>${row.images || 0} img / ${row.instances || 0} obj</strong>
+          <small>${imageShare.toFixed(1)}% vs ${targetShare.toFixed(1)}% target</small>
+        </td>
+      `;
+    }).join("");
+    return `
+      <tr>
+        <th>${escapeHtml(item.class_name)}</th>
+        <td>${item.images || 0} img / ${item.instances || 0} obj</td>
+        ${splitCells}
+        <td>${Number(item.max_image_deviation || 0).toFixed(1)} pp</td>
+      </tr>
+    `;
+  }).join("");
+  const balanceTable = balanceRows
+    ? `
+      <div class="split-balance">
+        <h4>Split Class Balance</h4>
+        <p>Image presence drives stratification; object instances are used as a tie-breaker.</p>
+        <table>
+          <thead>
+            <tr><th>Class</th><th>Total</th><th>Train</th><th>Val</th><th>Test</th><th>Max Δ</th></tr>
+          </thead>
+          <tbody>${balanceRows}</tbody>
+        </table>
+      </div>
+    `
+    : "";
   const warnings = Array.isArray(summary.warnings) && summary.warnings.length
     ? `<ul>${summary.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
     : "<p>No dataset warnings found.</p>";
@@ -741,11 +777,12 @@ function renderDatasetSummary(summary) {
     <details class="dataset-summary-details" open>
       <summary>
         <span>Dataset Summary</span>
-        <small>${summary.total_images || 0} images, ${summary.class_count || 0} classes</small>
+        <small>${summary.total_images || 0} images, ${summary.class_count || 0} classes${summary.split_strategy === "multi_label_stratified" ? " · stratified" : ""}</small>
       </summary>
       <div class="dataset-summary-content">
         <div class="summary-grid">${splitRows}</div>
         ${distributionTable}
+        ${balanceTable}
         ${warnings}
       </div>
     </details>

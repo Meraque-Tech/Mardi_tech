@@ -14,7 +14,7 @@ The UI should support:
 - Dataset folder upload
 - Dataset ZIP upload
 - Roboflow dataset download
-- Train/validation/test split configuration
+- Multi-label stratified train/validation/test split configuration
 - Class ID and class name configuration
 - YOLOv8 model size selection
 - CUDA/GPU training from a container

@@ -5,7 +5,6 @@ import csv
 import json
 import math
 import os
-import random
 import re
 import shutil
 import signal
@@ -23,6 +22,8 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+from .stratified_split import SPLIT_NAMES, stratified_split
 
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -53,6 +54,7 @@ CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
 PROGRESS_LINE_RE = re.compile(r":\s*\d+%\s+.*\b\d+/\d+\b")
 WEB_PROGRESS_RE = re.compile(r"^WEB_TRAINING_PROGRESS\s+epoch=(\d+)\s+total=(\d+)$")
 RUN_DIRECTORY_PREFIXES = ("Logging results to ", "Results saved to ")
+SPLIT_METADATA_FILE = ".split_metadata.json"
 
 app = FastAPI(title="YOLOv8 Training UI")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -390,6 +392,20 @@ def update_class_distribution(
     return malformed_rows, unknown_class_rows
 
 
+def read_split_metadata(dataset_root: Path, yaml_path: Path) -> dict:
+    candidates = [dataset_root / SPLIT_METADATA_FILE, yaml_path.parent / SPLIT_METADATA_FILE]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
 def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
     warnings = []
     try:
@@ -412,22 +428,112 @@ def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
         }
         for class_id, class_name in enumerate(classes)
     }
-    for split in ("train", "val", "test"):
+    split_distributions = {}
+    for split in SPLIT_NAMES:
         images_path = split_image_folder(dataset_root, payload.get(split))
         labels_path = label_folder_for_images(dataset_root, images_path)
         images = image_files(images_path) if images_path and images_path.is_dir() else []
         missing_labels = count_missing_labels(images_path, labels_path)
+        split_distribution = {
+            class_id: {
+                "class_id": class_id,
+                "class_name": class_name,
+                "images": 0,
+                "instances": 0,
+            }
+            for class_id, class_name in enumerate(classes)
+        }
         total_images += len(images)
         total_missing += missing_labels
-        split_malformed, split_unknown = update_class_distribution(images, labels_path, class_distribution)
+        split_malformed, split_unknown = update_class_distribution(images, labels_path, split_distribution)
         malformed_rows += split_malformed
         unknown_class_rows += split_unknown
+        split_distributions[split] = split_distribution
+        for class_id, row in split_distribution.items():
+            class_distribution[class_id]["images"] += row["images"]
+            class_distribution[class_id]["instances"] += row["instances"]
         splits[split] = {
             "images": len(images),
             "missing_labels": missing_labels,
             "image_path": str(images_path) if images_path else "",
             "label_path": str(labels_path) if labels_path else "",
+            "class_distribution": list(split_distribution.values()),
         }
+
+    split_metadata = read_split_metadata(dataset_root, yaml_path)
+    split_strategy = split_metadata.get("strategy") or "existing"
+    configured_ratios = split_metadata.get("ratios") or {}
+    ratios = {
+        split: float(configured_ratios.get(split, 0))
+        for split in SPLIT_NAMES
+    }
+    if not math.isclose(sum(ratios.values()), 1.0, abs_tol=1e-6):
+        ratios = {
+            split: (splits[split]["images"] / total_images if total_images else 0.0)
+            for split in SPLIT_NAMES
+        }
+
+    active_splits = [split for split in SPLIT_NAMES if ratios[split] > 0]
+    class_balance = []
+    for class_id, class_name in enumerate(classes):
+        total_class_images = class_distribution[class_id]["images"]
+        total_class_instances = class_distribution[class_id]["instances"]
+        balance_splits = {}
+        max_image_deviation = 0.0
+        for split in SPLIT_NAMES:
+            row = split_distributions[split][class_id]
+            image_share = (
+                row["images"] / total_class_images
+                if total_class_images else 0.0
+            )
+            instance_share = (
+                row["instances"] / total_class_instances
+                if total_class_instances else 0.0
+            )
+            image_deviation = (image_share - ratios[split]) * 100
+            max_image_deviation = max(max_image_deviation, abs(image_deviation))
+            balance_splits[split] = {
+                "images": row["images"],
+                "instances": row["instances"],
+                "image_share": round(image_share * 100, 2),
+                "instance_share": round(instance_share * 100, 2),
+                "target_share": round(ratios[split] * 100, 2),
+                "image_deviation": round(image_deviation, 2),
+            }
+
+        class_balance.append({
+            "class_id": class_id,
+            "class_name": class_name,
+            "images": total_class_images,
+            "instances": total_class_instances,
+            "splits": balance_splits,
+            "max_image_deviation": round(max_image_deviation, 2),
+        })
+
+        if total_class_images == 0:
+            warnings.append(f"Class '{class_name}' has no labeled images.")
+        elif total_class_images < len(active_splits):
+            warnings.append(
+                f"Class '{class_name}' appears in only {total_class_images} "
+                f"image{'s' if total_class_images != 1 else ''}; representation in all "
+                f"{len(active_splits)} splits is not possible."
+            )
+        elif split_strategy == "multi_label_stratified":
+            missing_splits = [
+                split for split in active_splits
+                if balance_splits[split]["images"] == 0
+            ]
+            if missing_splits:
+                warnings.append(
+                    f"Class '{class_name}' could not be represented in: "
+                    f"{', '.join(missing_splits)}."
+                )
+            elif total_class_images >= 10 and max_image_deviation > 10:
+                warnings.append(
+                    f"Class '{class_name}' differs from the requested split ratio by up "
+                    f"to {max_image_deviation:.1f} percentage points because of "
+                    "multi-label constraints."
+                )
 
     if not classes:
         warnings.append("No class names found.")
@@ -447,7 +553,11 @@ def inspect_dataset_yaml(yaml_path: Path, classes: list[str]) -> dict:
         "class_count": len(classes),
         "classes": classes,
         "class_distribution": list(class_distribution.values()),
+        "class_balance": class_balance,
         "splits": splits,
+        "split_strategy": split_strategy,
+        "split_ratios": {split: round(ratios[split] * 100, 2) for split in SPLIT_NAMES},
+        "split_seed": split_metadata.get("seed"),
         "total_images": total_images,
         "missing_labels": total_missing,
         "warnings": warnings,
@@ -750,6 +860,7 @@ def prepare_existing_split(root: Path, name: str, names: dict[int, str]) -> Path
 
     output_dir = DATA_ROOT / "prepared" / clean_name(name, "dataset")
     output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / SPLIT_METADATA_FILE).unlink(missing_ok=True)
 
     train_path = layouts["train"]["images"].relative_to(root)
     val_path = layouts["val"]["images"].relative_to(root)
@@ -789,20 +900,13 @@ def prepare_split_dataset(root: Path, name: str, names: dict[int, str], split: S
     if not source_images:
         raise HTTPException(status_code=400, detail="No images found in the dataset path.")
 
-    train_ratio, val_ratio, _ = validate_split(split)
-    random.Random(42).shuffle(source_images)
-
-    total = len(source_images)
-    train_count = max(1, int(total * train_ratio))
-    val_count = int(total * val_ratio)
-    if train_count + val_count > total:
-        val_count = max(0, total - train_count)
-
-    groups = {
-        "train": source_images[:train_count],
-        "val": source_images[train_count:train_count + val_count],
-        "test": source_images[train_count + val_count:],
-    }
+    train_ratio, val_ratio, test_ratio = validate_split(split)
+    groups, diagnostics = stratified_split(
+        source_images,
+        {"train": train_ratio, "val": val_ratio, "test": test_ratio},
+        set(names),
+        seed=42,
+    )
 
     output_root = DATA_ROOT / "prepared" / clean_name(name, "dataset")
     if output_root.exists():
@@ -822,6 +926,10 @@ def prepare_split_dataset(root: Path, name: str, names: dict[int, str], split: S
         output_root,
         names,
         {"train": "images/train", "val": "images/val", "test": "images/test"},
+    )
+    (output_root / SPLIT_METADATA_FILE).write_text(
+        json.dumps(diagnostics, indent=2, sort_keys=True),
+        encoding="utf-8",
     )
     return yaml_path
 

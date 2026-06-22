@@ -212,6 +212,13 @@ test  15%
 Validation data is used during training for metrics and early stopping. Test
 data is reserved for final evaluation when present in the dataset.
 
+When rebuilding a split, the backend uses deterministic multi-label
+stratification with seed `42`. It balances the image-level presence of every
+class across train/validation/test, uses object-instance counts as a
+tie-breaker, and uses largest-remainder rounding so the split counts add up
+exactly. Classes with too few images to appear in every split are prioritized
+for train, then validation, then test, and are reported in the dataset summary.
+
 ## Training
 
 1. Choose a dataset source.

@@ -612,6 +612,15 @@ label {
   overflow-x: auto;
 }
 
+.split-balance {
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.split-balance > p {
+  font-size: 12px;
+}
+
 .dataset-distribution table {
   width: 100%;
   min-width: 500px;
@@ -620,8 +629,18 @@ label {
   font-size: 12px;
 }
 
+.split-balance table {
+  width: 100%;
+  min-width: 760px;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
 .dataset-distribution th,
-.dataset-distribution td {
+.dataset-distribution td,
+.split-balance th,
+.split-balance td {
   padding: 8px 6px;
   border-bottom: 1px solid var(--line);
   text-align: left;
@@ -630,6 +649,22 @@ label {
 .dataset-distribution th {
   color: var(--muted);
   font-weight: 800;
+}
+
+.split-balance th {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.split-balance td strong,
+.split-balance td small {
+  display: block;
+  white-space: nowrap;
+}
+
+.split-balance td small {
+  margin-top: 3px;
+  color: var(--muted);
 }
 
 .distribution-share {
