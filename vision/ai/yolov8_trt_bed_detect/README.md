@@ -21,6 +21,7 @@ YOLOv8 TensorRT bed detection ROS 2 node for Jetson Nano. Uses a USB webcam as i
 | Publisher | `conf` | `std_msgs/Float32` | Confidence score of detection |
 | Publisher | `bed_detection_status` | `std_msgs/UInt8` | `1` = bed detected, `0` = not detected |
 | Publisher | `detection_active` | `std_msgs/UInt8` | `1` = inference running, `0` = stopped |
+| Publisher | `tracking_enabled` | `std_msgs/UInt8` | `1` = unique tracking, `0` = per-frame counting |
 | Publisher | `class_counts` | `std_msgs/String` | Per-class object counts e.g. `class0:2 class1:1` |
 
 ---

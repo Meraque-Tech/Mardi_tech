@@ -162,6 +162,7 @@ class BridgeNode(Node):
         self.create_subscription(String, "/class_counts", self._counts_cb, 10)
         self.create_subscription(UInt8, "/bed_detection_status", self._status_cb, 10)
         self.create_subscription(UInt8, "/detection_active", self._active_cb, state_qos)
+        self.create_subscription(UInt8, "/tracking_enabled", self._tracking_cb, state_qos)
         self.create_subscription(Float32, "/conf", self._conf_cb, 10)
 
         self._start_cli = self.create_client(Trigger, "/bed_detection")
@@ -206,6 +207,11 @@ class BridgeNode(Node):
     def _active_cb(self, msg):
         with state_lock:
             state["detecting"] = bool(msg.data)
+        broadcast_state("status")
+
+    def _tracking_cb(self, msg):
+        with state_lock:
+            state["is_track"] = bool(msg.data)
         broadcast_state("status")
 
     def _call(self, client, request_message):

@@ -83,6 +83,8 @@ int main(int argc, char *argv[]) {
     auto state_qos = rclcpp::QoS(1).reliable().transient_local();
     auto detection_active_pub =
         node->create_publisher<std_msgs::msg::UInt8>("detection_active", state_qos);
+    auto tracking_enabled_pub =
+        node->create_publisher<std_msgs::msg::UInt8>("tracking_enabled", state_qos);
 
     auto publish_active = [&detection_active_pub](bool active) {
         std_msgs::msg::UInt8 msg;
@@ -136,19 +138,29 @@ int main(int argc, char *argv[]) {
 
     auto set_tracking_service = node->create_service<std_srvs::srv::SetBool>(
         "set_tracking",
-        [&node](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
-                std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+        [&node, &tracking_enabled_pub](
+            const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+            std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
             const auto result = node->set_parameter(rclcpp::Parameter("is_track", request->data));
             response->success = result.successful;
             response->message = result.successful
                 ? (request->data ? "unique tracking enabled" : "per-frame counting enabled")
                 : result.reason;
-            if (result.successful) tracker_reset_requested = true;
+            if (result.successful) {
+                tracker_reset_requested = true;
+                std_msgs::msg::UInt8 tracking_msg;
+                tracking_msg.data = request->data ? 1 : 0;
+                tracking_enabled_pub->publish(tracking_msg);
+            }
         });
 
     cv::Mat frame;
 
     TrtParams p = declare_and_get_params(node);
+    std_msgs::msg::UInt8 initial_tracking_msg;
+    initial_tracking_msg.data = p.is_track ? 1 : 0;
+    tracking_enabled_pub->publish(initial_tracking_msg);
+    bool last_tracking_enabled = p.is_track;
     RCLCPP_INFO(node->get_logger(), "engine: %s  res: %dx%d  precision: %s  post: %s",
         p.engine_name.c_str(), p.input_w, p.input_h, p.precision.c_str(), p.cuda_post_process.c_str());
 
@@ -206,6 +218,14 @@ int main(int argc, char *argv[]) {
         cap >> frame;
         if (frame.empty()) continue;
 
+        const bool is_track = node->get_parameter("is_track").as_bool();
+        if (is_track != last_tracking_enabled) {
+            tracker_reset_requested = true;
+            last_tracking_enabled = is_track;
+            std_msgs::msg::UInt8 tracking_msg;
+            tracking_msg.data = is_track ? 1 : 0;
+            tracking_enabled_pub->publish(tracking_msg);
+        }
         if (tracker_reset_requested.exchange(false)) tracker.reset();
 
         if (detection_enabled.load()) {
@@ -228,7 +248,6 @@ int main(int argc, char *argv[]) {
             auto bed_msg = std_msgs::msg::UInt8();
 
             // Track against the clean camera frame, before annotations are drawn.
-            bool is_track = node->get_parameter("is_track").as_bool();
             std::map<int, int> class_counts = count_detections(frame, res, is_track, tracker);
 
             float max_conf = 0.0f;
