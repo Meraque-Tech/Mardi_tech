@@ -1,0 +1,63 @@
+# Version-control and editor metadata
+.git/
+.github/
+.agents/
+.codex/
+.vscode/
+
+# Local secrets and machine-specific configuration
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python and test caches
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Runtime datasets, outputs, and logs are mounted at runtime
+data/
+datasets/
+runs/
+logs/
+**/datasets/
+**/logs/
+**/*.cache
+
+# Generated training and inference artifacts
+**/*.pt
+**/*.pth
+**/*.ckpt
+**/*.engine
+**/*.onnx
+**/*.trt
+**/*.torchscript
+**/*.tflite
+**/*.mlmodel
+**/*.blob
+
+# Keep the small default checkpoint available for offline first use
+!yolov8n.pt
+
+# Large archives, recordings, and temporary files
+**/*.zip
+**/*.tar
+**/*.tar.gz
+**/*.tgz
+**/*.bag
+**/*.mp4
+**/*.avi
+**/*.mkv
+**/*.tmp
+**/*.temp
+
+# Native and frontend build output
+**/build/
+**/dist/
+**/node_modules/
+
+# OS metadata
+**/.DS_Store
+**/Thumbs.db
