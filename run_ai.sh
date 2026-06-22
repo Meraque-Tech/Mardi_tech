@@ -11,7 +11,7 @@ docker run --rm --net=host \
   -v $PWD/yolov8_trt_bed_detect/config:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/config \
   -v $PWD/yolov8_trt_bed_detect/launch:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/launch \
   meraquetech/race_nav:yolov8-trt-bed-detect-nano.v5 \
-  bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch yolov8_trt_bed_detect bed_detect.launch.py"
+  bash -c "source /opt/ros/humble/install/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch yolov8_trt_bed_detect bed_detect.launch.py"
 
 
 # docker exec -it yolov8-trt-bed-detect-nano bash
