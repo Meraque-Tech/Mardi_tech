@@ -35,6 +35,18 @@ TRAINING_CONFIG = {
     "resume": False,
 }
 
+WEB_PROGRESS_PREFIX = "WEB_TRAINING_PROGRESS"
+
+
+def report_epoch_start(trainer):
+    """Emit a stable progress marker for the training web UI."""
+    current_epoch = int(getattr(trainer, "epoch", 0)) + 1
+    total_epochs = int(getattr(trainer, "epochs", current_epoch))
+    print(
+        f"{WEB_PROGRESS_PREFIX} epoch={current_epoch} total={total_epochs}",
+        flush=True,
+    )
+
 
 def str_to_bool(value: str) -> bool:
     normalized = value.strip().lower()
@@ -337,6 +349,7 @@ def main():
 
     set_activation(config["activation"])
     model = YOLO(config["model"])
+    model.add_callback("on_train_epoch_start", report_epoch_start)
     train_kwargs = {
         "data": str(data_path),
         "epochs": config["epochs"],

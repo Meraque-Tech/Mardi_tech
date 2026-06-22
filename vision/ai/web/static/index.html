@@ -16,6 +16,58 @@
         <div class="status-pill status-idle" id="status-pill" role="status" aria-live="polite">Idle</div>
       </header>
 
+      <section class="panel guide-section" aria-labelledby="guide-title">
+        <details id="training-guide" open>
+          <summary>
+            <span>
+              <strong id="guide-title">How to train a model</strong>
+              <small>A quick YOLOv8 workflow</small>
+            </span>
+            <span class="guide-progress" id="guide-progress" role="status" aria-live="polite">Step 1 of 5</span>
+          </summary>
+
+          <p class="guide-intro">Follow these steps from left to right. The checklist updates as you work.</p>
+          <ol class="guide-steps">
+            <li class="active" data-guide-step="1" aria-current="step">
+              <span class="guide-step-marker" aria-hidden="true">1</span>
+              <div>
+                <strong>Choose a dataset</strong>
+                <p>Upload a YOLO ZIP or folder, or select a Roboflow project.</p>
+              </div>
+            </li>
+            <li data-guide-step="2">
+              <span class="guide-step-marker" aria-hidden="true">2</span>
+              <div>
+                <strong>Prepare and check</strong>
+                <p>Confirm class names and a 100% split, then prepare the dataset and review warnings.</p>
+              </div>
+            </li>
+            <li data-guide-step="3">
+              <span class="guide-step-marker" aria-hidden="true">3</span>
+              <div>
+                <strong>Choose settings</strong>
+                <p>For a safe first run, use Nano, 100 epochs, 640 image size, and pretrained weights.</p>
+              </div>
+            </li>
+            <li data-guide-step="4">
+              <span class="guide-step-marker" aria-hidden="true">4</span>
+              <div>
+                <strong>Train and monitor</strong>
+                <p>Click Start and watch the status, metrics, and logs while YOLOv8 trains.</p>
+              </div>
+            </li>
+            <li data-guide-step="5">
+              <span class="guide-step-marker" aria-hidden="true">5</span>
+              <div>
+                <strong>Review and download</strong>
+                <p>Compare the evaluation metrics, then download <code>best.pt</code> for deployment.</p>
+              </div>
+            </li>
+          </ol>
+          <p class="guide-note"><strong>GPU memory tip:</strong> use the Low VRAM preset if training runs out of memory. Larger models and image sizes need more GPU memory.</p>
+        </details>
+      </section>
+
       <section class="workspace">
         <div class="panel dataset-panel">
           <div class="panel-header">
@@ -190,6 +242,7 @@
               <p id="resolved-run-path" hidden></p>
             </div>
           </div>
+
         </div>
       </section>
 
@@ -244,7 +297,7 @@
             <div class="grid three">
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Initial learning rate. Smaller values fine-tune more gently; larger values learn faster but can destabilize.">Initial LR</span>
-                <input id="lr0" type="number" min="0" step="0.0001" value="0.01">
+                <input id="lr0" type="number" min="0" step="0.0001" value="0.001">
               </label>
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Final learning-rate factor. Final LR is lr0 multiplied by this value.">Final LR factor</span>
@@ -316,6 +369,28 @@
             <button id="download-current-log" class="secondary compact" type="button">Download Current</button>
             <button id="download-history-log" class="secondary compact" type="button">Download Run Log</button>
           </div>
+        </div>
+        <div class="epoch-progress-card" id="epoch-progress-card">
+          <div class="epoch-progress-header">
+            <div>
+              <span>Current epoch</span>
+              <strong id="epoch-progress-label" aria-live="polite">Waiting to start</strong>
+            </div>
+            <strong class="epoch-progress-percent" id="epoch-progress-percent">0%</strong>
+          </div>
+          <div
+            class="epoch-progress-track"
+            id="epoch-progress-track"
+            role="progressbar"
+            aria-label="Training epoch progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-valuetext="Waiting to start"
+          >
+            <span id="epoch-progress-fill"></span>
+          </div>
+          <p id="epoch-progress-detail">The current epoch will appear here when training starts.</p>
         </div>
         <p id="log-status">Waiting for training status...</p>
         <pre id="logs" tabindex="0" aria-label="Training logs"></pre>

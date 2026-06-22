@@ -22,6 +22,9 @@ const state = {
   folderTooLarge: false,
   resolvedRunPath: "",
   runResolutionType: "not_found",
+  trainingStarted: false,
+  trainingCompleted: false,
+  trainingOutcome: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -140,6 +143,48 @@ function setStatusPhase(phase) {
   status.className = `status-pill status-${phase}`;
 }
 
+function hasSelectedDatasetSource() {
+  if (state.source === "upload") {
+    return Boolean($("upload-file").files[0]);
+  }
+  if (state.source === "folder") {
+    return Boolean($("folder-files").files.length) && !state.folderTooLarge;
+  }
+  return Boolean($("rf-project").value.trim() && $("rf-version").value.trim());
+}
+
+function syncTrainingGuide() {
+  const hasDataset = Boolean($("dataset-yaml").value || state.datasetYaml);
+  let currentStep = 1;
+  if (hasSelectedDatasetSource()) {
+    currentStep = 2;
+  }
+  if (hasDataset) {
+    currentStep = 3;
+  }
+  if (state.trainingStarted || state.running) {
+    currentStep = 4;
+  }
+  if (state.trainingCompleted) {
+    currentStep = 5;
+  }
+
+  document.querySelectorAll("[data-guide-step]").forEach((step) => {
+    const number = Number(step.dataset.guideStep);
+    const completed = number < currentStep;
+    const active = number === currentStep;
+    step.classList.toggle("completed", completed);
+    step.classList.toggle("active", active);
+    if (active) {
+      step.setAttribute("aria-current", "step");
+    } else {
+      step.removeAttribute("aria-current");
+    }
+    step.querySelector(".guide-step-marker").textContent = completed ? "✓" : String(number);
+  });
+  $("guide-progress").textContent = `Step ${currentStep} of 5`;
+}
+
 function syncActionStates() {
   const locked = state.running || state.isStarting || state.isStopping;
   const preparing = state.isPreparing || state.isDetecting;
@@ -175,6 +220,7 @@ function syncActionStates() {
   } else if (state.running) {
     setStatusPhase("training");
   }
+  syncTrainingGuide();
 }
 
 function setActivePreset(name) {
@@ -406,6 +452,48 @@ function updateCurrentRunDisplay(details = null) {
   } else {
     resolved.textContent = "";
   }
+}
+
+function renderEpochProgress(progress = {}, phase = "idle") {
+  const current = Math.max(0, Number(progress.current) || 0);
+  const completed = Math.max(0, Number(progress.completed) || 0);
+  const total = Math.max(0, Number(progress.total) || 0);
+  const percent = total
+    ? Math.min(100, Math.max(0, Number(progress.percent) || (current / total) * 100))
+    : 0;
+
+  let label = "Waiting to start";
+  let detail = "The current epoch will appear here when training starts.";
+  if (phase === "starting") {
+    label = total ? `Starting a ${total}-epoch run` : "Starting training";
+    detail = "Loading the model and preparing the dataloaders.";
+  } else if (phase === "training") {
+    label = current && total ? `Epoch ${current} of ${total}` : "Starting first epoch";
+    detail = completed
+      ? `${completed} ${completed === 1 ? "epoch" : "epochs"} completed.`
+      : "The first epoch is in progress.";
+  } else if (phase === "completed") {
+    label = total ? `Completed ${completed || current} of ${total}` : "Training completed";
+    detail = completed < total
+      ? "Training finished early using the configured stopping criteria."
+      : "All configured epochs completed.";
+  } else if (phase === "stopped" || phase === "failed") {
+    const verb = phase === "stopped" ? "Stopped" : "Failed";
+    label = current && total ? `${verb} during epoch ${current} of ${total}` : `${verb} before the first epoch`;
+    detail = `${completed} ${completed === 1 ? "epoch was" : "epochs were"} fully completed.`;
+  } else if (current && total) {
+    label = `Last recorded epoch ${current} of ${total}`;
+    detail = `${completed} ${completed === 1 ? "epoch was" : "epochs were"} fully completed.`;
+  }
+
+  const roundedPercent = Math.round(percent);
+  $("epoch-progress-label").textContent = label;
+  $("epoch-progress-percent").textContent = `${roundedPercent}%`;
+  $("epoch-progress-fill").style.width = `${percent}%`;
+  $("epoch-progress-detail").textContent = detail;
+  const track = $("epoch-progress-track");
+  track.setAttribute("aria-valuenow", String(roundedPercent));
+  track.setAttribute("aria-valuetext", label);
 }
 
 function refreshTargetData() {
@@ -807,6 +895,7 @@ async function loadConfig() {
   $("rf-project").value = config.roboflow.project || "";
   $("rf-version").value = config.roboflow.version || "";
   $("rf-format").value = config.roboflow.format || "yolov8";
+  syncTrainingGuide();
 }
 
 function setSource(source) {
@@ -968,8 +1057,10 @@ async function startTraining() {
     return;
   }
   state.isStarting = true;
+  state.trainingOutcome = "";
   setActivePreset(state.activePreset);
   syncActionStates();
+  renderEpochProgress({ total: numberValue("epochs") }, "starting");
   setMessage("Starting training...");
   try {
     const result = await apiJson("/api/train/start", {
@@ -1001,6 +1092,8 @@ async function startTraining() {
       }),
     });
     state.running = true;
+    state.trainingStarted = true;
+    state.trainingCompleted = false;
     state.lastDataRefresh = 0;
     setMessage(`${result.message}\nPID: ${result.pid}`);
     updateCurrentRunDisplay({ ...(result.training_run || {}), running: true });
@@ -1256,15 +1349,21 @@ async function pollStatus() {
     state.running = Boolean(status.running);
 
     if (state.running) {
+      state.trainingStarted = true;
+      state.trainingOutcome = "";
       setStatusPhase("training");
     } else if (wasRunning && state.stopRequested) {
       state.stopRequested = false;
+      state.trainingOutcome = "stopped";
       setStatusPhase("stopped");
       setMessage("Training stopped by user. The latest available checkpoint remains in the run folder.");
     } else if (wasRunning && status.returncode === 0) {
+      state.trainingCompleted = true;
+      state.trainingOutcome = "completed";
       setStatusPhase("completed");
       setMessage("Training completed. Results and model weights are ready to review.");
     } else if (wasRunning && status.returncode !== null && status.returncode !== 0) {
+      state.trainingOutcome = "failed";
       setStatusPhase("failed");
       setMessage(`Training stopped with exit code ${status.returncode}. Review the warnings and full log.`, true);
     } else if (!state.isPreparing && !state.isStarting && !state.isStopping) {
@@ -1274,6 +1373,10 @@ async function pollStatus() {
       }
     }
     syncActionStates();
+    renderEpochProgress(
+      status.epoch_progress,
+      state.running ? "training" : (state.trainingOutcome || "idle"),
+    );
 
     if (state.logMode === "recent") {
       $("logs").textContent = status.log_tail || "";
@@ -1391,6 +1494,9 @@ $("project").addEventListener("input", scheduleTargetRefresh);
 $("run-name").addEventListener("input", scheduleTargetRefresh);
 $("upload-file").addEventListener("change", updateFileSelection);
 $("folder-files").addEventListener("change", updateFileSelection);
+["rf-project", "rf-version"].forEach((id) => {
+  $(id).addEventListener("input", syncTrainingGuide);
+});
 ["split-train", "split-val", "split-test"].forEach((id) => {
   $(id).addEventListener("input", updateSplitTotal);
 });
@@ -1415,12 +1521,26 @@ presetControlIds.forEach((id) => {
 });
 window.addEventListener("resize", redrawChartsSoon);
 
+const trainingGuide = $("training-guide");
+try {
+  const savedGuideState = window.localStorage.getItem("yolov8-training-guide-open");
+  if (savedGuideState !== null) {
+    trainingGuide.open = savedGuideState === "true";
+  }
+  trainingGuide.addEventListener("toggle", () => {
+    window.localStorage.setItem("yolov8-training-guide-open", String(trainingGuide.open));
+  });
+} catch (error) {
+  // The guide still works when browser storage is unavailable.
+}
+
 loadConfig().catch((error) => setMessage(error.message, true));
 initializeTooltips();
 updateFileSelection();
 updateSplitTotal();
 setActivePreset(null);
 updateCurrentRunDisplay();
+renderEpochProgress();
 syncActionStates();
 state.pollTimer = window.setInterval(pollStatus, 2500);
 pollStatus();

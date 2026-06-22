@@ -51,6 +51,7 @@ MODEL_MAP = {
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
 PROGRESS_LINE_RE = re.compile(r":\s*\d+%\s+.*\b\d+/\d+\b")
+WEB_PROGRESS_RE = re.compile(r"^WEB_TRAINING_PROGRESS\s+epoch=(\d+)\s+total=(\d+)$")
 RUN_DIRECTORY_PREFIXES = ("Logging results to ", "Results saved to ")
 
 app = FastAPI(title="YOLOv8 Training UI")
@@ -890,6 +891,20 @@ def capture_training_run_dir(line: str):
     training_run_info["resolution_type"] = "actual"
 
 
+def capture_epoch_progress(line: str) -> bool:
+    global training_run_info
+    match = WEB_PROGRESS_RE.match(line)
+    if match is None:
+        return False
+
+    current_epoch = int(match.group(1))
+    total_epochs = int(match.group(2))
+    if training_run_info is not None and current_epoch > 0 and total_epochs > 0:
+        training_run_info["current_epoch"] = min(current_epoch, total_epochs)
+        training_run_info["total_epochs"] = total_epochs
+    return True
+
+
 def stream_training_logs(process: subprocess.Popen, log_paths: list[Path]):
     handles = [path.open("a", encoding="utf-8") for path in log_paths]
     try:
@@ -899,6 +914,8 @@ def stream_training_logs(process: subprocess.Popen, log_paths: list[Path]):
         for raw_line in process.stdout:
             line = clean_log_line(raw_line)
             capture_training_run_dir(line)
+            if capture_epoch_progress(line):
+                continue
             if not should_write_log_line(line):
                 continue
             for handle in handles:
@@ -933,6 +950,51 @@ def latest_timestamped_log() -> Optional[Path]:
     if not logs:
         return None
     return max(logs, key=lambda path: path.stat().st_mtime)
+
+
+def completed_epoch_from_results(run_info: dict) -> int:
+    run_dir_value = run_info.get("run_dir")
+    if not run_dir_value:
+        return 0
+
+    results_path = Path(run_dir_value) / "results.csv"
+    if not results_path.is_file():
+        return 0
+
+    try:
+        with results_path.open("r", encoding="utf-8", newline="") as file:
+            rows = csv.DictReader(file)
+            last_row = None
+            for last_row in rows:
+                pass
+        return int(float_value(last_row or {}, "epoch") or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def epoch_progress(run_info: dict, running: bool) -> dict:
+    total = max(0, int(run_info.get("total_epochs") or 0))
+    completed = completed_epoch_from_results(run_info)
+    current = max(0, int(run_info.get("current_epoch") or 0))
+
+    if running and current == 0 and total:
+        current = min(completed + 1, total)
+    elif not running and completed:
+        current = max(current, completed)
+
+    if total:
+        current = min(current, total)
+        completed = min(completed, total)
+        percent = round((current / total) * 100, 1)
+    else:
+        percent = 0.0
+
+    return {
+        "current": current,
+        "completed": completed,
+        "total": total,
+        "percent": percent,
+    }
 
 
 def resolve_artifact_path(request: ArtifactRequest) -> Path:
@@ -981,6 +1043,7 @@ def current_status() -> dict:
         "log_file": str(LOG_FILE),
         "history_log_file": str(training_log_file) if training_log_file else "",
         "training_run": run_info,
+        "epoch_progress": epoch_progress(run_info, running),
     }
 
 
@@ -1227,6 +1290,8 @@ def start_training(request: TrainRequest):
         "expected_run_dir": str(training_project_path / request.name),
         "run_dir": "",
         "resolution_type": "pending",
+        "current_epoch": 0,
+        "total_epochs": request.epochs,
     }
 
     ensure_dirs()
