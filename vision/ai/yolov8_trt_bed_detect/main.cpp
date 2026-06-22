@@ -60,7 +60,7 @@ SimpleTracker tracker;
 
 std::map<int, int> count_detections(const cv::Mat &frame, const std::vector<Detection> &res, bool is_track, SimpleTracker &trk) {
     if (is_track) {
-        return trk.update(frame, res);  // cumulative unique counts per class (CSRT tracker)
+        return trk.update(frame, res);  // cumulative unique counts per class (MOSSE tracker)
     }
     std::map<int, int> counts;
     for (auto &it : res) counts[static_cast<int>(it.class_id)]++;

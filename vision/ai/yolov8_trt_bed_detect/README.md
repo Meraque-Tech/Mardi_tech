@@ -15,8 +15,12 @@ YOLOv8 TensorRT bed detection ROS 2 node for Jetson Nano. Uses a USB webcam as i
 | Type | Name | Msg Type | Description |
 |------|------|----------|-------------|
 | Service | `bed_detection` | `std_srvs/Trigger` | Start detection loop |
+| Service | `bed_detection_stop` | `std_srvs/Trigger` | Stop detection loop |
+| Service | `reset_tracker` | `std_srvs/Trigger` | Clear cumulative unique counts |
+| Service | `set_tracking` | `std_srvs/SetBool` | Enable/disable unique tracking |
 | Publisher | `conf` | `std_msgs/Float32` | Confidence score of detection |
 | Publisher | `bed_detection_status` | `std_msgs/UInt8` | `1` = bed detected, `0` = not detected |
+| Publisher | `detection_active` | `std_msgs/UInt8` | `1` = inference running, `0` = stopped |
 | Publisher | `class_counts` | `std_msgs/String` | Per-class object counts e.g. `class0:2 class1:1` |
 
 ---
@@ -230,6 +234,9 @@ ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
 
 ```bash
 ros2 service call /bed_detection std_srvs/srv/Trigger {}
+
+# Stop it again
+ros2 service call /bed_detection_stop std_srvs/srv/Trigger {}
 ```
 
 Then monitor output:
@@ -262,24 +269,28 @@ http://<host-ip>:8080/          ← MJPEG live stream
 ```
 
 Saved frames are written to `./vision/ai/saved_frames/` on the host (mounted into the container at `/saved_frames`).
+Count history is sampled once per second and persisted in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
+
+The dashboard is self-contained and does not require internet access or CDN scripts.
 
 ### WebSocket
 
 | URL | Direction | Payload |
 |---|---|---|
-| `ws://<host>:8090/ws` | Server → Client | `{"type":"counts","counts":{"0":2,"1":1},"bed":1,"conf":0.812,"time":"..."}` |
+| `ws://<host>:8090/ws` | Server → Client | Live count, confidence, bed-result, tracking-mode, and running-state snapshots |
 
 ### REST Endpoints
 
 | Method | URL | Description |
 |---|---|---|
 | `GET` | `/api/counts` | Current per-class counts snapshot (JSON) |
+| `GET` | `/api/history?limit=50&offset=0` | Persistent count history, newest first |
 | `GET` | `/api/status` | Node status — detecting, bed status, confidence |
 | `POST` | `/api/start` | Start bed detection (calls `/bed_detection` ROS service) |
-| `POST` | `/api/stop` | Stop detection (UI flag) |
+| `POST` | `/api/stop` | Stop detection (calls `/bed_detection_stop` ROS service) |
 | `POST` | `/api/save` | Save current annotated frame to `/saved_frames` |
-| `POST` | `/api/set_track` | Toggle MOSSE tracker — body: `{"enabled": true}` |
-| `POST` | `/api/reset_tracker` | Reset tracker cumulative counts |
+| `POST` | `/api/set_track` | Toggle MOSSE tracker through ROS — body: `{"enabled": true}` |
+| `POST` | `/api/reset_tracker` | Reset tracker cumulative counts through ROS |
 | `GET` | `/api/images` | List all saved frames (JSON array) |
 | `DELETE` | `/api/images/{filename}` | Delete a saved frame |
 
@@ -289,11 +300,17 @@ Saved frames are written to `./vision/ai/saved_frames/` on the host (mounted int
 # start detection
 curl -X POST http://<host-ip>:8090/api/start
 
+# stop detection
+curl -X POST http://<host-ip>:8090/api/stop
+
 # save a frame
 curl -X POST http://<host-ip>:8090/api/save
 
 # get current counts
 curl http://<host-ip>:8090/api/counts
+
+# read stored count history
+curl 'http://<host-ip>:8090/api/history?limit=50&offset=0'
 
 # enable tracking
 curl -X POST http://<host-ip>:8090/api/set_track \
