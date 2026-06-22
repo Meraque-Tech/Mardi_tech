@@ -17,6 +17,34 @@ YOLOv8 TensorRT bed detection ROS 2 node for Jetson Nano. Uses a USB webcam as i
 | Service | `bed_detection` | `std_srvs/Trigger` | Start detection loop |
 | Publisher | `conf` | `std_msgs/Float32` | Confidence score of detection |
 | Publisher | `bed_detection_status` | `std_msgs/UInt8` | `1` = bed detected, `0` = not detected |
+| Publisher | `class_counts` | `std_msgs/String` | Per-class object counts e.g. `class0:2 class1:1` |
+
+---
+
+### Object Counting & Tracking
+
+Controlled by `is_track` in `trt_params.yaml`:
+
+| `is_track` | Behaviour | Output example |
+|---|---|---|
+| `false` | Detections visible in **current frame** | `class0:2 class1:1` |
+| `true` | **Cumulative unique** objects seen since start (MOSSE tracker) | `class0:5 class1:3` |
+
+Monitor counts:
+```bash
+ros2 topic echo /class_counts
+```
+
+#### Tracker comparison on Jetson Nano
+
+| Tracker | Speed | CPU load | RAM | Accuracy | Suitable for Nano |
+|---|---|---|---|---|---|
+| **MOSSE** (current) | ~1-3ms/obj | Very low | ~5MB | Decent | ✅ Best choice |
+| KCF | ~5-15ms/obj | Low | ~10MB | Good | ✅ Yes |
+| CSRT | ~25-50ms/obj | High | ~30MB | Best | ⚠️ Risky |
+| DeepSORT | ~100ms+ | Very high | ~200MB | Excellent | ❌ No |
+
+MOSSE uses an FFT-based correlation filter — designed for high-speed tracking on resource-constrained hardware. Beds are slow-moving and large, making MOSSE a perfect fit.
 
 ---
 
