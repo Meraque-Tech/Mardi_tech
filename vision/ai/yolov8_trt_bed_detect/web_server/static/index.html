@@ -76,12 +76,8 @@
     <span id="detect-badge" class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">IDLE</span>
   </div>
   <div class="flex items-center gap-2">
-    <span class="text-xs text-slate-400">Bed Status</span>
-    <span id="bed-badge" class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">—</span>
-  </div>
-  <div class="flex items-center gap-2">
-    <span class="text-xs text-slate-400">Confidence</span>
-    <span id="conf-val" class="text-xs font-mono text-indigo-400">—</span>
+    <span class="text-xs text-slate-400">Topic</span>
+    <span class="text-xs font-mono text-indigo-400">/class_counts</span>
   </div>
   <div class="flex items-center gap-2 ml-auto">
     <span class="text-xs text-slate-400">Last update</span>
@@ -273,16 +269,6 @@ function connectWS() {
     if (d.type === 'counts') {
       renderCounts(d.counts);
       updateChart(d.counts);
-      // bed badge
-      const bedBadge = document.getElementById('bed-badge');
-      if (d.bed === 1) {
-        bedBadge.textContent = 'DETECTED';
-        bedBadge.className = 'text-xs font-semibold px-2 py-0.5 rounded-full bg-green-900 text-green-300';
-      } else {
-        bedBadge.textContent = 'NOT FOUND';
-        bedBadge.className = 'text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-700 text-slate-400';
-      }
-      document.getElementById('conf-val').textContent = d.conf ? d.conf.toFixed(4) : '—';
       if (d.time) document.getElementById('last-update').textContent = d.time.split('T')[1].slice(0,8);
     }
   };
