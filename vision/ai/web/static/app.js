@@ -25,6 +25,9 @@ const state = {
   trainingStarted: false,
   trainingCompleted: false,
   trainingOutcome: "",
+  datasetNameEdited: false,
+  resumeAvailable: false,
+  resumeCheckpoint: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -51,9 +54,9 @@ const CONTROL_DEFAULTS = {
   "run-name": "train",
   project: "runs/detect",
   workers: "2",
-  optimizer: "auto",
-  seed: 0,
-  lr0: 0.01,
+  optimizer: "Adam",
+  seed: 42,
+  lr0: 0.001,
   lrf: 0.01,
   "weight-decay": 0.0005,
   "warmup-epochs": 3.0,
@@ -149,7 +152,7 @@ function hasSelectedDatasetSource() {
 }
 
 function syncTrainingGuide() {
-  const hasDataset = Boolean($("dataset-yaml").value || state.datasetYaml);
+  const hasDataset = Boolean(state.datasetYaml);
   let currentStep = 1;
   if (hasSelectedDatasetSource()) {
     currentStep = 2;
@@ -183,7 +186,8 @@ function syncTrainingGuide() {
 function syncActionStates() {
   const locked = state.running || state.isStarting || state.isStopping;
   const preparing = state.isPreparing || state.isDetecting;
-  const hasDataset = Boolean($("dataset-yaml").value || state.datasetYaml);
+  const hasDataset = Boolean(state.datasetYaml);
+  const canResume = state.resumeAvailable && $("resume").checked;
 
   const invalidFolderSelection = state.source === "folder" && state.folderTooLarge;
   $("prepare-dataset").disabled = locked || preparing || invalidFolderSelection;
@@ -192,7 +196,7 @@ function syncActionStates() {
   $("detect-classes").disabled = locked || preparing;
   $("detect-classes").textContent = state.isDetecting ? "Detecting..." : "Auto Fetch";
   $("detect-classes").setAttribute("aria-busy", String(state.isDetecting));
-  $("start-training").disabled = locked || preparing || !hasDataset;
+  $("start-training").disabled = locked || preparing || (!hasDataset && !canResume);
   $("start-training").textContent = state.isStarting ? "Starting..." : "Start";
   $("start-training").setAttribute("aria-busy", String(state.isStarting));
   $("stop-training").disabled = !state.running || state.isStopping;
@@ -202,6 +206,7 @@ function syncActionStates() {
   document.querySelectorAll(".training-panel input, .training-panel select, .advanced-panel input, .advanced-panel select").forEach((control) => {
     control.disabled = locked;
   });
+  $("resume").disabled = locked || !state.resumeAvailable;
   document.querySelectorAll("[data-preset], #reset-advanced").forEach((button) => {
     button.disabled = locked;
   });
@@ -216,6 +221,73 @@ function syncActionStates() {
     setStatusPhase("training");
   }
   syncTrainingGuide();
+}
+
+function usesCustomSplit() {
+  if (state.source === "upload") {
+    return $("upload-force-split").checked;
+  }
+  if (state.source === "folder") {
+    return $("folder-force-split").checked;
+  }
+  return false;
+}
+
+function cleanDatasetName(value) {
+  return String(value || "")
+    .replace(/\.zip$/i, "")
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function suggestedDatasetName() {
+  if (state.source === "upload") {
+    return cleanDatasetName($("upload-file").files[0]?.name);
+  }
+  if (state.source === "folder") {
+    const file = $("folder-files").files[0];
+    const path = file?.webkitRelativePath || file?.name || "";
+    return cleanDatasetName(path.split("/")[0]);
+  }
+  return cleanDatasetName($("rf-project").value);
+}
+
+function updateDatasetNameSuggestion() {
+  if (state.datasetNameEdited) {
+    return;
+  }
+  $("dataset-name").value = suggestedDatasetName() || "dataset";
+}
+
+function syncDatasetSourceControls() {
+  const isFolder = state.source === "folder";
+  const splitEnabled = usesCustomSplit();
+  $("detect-classes").hidden = !isFolder;
+  $("split-controls").hidden = !splitEnabled;
+
+  const classNotes = {
+    upload: "For ZIP uploads, leave this empty to read class names from data.yaml.",
+    folder: "Use Auto Fetch to read class names from data.yaml, or enter one class per line.",
+    roboflow: "Leave this empty to use the class names supplied by the Roboflow dataset version.",
+  };
+  $("classes-note").textContent = classNotes[state.source];
+  updateDatasetNameSuggestion();
+  if (splitEnabled) {
+    updateSplitTotal();
+  }
+}
+
+function setResumeAvailability(available, checkpoint = "") {
+  state.resumeAvailable = Boolean(available);
+  state.resumeCheckpoint = state.resumeAvailable ? checkpoint : "";
+  if (!state.resumeAvailable) {
+    $("resume").checked = false;
+  }
+  $("resume-status").textContent = state.resumeAvailable
+    ? `Available checkpoint: ${state.resumeCheckpoint}`
+    : "No resumable checkpoint found for this run.";
+  syncActionStates();
 }
 
 function setActivePreset(name) {
@@ -506,6 +578,7 @@ function scheduleTargetRefresh() {
   state.targetRevision += 1;
   state.resolvedRunPath = "";
   state.runResolutionType = "not_found";
+  setResumeAvailability(false);
   updateCurrentRunDisplay();
   state.targetTimer = window.setTimeout(refreshTargetData, 400);
 }
@@ -543,6 +616,7 @@ function updateFileSelection() {
     state.folderTooLarge = false;
     $("folder-selection").classList.remove("error");
     $("folder-selection").textContent = "No folder selected. Folder upload supports up to 1,000 files; use ZIP for larger datasets.";
+    updateDatasetNameSuggestion();
     syncActionStates();
     return;
   }
@@ -555,6 +629,7 @@ function updateFileSelection() {
     ? " Too many files for folder upload; use Upload ZIP."
     : " Folder upload supports up to 1,000 files.";
   $("folder-selection").textContent = `${folderName}: ${folderFiles.length} files (${formatBytes(totalSize)}).${limitNote}`;
+  updateDatasetNameSuggestion();
   syncActionStates();
 }
 
@@ -889,7 +964,7 @@ async function loadConfig() {
   $("rf-workspace").value = config.roboflow.workspace || "";
   $("rf-project").value = config.roboflow.project || "";
   $("rf-version").value = config.roboflow.version || "";
-  $("rf-format").value = config.roboflow.format || "yolov8";
+  updateDatasetNameSuggestion();
   syncTrainingGuide();
 }
 
@@ -906,6 +981,7 @@ function setSource(source) {
     view.classList.toggle("active", active);
     view.hidden = !active;
   });
+  syncDatasetSourceControls();
   syncActionStates();
 }
 
@@ -970,9 +1046,7 @@ async function prepareRoboflowDataset() {
       workspace: $("rf-workspace").value,
       project: $("rf-project").value,
       version: $("rf-version").value,
-      format: $("rf-format").value || "yolov8",
       classes: classNames(),
-      split: splitConfig(),
       name: $("dataset-name").value,
     }),
   });
@@ -986,7 +1060,9 @@ async function prepareDataset() {
   syncActionStates();
   setMessage("Preparing dataset...");
   try {
-    validateSplitTotal();
+    if (usesCustomSplit()) {
+      validateSplitTotal();
+    }
 
     let result;
     if (state.source === "upload") {
@@ -998,7 +1074,6 @@ async function prepareDataset() {
     }
 
     state.datasetYaml = result.dataset_yaml;
-    $("dataset-yaml").value = result.dataset_yaml;
     setClassNames(result.classes);
     renderDatasetSummary(result.summary);
     setMessage(result.message);
@@ -1042,13 +1117,18 @@ async function detectClasses() {
 }
 
 async function startTraining() {
-  const datasetYaml = $("dataset-yaml").value || state.datasetYaml;
-  if (!datasetYaml) {
+  const datasetYaml = state.datasetYaml;
+  const resume = $("resume").checked;
+  if (!datasetYaml && !resume) {
     setMessage("Prepare a dataset first.", true);
     return;
   }
 
   if (state.isStarting || state.running) {
+    return;
+  }
+  if (resume && !state.resumeAvailable) {
+    setMessage("No last.pt checkpoint is available for the selected project and run name.", true);
     return;
   }
   state.isStarting = true;
@@ -1061,7 +1141,7 @@ async function startTraining() {
     const result = await apiJson("/api/train/start", {
       method: "POST",
       body: JSON.stringify({
-        dataset_yaml: datasetYaml,
+        dataset_yaml: resume ? null : datasetYaml,
         model_size: $("model-size").value,
         epochs: numberValue("epochs"),
         imgsz: numberValue("imgsz"),
@@ -1082,7 +1162,7 @@ async function startTraining() {
         seed: numberValue("seed"),
         project: $("project").value,
         name: $("run-name").value,
-        resume: $("resume").checked,
+        resume,
       }),
     });
     state.running = true;
@@ -1137,6 +1217,7 @@ async function refreshWeightsStatus(target = weightTarget(), revision = state.ta
     });
     $("download-best").disabled = !status.best.available || state.downloads.has("best");
     $("download-last").disabled = !status.last.available || state.downloads.has("last");
+    setResumeAvailability(status.last.available, status.last.path);
 
     const available = ["best", "last"].filter((weight) => status[weight].available);
     if (available.length) {
@@ -1152,6 +1233,7 @@ async function refreshWeightsStatus(target = weightTarget(), revision = state.ta
     }
     $("download-best").disabled = true;
     $("download-last").disabled = true;
+    setResumeAvailability(false);
     $("weights-status").textContent = error.message;
   }
 }
@@ -1482,14 +1564,23 @@ $("download-last").addEventListener("click", () => downloadWeight("last"));
 $("download-results-csv").addEventListener("click", () => downloadArtifact("results_csv", "results.csv"));
 $("download-accuracy-graph").addEventListener("click", () => downloadArtifact("accuracy_graph", "accuracy_by_epoch.png"));
 $("download-loss-graph").addEventListener("click", () => downloadArtifact("loss_graph", "loss_by_epoch.png"));
-$("download-current-log").addEventListener("click", () => downloadLog("/api/train/logs/download"));
-$("download-history-log").addEventListener("click", () => downloadLog("/api/train/logs/history/download"));
+$("download-run-log").addEventListener("click", () => downloadLog("/api/train/logs/download"));
 $("project").addEventListener("input", scheduleTargetRefresh);
 $("run-name").addEventListener("input", scheduleTargetRefresh);
 $("upload-file").addEventListener("change", updateFileSelection);
 $("folder-files").addEventListener("change", updateFileSelection);
+["upload-force-split", "folder-force-split"].forEach((id) => {
+  $(id).addEventListener("change", syncDatasetSourceControls);
+});
+$("dataset-name").addEventListener("input", () => {
+  state.datasetNameEdited = true;
+});
+$("resume").addEventListener("change", syncActionStates);
 ["rf-project", "rf-version"].forEach((id) => {
-  $(id).addEventListener("input", syncTrainingGuide);
+  $(id).addEventListener("input", () => {
+    updateDatasetNameSuggestion();
+    syncTrainingGuide();
+  });
 });
 ["split-train", "split-val", "split-test"].forEach((id) => {
   $(id).addEventListener("input", updateSplitTotal);
@@ -1532,6 +1623,7 @@ loadConfig().catch((error) => setMessage(error.message, true));
 initializeTooltips();
 updateFileSelection();
 updateSplitTotal();
+syncDatasetSourceControls();
 setActivePreset(null);
 updateCurrentRunDisplay();
 renderEpochProgress();

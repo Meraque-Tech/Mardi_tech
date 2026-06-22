@@ -67,6 +67,16 @@ p {
   color: var(--muted);
 }
 
+.source-note,
+.field-note {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+#resume-status {
+  overflow-wrap: anywhere;
+}
+
 .status-pill {
   min-width: 112px;
   padding: 8px 12px;
@@ -487,6 +497,10 @@ label {
 }
 
 .classes-field {
+  margin-top: 12px;
+}
+
+.dataset-name-field {
   margin-top: 12px;
 }
 

@@ -15,11 +15,11 @@ TRAINING_CONFIG = {
     "epochs": 100,
     "imgsz": 640,
     "batch": 16,
-    "patience": 50,
+    "patience": 20,
     "save_period": -1,
     "device": None,
-    "workers": 8,
-    "optimizer": "auto",
+    "workers": 2,
+    "optimizer": "Adam",
     "lr0": 0.001,
     "lrf": 0.01,
     "weight_decay": 0.0005,
@@ -29,7 +29,7 @@ TRAINING_CONFIG = {
     "pretrained": True,
     "activation": "silu",
     "exist_ok": False,
-    "seed": 0,
+    "seed": 42,
     "project": "runs/detect",
     "name": "train",
     "resume": False,
@@ -337,7 +337,7 @@ def main():
     config = get_training_config(args)
     data_path = Path(config["data"]).expanduser()
 
-    if not data_path.is_file():
+    if not config["resume"] and not data_path.is_file():
         raise FileNotFoundError(f"Dataset YAML not found: {data_path}")
 
     try:
@@ -351,7 +351,6 @@ def main():
     model = YOLO(config["model"])
     model.add_callback("on_train_epoch_start", report_epoch_start)
     train_kwargs = {
-        "data": str(data_path),
         "epochs": config["epochs"],
         "imgsz": config["imgsz"],
         "batch": config["batch"],
@@ -371,6 +370,9 @@ def main():
         "name": config["name"],
         "resume": config["resume"],
     }
+
+    if not config["resume"]:
+        train_kwargs["data"] = str(data_path)
 
     if config["freeze"] is not None:
         train_kwargs["freeze"] = config["freeze"]

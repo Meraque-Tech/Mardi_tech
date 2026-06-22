@@ -31,7 +31,6 @@ ROBOFLOW_API_KEY=
 ROBOFLOW_WORKSPACE=
 ROBOFLOW_PROJECT=
 ROBOFLOW_VERSION=
-ROBOFLOW_FORMAT=yolov8
 
 WEB_DATA_ROOT=
 TRAINING_PYTHON=python3
@@ -165,8 +164,8 @@ upload limits. If that happens, ZIP the dataset and use `Upload ZIP`.
 ### Roboflow
 
 Fill in Roboflow credentials in `.env`, or enter workspace/project/version in
-the UI. The backend downloads the dataset using Roboflow format `yolov8` by
-default.
+the UI. The backend always downloads the dataset in YOLOv8 format and uses the
+split configured in that Roboflow dataset version.
 
 ## Class IDs
 
@@ -245,7 +244,7 @@ patience     early stopping patience
 save period  extra checkpoint interval; -1 keeps standard best.pt/last.pt
 project      output directory, default runs/detect
 run name     output run name, default train
-resume       pass --resume to the training script
+resume       continue from last.pt in the resolved project/run folder
 ```
 
 Advanced controls:
@@ -266,6 +265,10 @@ exist_ok       reuse the same output folder instead of train-2/train-3
 
 Training launched from the web UI always starts from the pretrained weights
 for the selected YOLOv8 model size.
+
+The defaults shown when the page loads are also the backend defaults: Nano,
+100 epochs, image size 640, batch 16, patience 20, 2 workers, Adam, seed 42,
+and initial learning rate 0.001.
 
 The UI also includes presets:
 
@@ -298,7 +301,7 @@ Full      full current log
 Warnings  filtered warnings/errors/tracebacks
 ```
 
-It can also download the current log or the latest timestamped run log.
+It can also download the timestamped log for the current or most recent run.
 
 ## Metrics
 
@@ -344,7 +347,6 @@ last.pt
 results.csv
 accuracy_by_epoch.png
 loss_by_epoch.png
-current.log
 train-YYYYMMDD-HHMMSS.log
 ```
 
@@ -356,11 +358,13 @@ from the most recent checkpoint.
 To resume from the selected project/run:
 
 1. Keep `Project` and `Run name` pointing at the previous run.
-2. Enable `Resume from checkpoint`.
+2. Enable `Resume latest checkpoint`.
 3. Click `Start`.
 
-The UI sends `--resume` to the training script. The checkpoint used by
-Ultralytics depends on the existing run folder and resume behavior.
+The UI enables Resume only when the resolved run contains `weights/last.pt`.
+The backend validates that checkpoint again, loads it as the model, and then
+passes `--resume` to restore its dataset, epoch, optimizer, and scheduler
+state. Preparing the dataset again is not required for a resume.
 
 ## Stop Training
 

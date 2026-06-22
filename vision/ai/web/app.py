@@ -65,20 +65,8 @@ training_run_info: Optional[dict] = None
 
 class SplitConfig(BaseModel):
     train: int = Field(default=70, ge=1, le=100)
-    val: int = Field(default=20, ge=0, le=100)
-    test: int = Field(default=10, ge=0, le=100)
-
-
-class LocalDatasetRequest(BaseModel):
-    path: str
-    classes: list[str] = Field(default_factory=list)
-    split: SplitConfig = Field(default_factory=SplitConfig)
-    name: str = "local_dataset"
-    force_split: bool = False
-
-
-class ClassDetectRequest(BaseModel):
-    path: str
+    val: int = Field(default=15, ge=0, le=100)
+    test: int = Field(default=15, ge=0, le=100)
 
 
 class RoboflowRequest(BaseModel):
@@ -86,25 +74,22 @@ class RoboflowRequest(BaseModel):
     workspace: Optional[str] = None
     project: Optional[str] = None
     version: Optional[str] = None
-    format: Optional[str] = None
     classes: list[str] = Field(default_factory=list)
-    split: SplitConfig = Field(default_factory=SplitConfig)
-    name: str = "roboflow_dataset"
+    name: str = "dataset"
 
 
 class TrainRequest(BaseModel):
-    dataset_yaml: str
+    dataset_yaml: Optional[str] = None
     model_size: str = "nano"
-    custom_model: Optional[str] = None
     epochs: int = Field(default=100, ge=1)
     imgsz: int = Field(default=640, ge=32)
     batch: int = 16
-    patience: int = Field(default=50, ge=0)
+    patience: int = Field(default=20, ge=0)
     save_period: int = -1
     device: Optional[str] = None
     workers: int = Field(default=2, ge=0)
-    optimizer: str = "auto"
-    lr0: float = Field(default=0.01, gt=0)
+    optimizer: str = "Adam"
+    lr0: float = Field(default=0.001, gt=0)
     lrf: float = Field(default=0.01, gt=0)
     weight_decay: float = Field(default=0.0005, ge=0)
     cos_lr: bool = False
@@ -112,7 +97,7 @@ class TrainRequest(BaseModel):
     freeze: Optional[int] = Field(default=None, ge=0)
     activation: str = "silu"
     exist_ok: bool = False
-    seed: int = 0
+    seed: int = 42
     project: str = "runs/detect"
     name: str = "train"
     resume: bool = False
@@ -1065,36 +1050,9 @@ def config():
             "workspace": os.getenv("ROBOFLOW_WORKSPACE", ""),
             "project": os.getenv("ROBOFLOW_PROJECT", ""),
             "version": os.getenv("ROBOFLOW_VERSION", ""),
-            "format": os.getenv("ROBOFLOW_FORMAT", "yolov8"),
         },
         "default_device": os.getenv("TRAINING_DEVICE", ""),
     }
-
-
-@app.post("/api/dataset/local")
-def local_dataset(request: LocalDatasetRequest):
-    source = Path(request.path).expanduser()
-    if not source.exists():
-        raise HTTPException(status_code=400, detail=f"Path does not exist: {source}")
-
-    yaml_path = prepare_dataset(
-        source=source,
-        name=request.name,
-        classes=request.classes,
-        split=request.split,
-        force_split=request.force_split,
-    )
-    return dataset_response(yaml_path, "Local dataset is ready.")
-
-
-@app.post("/api/dataset/classes")
-def dataset_classes(request: ClassDetectRequest):
-    source = Path(request.path).expanduser()
-    if not source.exists():
-        raise HTTPException(status_code=400, detail=f"Path does not exist: {source}")
-
-    classes = detect_dataset_classes(source)
-    return {"classes": classes, "message": f"Detected {len(classes)} class names."}
 
 
 @app.post("/api/dataset/upload")
@@ -1102,9 +1060,9 @@ async def upload_dataset(
     file: UploadFile = File(...),
     classes: str = Form(...),
     train: int = Form(70),
-    val: int = Form(20),
-    test: int = Form(10),
-    name: str = Form("uploaded_dataset"),
+    val: int = Form(15),
+    test: int = Form(15),
+    name: str = Form("dataset"),
     force_split: bool = Form(True),
 ):
     if not file.filename or not file.filename.lower().endswith(".zip"):
@@ -1151,9 +1109,9 @@ async def upload_folder_dataset(
     files: list[UploadFile] = File(...),
     classes: str = Form(...),
     train: int = Form(70),
-    val: int = Form(20),
-    test: int = Form(10),
-    name: str = Form("uploaded_folder_dataset"),
+    val: int = Form(15),
+    test: int = Form(15),
+    name: str = Form("dataset"),
     force_split: bool = Form(False),
 ):
     if not files:
@@ -1205,7 +1163,7 @@ def roboflow_dataset(request: RoboflowRequest):
     workspace = request.workspace or os.getenv("ROBOFLOW_WORKSPACE")
     project_name = request.project or os.getenv("ROBOFLOW_PROJECT")
     version = request.version or os.getenv("ROBOFLOW_VERSION")
-    dataset_format = request.format or os.getenv("ROBOFLOW_FORMAT", "yolov8")
+    dataset_format = "yolov8"
 
     missing = [
         name for name, value in {
@@ -1227,7 +1185,7 @@ def roboflow_dataset(request: RoboflowRequest):
             detail="The roboflow package is not installed. Run: pip install roboflow",
         ) from exc
 
-    clean = clean_name(request.name, "roboflow_dataset")
+    clean = clean_name(request.name, "dataset")
     download_dir = DATA_ROOT / "roboflow" / clean
     if download_dir.exists():
         shutil.rmtree(download_dir)
@@ -1259,7 +1217,7 @@ def roboflow_dataset(request: RoboflowRequest):
         source=dataset_root,
         name=clean,
         classes=request.classes,
-        split=request.split,
+        split=SplitConfig(),
         force_split=False,
     )
     return dataset_response(yaml_path, "Roboflow dataset is ready.")
@@ -1273,22 +1231,41 @@ def start_training(request: TrainRequest):
     if status["running"]:
         raise HTTPException(status_code=409, detail="Training is already running.")
 
-    dataset_yaml = Path(request.dataset_yaml).expanduser()
-    if not dataset_yaml.is_file():
-        raise HTTPException(status_code=400, detail=f"Dataset YAML not found: {dataset_yaml}")
+    dataset_yaml = Path(request.dataset_yaml).expanduser() if request.dataset_yaml else None
+    if not request.resume and (dataset_yaml is None or not dataset_yaml.is_file()):
+        raise HTTPException(status_code=400, detail="Prepare a valid dataset before starting a new training run.")
 
-    model = request.custom_model or MODEL_MAP.get(request.model_size)
+    model = MODEL_MAP.get(request.model_size)
     if not model:
         raise HTTPException(status_code=400, detail=f"Unknown model size: {request.model_size}")
     training_project_path = normalize_training_project_path(request.project)
+    resume_checkpoint = None
+    resume_run_dir = None
+    if request.resume:
+        try:
+            resume_run_dir, _ = resolve_run_dir_details(request.project, request.name)
+        except HTTPException as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot resume: no existing run was found for the selected project and run name.",
+            ) from exc
+        resume_checkpoint = resume_run_dir / "weights" / "last.pt"
+        ensure_runs_path(resume_checkpoint)
+        if not resume_checkpoint.is_file():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot resume: last.pt was not found in {resume_run_dir}.",
+            )
+        model = str(resume_checkpoint)
+
     training_run_info = {
         "requested_project": request.project,
         "requested_name": request.name,
         "project": str(training_project_path),
         "name": request.name,
         "expected_run_dir": str(training_project_path / request.name),
-        "run_dir": "",
-        "resolution_type": "pending",
+        "run_dir": str(resume_run_dir) if resume_run_dir else "",
+        "resolution_type": "actual" if resume_run_dir else "pending",
         "current_epoch": 0,
         "total_epochs": request.epochs,
     }
@@ -1301,7 +1278,6 @@ def start_training(request: TrainRequest):
     cmd = [
         TRAINING_PYTHON,
         str(TRAIN_SCRIPT),
-        "--data", str(dataset_yaml),
         "--model", model,
         "--epochs", str(request.epochs),
         "--imgsz", str(request.imgsz),
@@ -1320,6 +1296,9 @@ def start_training(request: TrainRequest):
         "--project", str(training_project_path),
         "--name", request.name,
     ]
+
+    if dataset_yaml is not None and not request.resume:
+        cmd.extend(["--data", str(dataset_yaml)])
 
     device = request.device or os.getenv("TRAINING_DEVICE")
     if device:
@@ -1366,6 +1345,7 @@ def start_training(request: TrainRequest):
         "log_file": str(LOG_FILE),
         "history_log_file": str(training_log_file),
         "training_run": training_run_info,
+        "resume_checkpoint": str(resume_checkpoint) if resume_checkpoint else "",
     }
 
 
@@ -1404,17 +1384,12 @@ def train_logs_errors():
 
 
 @app.get("/api/train/logs/download")
-def download_current_log():
-    if not LOG_FILE.is_file():
-        raise HTTPException(status_code=404, detail="No current log file found.")
-    return FileResponse(LOG_FILE, media_type="text/plain", filename=LOG_FILE.name)
-
-
-@app.get("/api/train/logs/history/download")
-def download_history_log():
+def download_run_log():
     path = training_log_file if training_log_file and training_log_file.is_file() else latest_timestamped_log()
+    if path is None and LOG_FILE.is_file():
+        path = LOG_FILE
     if not path:
-        raise HTTPException(status_code=404, detail="No timestamped training log found.")
+        raise HTTPException(status_code=404, detail="No training log found.")
     return FileResponse(path, media_type="text/plain", filename=path.name)
 
 

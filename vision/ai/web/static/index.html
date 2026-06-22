@@ -119,47 +119,41 @@
                 Version
                 <input id="rf-version" type="number" min="1">
               </label>
+            </div>
+            <p class="source-note">Roboflow provides the YOLOv8 format and train/validation/test split for this dataset version.</p>
+          </div>
+
+          <label class="dataset-name-field">
+            Dataset name
+            <input id="dataset-name" type="text" value="dataset">
+          </label>
+
+          <div id="split-controls">
+            <div class="grid three">
               <label>
-                Format
-                <input id="rf-format" type="text" value="yolov8">
+                Train %
+                <input id="split-train" type="number" min="1" max="100" value="70">
+              </label>
+              <label>
+                Val %
+                <input id="split-val" type="number" min="0" max="100" value="15">
+              </label>
+              <label>
+                Test %
+                <input id="split-test" type="number" min="0" max="100" value="15">
               </label>
             </div>
-          </div>
 
-          <div class="grid two">
-            <label>
-              Dataset name
-              <input id="dataset-name" type="text" value="pineapple_dataset">
-            </label>
-            <label>
-              Dataset YAML
-              <input id="dataset-yaml" type="text" readonly>
-            </label>
+            <div class="split-total valid" id="split-total" role="status">Total: 100%</div>
           </div>
-
-          <div class="grid three">
-            <label>
-              Train %
-              <input id="split-train" type="number" min="1" max="100" value="70">
-            </label>
-            <label>
-              Val %
-              <input id="split-val" type="number" min="0" max="100" value="15">
-            </label>
-            <label>
-              Test %
-              <input id="split-test" type="number" min="0" max="100" value="15">
-            </label>
-          </div>
-
-          <div class="split-total valid" id="split-total" role="status">Total: 100%</div>
 
           <div class="classes-field">
             <div class="field-header">
               <label for="classes">Class IDs</label>
-              <button id="detect-classes" class="secondary compact" type="button">Auto Fetch</button>
+              <button id="detect-classes" class="secondary compact" type="button" hidden>Auto Fetch</button>
             </div>
-            <textarea id="classes" rows="5" placeholder="flat&#10;missing&#10;ok"></textarea>
+            <textarea id="classes" rows="5" placeholder="class_one&#10;class_two"></textarea>
+            <p class="field-note" id="classes-note">For ZIP uploads, leave this empty to read class names from data.yaml.</p>
           </div>
 
           <div class="dataset-summary" id="dataset-summary"></div>
@@ -227,10 +221,11 @@
               <input id="project" type="text" value="runs/detect">
             </label>
             <label class="checkbox-row inline-check">
-              <input id="resume" type="checkbox">
-              <span class="tooltip-label" tabindex="0" data-tooltip="Continue training from the selected checkpoint instead of starting a fresh run.">Resume from checkpoint</span>
+              <input id="resume" type="checkbox" disabled>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Continue from last.pt in the resolved project/run folder. The original dataset, epoch, optimizer, and scheduler state are restored.">Resume latest checkpoint</span>
             </label>
           </div>
+          <p class="field-note" id="resume-status">No resumable checkpoint found for this run.</p>
 
           <div class="current-run-card" id="current-run-card">
             <div>
@@ -360,8 +355,7 @@
             <button id="log-mode-full" class="secondary compact" type="button" aria-pressed="false" data-log-mode="full">Full</button>
             <button id="log-mode-errors" class="secondary compact" type="button" aria-pressed="false" data-log-mode="errors">Warnings</button>
             <button id="refresh-logs" class="secondary compact" type="button">Refresh</button>
-            <button id="download-current-log" class="secondary compact" type="button">Download Current</button>
-            <button id="download-history-log" class="secondary compact" type="button">Download Run Log</button>
+            <button id="download-run-log" class="secondary compact" type="button">Download Log</button>
           </div>
         </div>
         <div class="epoch-progress-card" id="epoch-progress-card">

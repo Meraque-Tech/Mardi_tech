@@ -11,7 +11,7 @@ vision/ai/train/train_yolov8.py
 
 The UI should support:
 
-- Local server dataset path input
+- Dataset folder upload
 - Dataset ZIP upload
 - Roboflow dataset download
 - Train/validation/test split configuration
@@ -32,7 +32,7 @@ vision/ai/web/
   .env.example
   .gitignore
   Dockerfile.cuda
-  docker-compose.cuda.yml
+  docker-compose.train_web.yml
   static/
     index.html
     styles.css
@@ -44,7 +44,7 @@ vision/ai/web/
 The FastAPI backend will:
 
 1. Serve the web UI.
-2. Validate a local dataset path on the server.
+2. Accept a dataset folder uploaded through the browser.
 3. Accept and extract uploaded YOLO dataset ZIP files.
 4. Download Roboflow datasets using credentials from `.env`.
 5. Generate a YOLO dataset YAML file.
@@ -56,10 +56,10 @@ The FastAPI backend will:
 
 ## Dataset Sources
 
-### Local Server Path
+### Upload Folder
 
-The user enters a path that exists on the same machine or inside the same
-container running FastAPI.
+The user selects a dataset folder in the browser and uploads its files to the
+FastAPI service.
 
 Supported layouts:
 
@@ -105,7 +105,6 @@ ROBOFLOW_API_KEY=
 ROBOFLOW_WORKSPACE=
 ROBOFLOW_PROJECT=
 ROBOFLOW_VERSION=
-ROBOFLOW_FORMAT=yolov8
 ```
 
 The backend downloads the selected dataset version using the Roboflow Python
@@ -165,7 +164,7 @@ host supports NVIDIA Container Toolkit.
 ## Implementation Steps
 
 1. Create FastAPI backend in `app.py`.
-2. Add dataset preparation helpers for local path and ZIP upload.
+2. Add dataset preparation helpers for folder and ZIP uploads.
 3. Add Roboflow download endpoint using `.env` credentials.
 4. Add training subprocess management.
 5. Add status, logs, stop, and resume endpoints.
