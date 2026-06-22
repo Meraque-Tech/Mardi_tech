@@ -303,6 +303,14 @@ Quick Test
 High Accuracy
 ```
 
+## GPU Monitor
+
+The GPU Monitor beneath the Training panel reports NVIDIA GPU utilization,
+VRAM usage, temperature, and power through `nvidia-smi`. It refreshes with the
+existing training-status poll and supports multiple GPUs. When NVIDIA telemetry
+is unavailable, the panel shows a diagnostic message without blocking dataset
+preparation or training.
+
 ## Logs
 
 Current log:

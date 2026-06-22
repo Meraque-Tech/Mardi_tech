@@ -7,6 +7,7 @@ const state = {
   pollTimer: null,
   metricsHistory: [],
   metricsAvailable: false,
+  gpuSignature: "",
   logMode: "recent",
   activePreset: null,
   isPreparing: false,
@@ -750,6 +751,89 @@ function formatBytes(bytes) {
     unit += 1;
   }
   return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function gpuSeverity(value, warning = 80, critical = 95) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "";
+  }
+  if (number >= critical) {
+    return "critical";
+  }
+  return number >= warning ? "warning" : "";
+}
+
+function renderGpuStatus(status) {
+  const signature = JSON.stringify(status || {});
+  if (signature === state.gpuSignature) {
+    return;
+  }
+  state.gpuSignature = signature;
+  const statusElement = $("gpu-status");
+  const cards = $("gpu-cards");
+  if (!status || !status.available || !Array.isArray(status.gpus) || !status.gpus.length) {
+    statusElement.textContent = "Unavailable";
+    statusElement.className = "gpu-status unavailable";
+    cards.innerHTML = `<p class="gpu-empty">${escapeHtml(status?.message || "GPU information unavailable.")}</p>`;
+    return;
+  }
+
+  statusElement.textContent = "● Live";
+  statusElement.className = "gpu-status live";
+  const optionalNumber = (value) => (
+    value === null || value === undefined || value === "" ? Number.NaN : Number(value)
+  );
+  const meter = (label, value, display) => {
+    const numeric = Number(value);
+    const available = Number.isFinite(numeric);
+    const percent = available ? Math.min(100, Math.max(0, numeric)) : 0;
+    const severity = gpuSeverity(numeric);
+    const aria = available
+      ? `aria-valuenow="${Math.round(percent)}" aria-valuetext="${escapeHtml(display)}"`
+      : `aria-valuetext="Not available"`;
+    return `
+      <div class="gpu-metric">
+        <div class="gpu-metric-header"><span>${escapeHtml(label)}</span><strong>${escapeHtml(display)}</strong></div>
+        <div class="gpu-meter ${severity}" role="progressbar" aria-valuemin="0" aria-valuemax="100" ${aria}>
+          <span style="width: ${percent}%"></span>
+        </div>
+      </div>`;
+  };
+
+  cards.innerHTML = status.gpus.map((gpu) => {
+    const utilization = optionalNumber(gpu.utilization_percent);
+    const memoryPercent = optionalNumber(gpu.memory_percent);
+    const memoryUsed = optionalNumber(gpu.memory_used_mb);
+    const memoryTotal = optionalNumber(gpu.memory_total_mb);
+    const temperature = optionalNumber(gpu.temperature_c);
+    const powerDraw = optionalNumber(gpu.power_draw_w);
+    const powerLimit = optionalNumber(gpu.power_limit_w);
+    const utilizationText = Number.isFinite(utilization) ? `${utilization.toFixed(1)}%` : "N/A";
+    const memoryText = Number.isFinite(memoryUsed) && Number.isFinite(memoryTotal)
+      ? (memoryUsed < 1024
+        ? `${memoryUsed.toFixed(0)} MB / ${(memoryTotal / 1024).toFixed(1)} GB`
+        : `${(memoryUsed / 1024).toFixed(1)} / ${(memoryTotal / 1024).toFixed(1)} GB`)
+      : "N/A";
+    const temperatureText = Number.isFinite(temperature) ? `${temperature.toFixed(0)}°C` : "N/A";
+    const powerText = Number.isFinite(powerDraw)
+      ? `${powerDraw.toFixed(1)}${Number.isFinite(powerLimit) ? ` / ${powerLimit.toFixed(1)}` : ""} W`
+      : "N/A";
+    const temperatureClass = gpuSeverity(temperature, 80, 90);
+    return `
+      <article class="gpu-card">
+        <div class="gpu-card-header">
+          <strong>GPU ${escapeHtml(gpu.index)}</strong>
+          <span>${escapeHtml(gpu.name || "NVIDIA GPU")}</span>
+        </div>
+        ${meter("GPU Load", utilization, utilizationText)}
+        ${meter("VRAM", memoryPercent, memoryText)}
+        <div class="gpu-detail-grid">
+          <div><span>Temperature</span><strong class="${temperatureClass}">${escapeHtml(temperatureText)}</strong></div>
+          <div><span>Power</span><strong>${escapeHtml(powerText)}</strong></div>
+        </div>
+      </article>`;
+  }).join("");
 }
 
 function updateFileSelection() {
@@ -1641,6 +1725,7 @@ async function pollStatus() {
       status.epoch_progress,
       state.running ? "training" : (state.trainingOutcome || "idle"),
     );
+    renderGpuStatus(status.gpu);
 
     if (state.logMode === "recent") {
       $("logs").textContent = status.log_tail || "";

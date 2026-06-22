@@ -177,7 +177,8 @@
           <div class="dataset-summary" id="dataset-summary"></div>
         </div>
 
-        <div class="panel training-panel">
+        <div class="workspace-side">
+          <div class="panel training-panel">
           <div class="panel-header">
             <h2>Training</h2>
             <div class="button-row">
@@ -256,6 +257,17 @@
             </div>
           </div>
 
+          </div>
+
+          <section class="panel gpu-panel" aria-labelledby="gpu-monitor-title">
+            <div class="panel-header">
+              <h2 id="gpu-monitor-title">GPU Monitor</h2>
+              <span class="gpu-status" id="gpu-status">Checking...</span>
+            </div>
+            <div class="gpu-cards" id="gpu-cards">
+              <p class="gpu-empty">Waiting for GPU information.</p>
+            </div>
+          </section>
         </div>
       </section>
 

@@ -65,8 +65,11 @@ training_log_file: Optional[Path] = None
 training_run_info: Optional[dict] = None
 dataset_preparation_jobs: dict[str, dict] = {}
 dataset_preparation_lock = threading.Lock()
+gpu_status_cache: dict = {"checked_at": 0.0, "payload": None}
+gpu_status_lock = threading.Lock()
 
 DatasetProgressCallback = Callable[[str, int, int, str], None]
+GPU_STATUS_CACHE_SECONDS = 2.0
 
 
 class SplitConfig(BaseModel):
@@ -1303,6 +1306,98 @@ def resolve_artifact_path(request: ArtifactRequest) -> Path:
     return path
 
 
+def gpu_float(value: str) -> Optional[float]:
+    cleaned = str(value).strip()
+    if not cleaned or "N/A" in cleaned.upper():
+        return None
+    try:
+        parsed = float(cleaned)
+    except ValueError:
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def query_gpu_status() -> dict:
+    command = [
+        "nvidia-smi",
+        "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit",
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=True,
+        )
+    except FileNotFoundError:
+        return {
+            "available": False,
+            "gpus": [],
+            "message": "GPU information unavailable because nvidia-smi is not installed.",
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "available": False,
+            "gpus": [],
+            "message": "GPU information unavailable because nvidia-smi timed out.",
+        }
+    except subprocess.CalledProcessError:
+        return {
+            "available": False,
+            "gpus": [],
+            "message": "GPU information unavailable. Check Docker NVIDIA runtime access.",
+        }
+
+    gpus = []
+    for row in csv.reader(result.stdout.splitlines(), skipinitialspace=True):
+        if len(row) < 8:
+            continue
+        memory_used = gpu_float(row[3])
+        memory_total = gpu_float(row[4])
+        memory_percent = (
+            (memory_used / memory_total) * 100
+            if memory_used is not None and memory_total
+            else None
+        )
+        try:
+            index = int(row[0].strip())
+        except ValueError:
+            index = len(gpus)
+        gpus.append({
+            "index": index,
+            "name": row[1].strip(),
+            "utilization_percent": format_metric(gpu_float(row[2]), 1),
+            "memory_used_mb": format_metric(memory_used, 1),
+            "memory_total_mb": format_metric(memory_total, 1),
+            "memory_percent": format_metric(memory_percent, 1),
+            "temperature_c": format_metric(gpu_float(row[5]), 1),
+            "power_draw_w": format_metric(gpu_float(row[6]), 1),
+            "power_limit_w": format_metric(gpu_float(row[7]), 1),
+        })
+
+    if not gpus:
+        return {
+            "available": False,
+            "gpus": [],
+            "message": "No NVIDIA GPUs were reported by nvidia-smi.",
+        }
+    return {"available": True, "gpus": gpus, "message": ""}
+
+
+def gpu_status() -> dict:
+    now = time.monotonic()
+    with gpu_status_lock:
+        cached = gpu_status_cache.get("payload")
+        if cached is not None and now - gpu_status_cache["checked_at"] < GPU_STATUS_CACHE_SECONDS:
+            return cached
+        payload = query_gpu_status()
+        gpu_status_cache["checked_at"] = time.monotonic()
+        gpu_status_cache["payload"] = payload
+        return payload
+
+
 def current_status() -> dict:
     global training_process
     returncode = None
@@ -1817,6 +1912,7 @@ def stop_training():
 def train_status():
     status = current_status()
     status["log_tail"] = read_log_tail(4000)
+    status["gpu"] = gpu_status()
     return status
 
 
