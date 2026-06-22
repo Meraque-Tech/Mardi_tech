@@ -1,6 +1,6 @@
 #!/bin/bash
 
-IMAGE_TAG="meraquetech/race_nav:yolov8-trt-bed-detect-nano.v4"
+IMAGE_TAG="meraquetech/race_nav:yolov8-trt-bed-detect-nano.v5"
 DOCKERFILE="Dockerfile.yolov8_trt_bed_detect_jetson_nano"
 CONTEXT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -22,3 +22,7 @@ else
     echo "Build failed." >&2
     exit 1
 fi
+
+
+docker rmi -f $(docker images -f "dangling=true" -q) 2>/dev/null || true
+docker rm -f $(docker ps -aq) 2>/dev/null || true
