@@ -1,7 +1,7 @@
 #!/bin/bash
 cd vision/ai
 
-docker run -it --rm --net=host \
+docker run --rm --net=host \
   --runtime nvidia \
   --privileged \
   --name=yolov8-trt-bed-detect-nano \
@@ -11,7 +11,7 @@ docker run -it --rm --net=host \
   -v $PWD/yolov8_trt_bed_detect/config:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/config \
   -v $PWD/yolov8_trt_bed_detect/launch:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/launch \
   meraquetech/race_nav:yolov8-trt-bed-detect-nano.v5 \
-  bash -c "ros2 launch yolov8_trt_bed_detect yolov8_trt_bed_detect.launch.py"
+  bash -c "ros2 launch yolov8_trt_bed_detect bed_detect.launch.py"
 
 
 # docker exec -it yolov8-trt-bed-detect-nano bash
