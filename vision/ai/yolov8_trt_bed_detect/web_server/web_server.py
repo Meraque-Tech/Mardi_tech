@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-import cv2
+import urllib.request
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, UInt8, Float32
@@ -113,13 +113,25 @@ def _ros_spin():
 
 
 # ── Snapshot from MJPEG ───────────────────────────────────────────────────────
-def _grab_frame():
+def _grab_frame_bytes() -> bytes | None:
+    """
+    Read the MJPEG stream until we find one complete JPEG frame.
+    Returns raw JPEG bytes — no cv2 needed.
+    """
     try:
-        cap = cv2.VideoCapture(f"http://127.0.0.1:{MJPEG_PORT}/")
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        ret, frame = cap.read()
-        cap.release()
-        return frame if ret else None
+        url = f"http://127.0.0.1:{MJPEG_PORT}/"
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            buf = b""
+            while True:
+                chunk = resp.read(4096)
+                if not chunk:
+                    break
+                buf += chunk
+                # JPEG starts with FF D8 and ends with FF D9
+                start = buf.find(b"\xff\xd8")
+                end   = buf.find(b"\xff\xd9")
+                if start != -1 and end != -1 and end > start:
+                    return buf[start:end + 2]
     except Exception:
         return None
 
@@ -200,13 +212,14 @@ def stop_detection():
 
 @app.route("/api/save", methods=["POST"])
 def save_frame():
-    frame = _grab_frame()
-    if frame is None:
+    jpeg = _grab_frame_bytes()
+    if jpeg is None:
         return jsonify({"success": False, "message": "could not grab frame"}), 500
     ts       = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     filename = f"frame_{ts}.jpg"
     path     = os.path.join(SAVE_DIR, filename)
-    cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    with open(path, "wb") as f:
+        f.write(jpeg)
     return jsonify({"success": True, "filename": filename})
 
 
