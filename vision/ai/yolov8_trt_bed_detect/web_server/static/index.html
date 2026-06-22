@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>YOLOv8 TRT — Bed Detection Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root { --accent: #6366f1; }
+  body  { background: #0f1117; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+  .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 12px; }
+  .badge-live { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .btn-primary {
+    background: var(--accent); border-radius: 8px; padding: 10px 22px;
+    font-weight: 600; transition: all .2s; border: none; cursor: pointer; color: #fff;
+  }
+  .btn-primary:hover  { background: #4f46e5; transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-danger  { background: #ef4444; }
+  .btn-danger:hover  { background: #dc2626; }
+  .btn-success { background: #22c55e; }
+  .btn-success:hover { background: #16a34a; }
+  .btn-gray    { background: #374151; }
+  .btn-gray:hover    { background: #4b5563; }
+  .class-bar-fill { transition: width .4s ease; }
+  .stream-container { position: relative; background: #0a0c14; border-radius: 12px; overflow: hidden; }
+  .stream-container img { width: 100%; display: block; }
+  .overlay-badge {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,.7); backdrop-filter: blur(4px);
+    border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600;
+  }
+  .saved-thumb { width: 100%; height: 100px; object-fit: cover; border-radius: 8px; cursor: pointer; transition: transform .2s; }
+  .saved-thumb:hover { transform: scale(1.04); }
+  #toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+    background: #1a1d27; border: 1px solid #2d3148; border-radius: 10px;
+    padding: 14px 20px; font-size: 14px; transform: translateY(80px);
+    transition: transform .3s; box-shadow: 0 8px 32px rgba(0,0,0,.4);
+  }
+  #toast.show { transform: translateY(0); }
+  .spinner { border: 3px solid #2d3148; border-top-color: var(--accent); border-radius: 50%; width:18px; height:18px; animation: spin .7s linear infinite; display:inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #0f1117; }
+  ::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+</style>
+</head>
+<body class="min-h-screen p-4 md:p-6">
+
+<!-- Header -->
+<header class="flex items-center justify-between mb-6">
+  <div class="flex items-center gap-3">
+    <div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:var(--accent)">
+      <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+      </svg>
+    </div>
+    <div>
+      <h1 class="text-lg font-bold leading-none">YOLOv8 TRT</h1>
+      <p class="text-xs text-slate-400">Bed Detection Dashboard</p>
+    </div>
+  </div>
+  <div class="flex items-center gap-2">
+    <span id="ws-dot" class="w-2 h-2 rounded-full bg-red-500"></span>
+    <span id="ws-label" class="text-xs text-slate-400">Disconnected</span>
+  </div>
+</header>
+
+<!-- Status bar -->
+<div class="card p-3 mb-5 flex flex-wrap gap-4 items-center">
+  <div class="flex items-center gap-2">
+    <span class="text-xs text-slate-400">Detection</span>
+    <span id="detect-badge" class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">IDLE</span>
+  </div>
+  <div class="flex items-center gap-2">
+    <span class="text-xs text-slate-400">Bed Status</span>
+    <span id="bed-badge" class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">—</span>
+  </div>
+  <div class="flex items-center gap-2">
+    <span class="text-xs text-slate-400">Confidence</span>
+    <span id="conf-val" class="text-xs font-mono text-indigo-400">—</span>
+  </div>
+  <div class="flex items-center gap-2 ml-auto">
+    <span class="text-xs text-slate-400">Last update</span>
+    <span id="last-update" class="text-xs font-mono text-slate-400">—</span>
+  </div>
+</div>
+
+<!-- Main grid -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+  <!-- Left: stream -->
+  <div class="lg:col-span-2 space-y-4">
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold text-sm">Live Stream</h2>
+        <span class="badge-live text-xs px-2 py-0.5 rounded-full bg-red-600 text-white font-semibold">● LIVE</span>
+      </div>
+      <div class="stream-container">
+        <img id="stream" src="" alt="MJPEG Stream" onerror="this.src='/static/no_signal.svg'"/>
+        <div class="overlay-badge text-white" id="stream-overlay">Connecting…</div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card p-4">
+      <h2 class="font-semibold text-sm mb-3">Controls</h2>
+      <div class="flex flex-wrap gap-3">
+        <button class="btn-primary btn-success" onclick="startDetection()">
+          ▶ Start Detection
+        </button>
+        <button class="btn-primary btn-danger" onclick="stopDetection()">
+          ■ Stop
+        </button>
+        <button class="btn-primary" onclick="saveFrame()">
+          📷 Save Frame
+        </button>
+        <button class="btn-primary btn-gray" onclick="resetTracker()">
+          ↺ Reset Tracker
+        </button>
+      </div>
+    </div>
+
+    <!-- Saved images -->
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-semibold text-sm">Saved Frames</h2>
+        <button class="text-xs text-indigo-400 hover:text-indigo-300" onclick="loadImages()">Refresh</button>
+      </div>
+      <div id="gallery" class="grid grid-cols-3 sm:grid-cols-4 gap-2">
+        <p class="text-xs text-slate-500 col-span-full">No saved frames yet.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: counts -->
+  <div class="space-y-4">
+    <div class="card p-4">
+      <h2 class="font-semibold text-sm mb-3">Class Counts</h2>
+      <div id="counts-list" class="space-y-2">
+        <p class="text-xs text-slate-500">Waiting for detections…</p>
+      </div>
+    </div>
+
+    <div class="card p-4">
+      <h2 class="font-semibold text-sm mb-3">Count History</h2>
+      <canvas id="count-chart" height="180"></canvas>
+    </div>
+
+    <div class="card p-4">
+      <h2 class="font-semibold text-sm mb-3">Tracking Mode</h2>
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-sm font-medium" id="track-label">Per-frame count</p>
+          <p class="text-xs text-slate-400 mt-0.5" id="track-desc">Counts objects visible now</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" id="track-toggle" class="sr-only peer" onchange="toggleTracking(this.checked)"/>
+          <div class="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:bg-indigo-600
+               after:content-[''] after:absolute after:top-0.5 after:left-0.5
+               after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all
+               peer-checked:after:translate-x-5"></div>
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Lightbox -->
+<div id="lightbox" class="fixed inset-0 bg-black bg-opacity-80 hidden z-50 flex items-center justify-center p-4" onclick="closeLightbox()">
+  <img id="lightbox-img" src="" class="max-w-full max-h-full rounded-xl shadow-2xl"/>
+</div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const API   = '';                     // same origin
+const WS_URL = `ws://${location.host}/ws`;
+let   MJPEG_PORT = 8080;
+
+// ── Chart setup ─────────────────────────────────────────────────────────────
+const COLORS = [
+  '#6366f1','#22c55e','#f59e0b','#ef4444','#06b6d4',
+  '#a855f7','#ec4899','#14b8a6','#f97316','#84cc16',
+];
+const chartData = { labels: [], datasets: [] };
+const chart = new Chart(document.getElementById('count-chart'), {
+  type: 'line',
+  data: chartData,
+  options: {
+    animation: false,
+    plugins: { legend: { labels: { color:'#94a3b8', boxWidth:10, font:{size:10} } } },
+    scales: {
+      x: { ticks:{ color:'#64748b', maxTicksLimit:5 }, grid:{ color:'#1e2433' } },
+      y: { ticks:{ color:'#64748b' }, grid:{ color:'#1e2433' }, beginAtZero:true }
+    }
+  }
+});
+const MAX_HISTORY = 40;
+const classHistory = {};
+
+function updateChart(counts) {
+  const now = new Date().toLocaleTimeString();
+  chartData.labels.push(now);
+  if (chartData.labels.length > MAX_HISTORY) chartData.labels.shift();
+
+  Object.entries(counts).forEach(([cls, val], i) => {
+    if (!classHistory[cls]) {
+      classHistory[cls] = Array(chartData.labels.length - 1).fill(0);
+      chartData.datasets.push({
+        label: `Class ${cls}`, data: classHistory[cls],
+        borderColor: COLORS[i % COLORS.length],
+        backgroundColor: 'transparent',
+        borderWidth: 2, pointRadius: 0, tension: 0.4,
+      });
+    }
+    classHistory[cls].push(val);
+    if (classHistory[cls].length > MAX_HISTORY) classHistory[cls].shift();
+  });
+
+  // zero-pad classes not seen this frame
+  chartData.datasets.forEach(ds => {
+    const cls = ds.label.replace('Class ', '');
+    if (!(cls in counts)) {
+      classHistory[cls].push(0);
+      if (classHistory[cls].length > MAX_HISTORY) classHistory[cls].shift();
+    }
+  });
+
+  chart.update();
+}
+
+// ── Class counts UI ─────────────────────────────────────────────────────────
+function renderCounts(counts) {
+  const el = document.getElementById('counts-list');
+  if (!counts || Object.keys(counts).length === 0) {
+    el.innerHTML = '<p class="text-xs text-slate-500">No detections.</p>';
+    return;
+  }
+  const total = Object.values(counts).reduce((a,b) => a+b, 0);
+  el.innerHTML = Object.entries(counts).map(([cls, cnt], i) => {
+    const pct = total > 0 ? Math.round((cnt / total) * 100) : 0;
+    const col = COLORS[i % COLORS.length];
+    return `
+      <div>
+        <div class="flex justify-between text-xs mb-1">
+          <span class="font-medium" style="color:${col}">Class ${cls}</span>
+          <span class="text-slate-300 font-mono">${cnt}</span>
+        </div>
+        <div class="h-1.5 rounded-full bg-slate-800">
+          <div class="h-1.5 rounded-full class-bar-fill" style="width:${pct}%;background:${col}"></div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
+let ws, wsRetry = 0;
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    wsRetry = 0;
+    document.getElementById('ws-dot').className   = 'w-2 h-2 rounded-full bg-green-400';
+    document.getElementById('ws-label').textContent = 'Connected';
+  };
+  ws.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'counts') {
+      renderCounts(d.counts);
+      updateChart(d.counts);
+      // bed badge
+      const bedBadge = document.getElementById('bed-badge');
+      if (d.bed === 1) {
+        bedBadge.textContent = 'DETECTED';
+        bedBadge.className = 'text-xs font-semibold px-2 py-0.5 rounded-full bg-green-900 text-green-300';
+      } else {
+        bedBadge.textContent = 'NOT FOUND';
+        bedBadge.className = 'text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-700 text-slate-400';
+      }
+      document.getElementById('conf-val').textContent = d.conf ? d.conf.toFixed(4) : '—';
+      if (d.time) document.getElementById('last-update').textContent = d.time.split('T')[1].slice(0,8);
+    }
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-dot').className   = 'w-2 h-2 rounded-full bg-red-500';
+    document.getElementById('ws-label').textContent = 'Disconnected';
+    const delay = Math.min(5000, 500 * 2 ** wsRetry++);
+    setTimeout(connectWS, delay);
+  };
+}
+
+// ── MJPEG stream ─────────────────────────────────────────────────────────────
+async function initStream() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    // extract port from mjpeg_url template
+  } catch(_) {}
+  const img = document.getElementById('stream');
+  img.src = `http://${location.hostname}:${MJPEG_PORT}/`;
+  img.onload = () => {
+    document.getElementById('stream-overlay').textContent = `${location.hostname}:${MJPEG_PORT}`;
+  };
+}
+
+// ── API calls ────────────────────────────────────────────────────────────────
+async function startDetection() {
+  const res = await fetch('/api/start', { method: 'POST' });
+  const d   = await res.json();
+  if (d.success) {
+    const b = document.getElementById('detect-badge');
+    b.textContent  = 'RUNNING';
+    b.className = 'text-xs font-semibold px-2 py-0.5 rounded-full bg-green-900 text-green-300 badge-live';
+    toast('✅ Detection started');
+  } else {
+    toast('❌ ' + (d.detail || 'Failed'), true);
+  }
+}
+
+async function stopDetection() {
+  await fetch('/api/stop', { method: 'POST' });
+  const b = document.getElementById('detect-badge');
+  b.textContent = 'STOPPED';
+  b.className = 'text-xs font-semibold px-2 py-0.5 rounded-full bg-yellow-900 text-yellow-300';
+  toast('⏹ Detection stopped');
+}
+
+async function saveFrame() {
+  toast('📷 Saving…');
+  const res = await fetch('/api/save', { method: 'POST' });
+  if (res.ok) {
+    const d = await res.json();
+    toast(`✅ Saved: ${d.filename}`);
+    loadImages();
+  } else {
+    toast('❌ Save failed', true);
+  }
+}
+
+async function resetTracker() {
+  await fetch(`/api/reset_tracker`, { method: 'POST' }).catch(() => {});
+  toast('↺ Tracker reset');
+}
+
+async function toggleTracking(enabled) {
+  const label = document.getElementById('track-label');
+  const desc  = document.getElementById('track-desc');
+  if (enabled) {
+    label.textContent = 'Unique tracking (MOSSE)';
+    desc.textContent  = 'Counts unique objects seen';
+  } else {
+    label.textContent = 'Per-frame count';
+    desc.textContent  = 'Counts objects visible now';
+  }
+  await fetch('/api/set_track', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ enabled })
+  }).catch(() => {});
+  toast(enabled ? '🔍 Tracking enabled' : '📊 Per-frame mode');
+}
+
+// ── Gallery ──────────────────────────────────────────────────────────────────
+async function loadImages() {
+  const res    = await fetch('/api/images');
+  const images = await res.json();
+  const gallery = document.getElementById('gallery');
+  if (!images.length) {
+    gallery.innerHTML = '<p class="text-xs text-slate-500 col-span-full">No saved frames yet.</p>';
+    return;
+  }
+  gallery.innerHTML = images.map(img => `
+    <div class="relative group">
+      <img class="saved-thumb" src="${img.url}" alt="${img.filename}"
+           onclick="openLightbox('${img.url}')"/>
+      <button onclick="deleteImage('${img.filename}', this)"
+        class="absolute top-1 right-1 bg-black bg-opacity-60 text-white text-xs rounded px-1.5 py-0.5
+               opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
+      <p class="text-xs text-slate-500 mt-1 truncate">${img.time.slice(11,19)}</p>
+    </div>`).join('');
+}
+
+async function deleteImage(filename, btn) {
+  btn.closest('.relative').remove();
+  await fetch(`/api/images/${filename}`, { method: 'DELETE' });
+}
+
+function openLightbox(url) {
+  document.getElementById('lightbox-img').src = url;
+  document.getElementById('lightbox').classList.remove('hidden');
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.add('hidden');
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg, err=false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.borderColor = err ? '#ef4444' : '#6366f1';
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+connectWS();
+initStream();
+loadImages();
+</script>
+</body>
+</html>

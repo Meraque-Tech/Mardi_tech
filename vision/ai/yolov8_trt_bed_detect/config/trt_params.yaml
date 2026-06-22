@@ -34,9 +34,13 @@ yolov8_trt:
     conf_score_value: 0.8
 
     # ── Tracking ──────────────────────────────────────────────────────────────
-    # true  → count unique objects across frames (IoU-based tracker)
+    # true  → count unique objects across frames (MOSSE tracker)
     # false → count detections per frame only
     is_track: false
+
+    # ── Web API ───────────────────────────────────────────────────────────────
+    save_dir: "/saved_frames"    # where saved frames go (mount this as a volume)
+    api_port: 8090               # port for the web dashboard + REST API
 
     # ── Output box cap ────────────────────────────────────────────────────────
     # 1000 is generous for a single-class detector; 100 cuts postprocess cost.

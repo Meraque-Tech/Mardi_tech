@@ -1,13 +1,15 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
     pkg = get_package_share_directory('yolov8_trt_bed_detect')
+
+    web_server_path = os.path.join(pkg, 'web_server', 'web_server.py')
 
     params_file_arg = DeclareLaunchArgument(
         'params_file',
@@ -23,7 +25,19 @@ def generate_launch_description():
         parameters=[LaunchConfiguration('params_file')],
     )
 
+    web_server = ExecuteProcess(
+        cmd=['python3', web_server_path],
+        output='screen',
+        env={
+            **os.environ,
+            'SAVE_DIR':    '/saved_frames',
+            'MJPEG_PORT':  '8080',
+            'API_PORT':    '8090',
+        }
+    )
+
     return LaunchDescription([
         params_file_arg,
         yolov8_node,
+        web_server,
     ])

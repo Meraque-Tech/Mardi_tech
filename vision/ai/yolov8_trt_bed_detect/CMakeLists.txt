@@ -68,7 +68,7 @@ install(TARGETS
   myplugins
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY launch config
+install(DIRECTORY launch config web_server
   DESTINATION share/${PROJECT_NAME})
 
 set_target_properties(yolov8_trt_bed_detect PROPERTIES
