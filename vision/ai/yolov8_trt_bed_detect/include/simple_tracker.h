@@ -87,12 +87,17 @@ private:
     std::vector<TrackedObj> tracks_;
     std::map<int, int>      unique_counts_;
 
-    // Detection bbox: cx, cy, w, h (normalised to input size) → cv::Rect2d in pixels
+    // Detection bbox: cx, cy, w, h already in pixel coords of the original frame
     static cv::Rect2d to_rect(const float *bbox, const cv::Mat &frame) {
-        float x = (bbox[0] - bbox[2] / 2.f) * frame.cols;
-        float y = (bbox[1] - bbox[3] / 2.f) * frame.rows;
-        float w = bbox[2] * frame.cols;
-        float h = bbox[3] * frame.rows;
+        float x = bbox[0] - bbox[2] / 2.f;
+        float y = bbox[1] - bbox[3] / 2.f;
+        float w = bbox[2];
+        float h = bbox[3];
+        // clamp to frame bounds to avoid tracker allocation errors
+        x = std::max(0.f, x);
+        y = std::max(0.f, y);
+        w = std::min(w, (float)frame.cols - x);
+        h = std::min(h, (float)frame.rows - y);
         return cv::Rect2d(x, y, w, h);
     }
 
