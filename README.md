@@ -355,3 +355,64 @@ yolo train data=pineapple.yaml model=yolov8n.pt imgsz=640
 ```
     sudo chown $USER:$USER *
 ```
+
+# WIFI cmd
+```
+  # Check network devices
+  nmcli device status
+
+  # Show IP address
+  ip addr
+
+  # Show only IP address
+  hostname -I
+
+  # List Wi-Fi networks
+  nmcli device wifi list
+
+  # Refresh Wi-Fi list
+  nmcli device wifi rescan
+  nmcli device wifi list
+
+  # Connect to Wi-Fi
+  sudo nmcli device wifi connect "M@RQ" password "<wifi password>"
+
+  # Turn all networking off
+  sudo nmcli networking off
+
+  # Turn all networking on
+  sudo nmcli networking on
+
+  # Turn Wi-Fi off
+  sudo nmcli radio wifi off
+
+  # Turn Wi-Fi on
+  sudo nmcli radio wifi on
+
+  # Disconnect one Wi-Fi/interface
+  sudo nmcli device disconnect wlan0
+
+  # Connect one Wi-Fi/interface again
+  sudo nmcli device connect wlan0
+
+  # Restart NetworkManager
+  sudo systemctl restart NetworkManager
+
+  # Check NetworkManager status
+  systemctl status NetworkManager
+
+  # Ping test
+  ping google.com
+
+  # Ping test with IP
+  ping 8.8.8.8
+
+  # Show routes/gateway
+  ip route
+
+  # Show DNS
+  resolvectl status
+
+  nmcli device status
+  
+```
