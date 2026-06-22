@@ -315,7 +315,7 @@ It can also download the timestamped log for the current or most recent run.
 The UI reads Ultralytics `results.csv` and final validation log rows to show:
 
 ```text
-Overall F1
+Macro F1
 Weighted F1
 Per-class F1
 Training loss
@@ -327,9 +327,10 @@ Loss graph by epoch
 Best epoch summary, including lowest training and validation losses
 ```
 
-`Overall F1` is derived from validation precision and recall. `Weighted F1` is
-calculated from final per-class validation rows when available, weighted by
-class instance counts.
+`Macro F1` is the equal-weight mean of the final per-class F1 scores. `Weighted F1`
+uses the same per-class scores weighted by class instance counts. Both are
+available after the final per-class validation rows have been written to the
+training log.
 
 ## Outputs And Downloads
 

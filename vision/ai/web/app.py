@@ -627,32 +627,34 @@ def parse_metric_row(line: str) -> Optional[dict]:
 
 def parse_class_metrics_from_log(log_path: Path) -> dict:
     if not log_path.is_file():
-        return {"overall": None, "classes": [], "weighted_f1": None}
+        return {"classes": [], "macro_f1": None, "weighted_f1": None}
 
     lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     validating_indexes = [index for index, line in enumerate(lines) if "Validating " in clean_log_line(line)]
     search_lines = lines[validating_indexes[-1] + 1:] if validating_indexes else lines
 
-    overall = None
     classes_by_name = {}
     for line in search_lines:
         row = parse_metric_row(line)
         if not row:
             continue
         if row["class_name"] == "all":
-            overall = row
-        else:
-            classes_by_name[row["class_name"]] = row
+            continue
+        classes_by_name[row["class_name"]] = row
 
     classes = list(classes_by_name.values())
+    macro_f1 = None
+    if classes:
+        macro_f1 = sum(row["f1"] or 0 for row in classes) / len(classes)
+
     total_instances = sum(row["instances"] for row in classes)
     weighted_f1 = None
     if total_instances:
         weighted_f1 = sum((row["f1"] or 0) * row["instances"] for row in classes) / total_instances
 
     return {
-        "overall": overall,
         "classes": classes,
+        "macro_f1": format_metric(macro_f1),
         "weighted_f1": format_metric(weighted_f1),
     }
 
@@ -660,11 +662,8 @@ def parse_class_metrics_from_log(log_path: Path) -> dict:
 def build_metric_history(rows: list[dict]) -> list[dict]:
     history = []
     for row in rows:
-        precision = float_value(row, "metrics/precision(B)")
-        recall = float_value(row, "metrics/recall(B)")
         history.append({
             "epoch": int(float_value(row, "epoch") or 0),
-            "overall_f1": format_metric(f1_from_precision_recall(precision, recall)),
             "map50": format_metric(float_value(row, "metrics/mAP50(B)")),
             "map50_95": format_metric(float_value(row, "metrics/mAP50-95(B)")),
             "training_loss": format_metric(sum_values(row, ["train/box_loss", "train/cls_loss", "train/dfl_loss"])),
@@ -682,13 +681,11 @@ def best_metric_summary(history: list[dict]) -> dict:
 
     best_map95 = best_by("map50_95")
     best_map50 = best_by("map50")
-    best_f1 = best_by("overall_f1")
     best_train_loss = best_by("training_loss", higher_is_better=False)
     best_val_loss = best_by("testing_loss", higher_is_better=False)
     return {
         "best_map50_95": best_map95,
         "best_map50": best_map50,
-        "best_f1": best_f1,
         "lowest_training_loss": best_train_loss,
         "lowest_validation_loss": best_val_loss,
     }
@@ -724,7 +721,6 @@ def read_run_metrics(run_dir: Path) -> dict:
     row = rows[-1]
     precision = float_value(row, "metrics/precision(B)")
     recall = float_value(row, "metrics/recall(B)")
-    f1_score = f1_from_precision_recall(precision, recall)
     training_loss = sum_values(row, ["train/box_loss", "train/cls_loss", "train/dfl_loss"])
     testing_loss = sum_values(row, ["val/box_loss", "val/cls_loss", "val/dfl_loss"])
     map50 = float_value(row, "metrics/mAP50(B)")
@@ -737,7 +733,7 @@ def read_run_metrics(run_dir: Path) -> dict:
         "run_dir": str(run_dir),
         "results_csv": str(results_path),
         "epoch": int(float_value(row, "epoch") or 0),
-        "overall_f1": format_metric(f1_score),
+        "macro_f1": class_metrics["macro_f1"],
         "weighted_f1": class_metrics["weighted_f1"],
         "per_class": class_metrics["classes"],
         "training_loss": format_metric(training_loss),
@@ -753,7 +749,7 @@ def read_run_metrics(run_dir: Path) -> dict:
             "accuracy_graph": artifact_status(run_dir / "accuracy_by_epoch.png"),
             "loss_graph": artifact_status(run_dir / "loss_by_epoch.png"),
         },
-        "note": "F1 is derived from validation precision and recall. Weighted F1 is calculated from final per-class validation rows when available.",
+        "note": "Macro and weighted F1 are calculated from final per-class validation rows when available.",
     }
 
 

@@ -814,7 +814,6 @@ function renderBestMetrics(best, history = []) {
   const rows = [
     formatBestMetric(summary.best_map50_95, "map50_95", "Best mAP50-95"),
     formatBestMetric(summary.best_map50, "map50", "Best mAP50"),
-    formatBestMetric(summary.best_f1, "overall_f1", "Best F1"),
     formatBestMetric(summary.lowest_training_loss, "training_loss", "Lowest training loss"),
     formatBestMetric(summary.lowest_validation_loss, "testing_loss", "Lowest validation loss"),
   ].filter(Boolean);
@@ -959,7 +958,6 @@ function renderMetricCharts(history) {
   drawLineChart("accuracy-chart", rows, [
     { key: "map50", label: "mAP50", color: "#16745f" },
     { key: "map50_95", label: "mAP50-95", color: "#5b6ee1" },
-    { key: "overall_f1", label: "F1", color: "#b45f06" },
   ]);
   drawLineChart("loss-chart", rows, [
     { key: "training_loss", label: "Train loss", color: "#a43d3d" },
@@ -1292,7 +1290,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     if (!metrics.available) {
       state.metricsAvailable = false;
       $("training-results-panel").classList.remove("has-results");
-      $("metric-f1").textContent = "-";
+      $("metric-macro-f1").textContent = "-";
       $("metric-weighted-f1").textContent = "-";
       $("metric-train-loss").textContent = "-";
       $("metric-test-loss").textContent = "-";
@@ -1308,7 +1306,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
 
     state.metricsAvailable = true;
     $("training-results-panel").classList.add("has-results");
-    $("metric-f1").textContent = metricText(metrics.overall_f1);
+    $("metric-macro-f1").textContent = metricText(metrics.macro_f1);
     $("metric-weighted-f1").textContent = metricText(metrics.weighted_f1);
     $("metric-train-loss").textContent = metricText(metrics.training_loss);
     $("metric-test-loss").textContent = metricText(metrics.testing_loss);
