@@ -4,6 +4,32 @@
 > **Note:** On Jetson, use `--runtime nvidia` — **not** `--gpus all` (which is x86-only).
 > GPU access in `docker-compose` is handled via env vars; no `runtime:` or `deploy` key needed.
 
+# Jetson clock
+```
+  # Check current power mode
+  sudo nvpmodel -q
+
+  # Set MAXN / 10W mode
+  sudo nvpmodel -m 0
+
+  # Enable maximum clocks
+  sudo jetson_clocks
+
+  # Run maximum clocks
+  sudo jetson_clocks
+
+  <!-- # Optional: set fan with jetson clocks -->
+  <!-- sudo jetson_clocks --fan -->
+
+  # Check CPU cores
+  cat /sys/devices/system/cpu/online
+
+  # Open jtop
+  jtop
+
+
+```
+
 ## 1. Install NVIDIA Container Toolkit
 
 Skip if already on JetPack — it is pre-installed. Otherwise:
