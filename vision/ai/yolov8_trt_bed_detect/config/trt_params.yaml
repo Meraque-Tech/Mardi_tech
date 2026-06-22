@@ -49,3 +49,7 @@ yolov8_trt:
     camera_index:   0
     camera_width:  1280
     camera_height:  720
+
+
+# 24 FPS: ≈ 42 ms (Standard for cinematic movies)
+# 30 FPS: ≈ 33.3 ms (Common for console games and social media)
