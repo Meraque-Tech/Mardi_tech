@@ -4,19 +4,21 @@
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <std_msgs/msg/string.hpp>
+#include "std_srvs/srv/set_bool.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "mjpeg_server.h"
 
 #include <signal.h>
 #include <stdio.h>
+#include <atomic>
 #include <map>
 #include "simple_tracker.h"
 
 // Global state
 rclcpp::Node::SharedPtr node;
-int start_bed_detection_ = 0;
 float conf_score_value = 0.8f;
-bool bed_detection_fb_ = 0;
+std::atomic<bool> detection_enabled{false};
+std::atomic<bool> tracker_reset_requested{false};
 
 struct TrtParams {
     std::string engine_name;
@@ -70,15 +72,6 @@ void sig_handler(int signal){
     exit(0);
 }
 
-void bed_detection_cb(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-          std::shared_ptr<std_srvs::srv::Trigger::Response> response)
-{
-    start_bed_detection_ = 1;
-    response->success = 1;
-    response->message = "bed detection started";
-    std::cout << "\nbed detection started" << std::endl;
-}
-
 int main(int argc, char *argv[]) {
     rclcpp::init(argc, argv);
     signal(SIGINT, sig_handler);
@@ -87,9 +80,71 @@ int main(int argc, char *argv[]) {
     auto conf_pub = node->create_publisher<std_msgs::msg::Float32>("conf", 10);
     auto bed_status_pub = node->create_publisher<std_msgs::msg::UInt8>("bed_detection_status", 10);
     auto class_count_pub = node->create_publisher<std_msgs::msg::String>("class_counts", 10);
+    auto state_qos = rclcpp::QoS(1).reliable().transient_local();
+    auto detection_active_pub =
+        node->create_publisher<std_msgs::msg::UInt8>("detection_active", state_qos);
 
-    auto bed_detection_service =
-        node->create_service<std_srvs::srv::Trigger>("bed_detection", &bed_detection_cb);
+    auto publish_active = [&detection_active_pub](bool active) {
+        std_msgs::msg::UInt8 msg;
+        msg.data = active ? 1 : 0;
+        detection_active_pub->publish(msg);
+    };
+
+    auto bed_detection_service = node->create_service<std_srvs::srv::Trigger>(
+        "bed_detection",
+        [&publish_active](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+                          std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+            const bool was_running = detection_enabled.exchange(true);
+            if (!was_running) tracker_reset_requested = true;
+            publish_active(true);
+            response->success = true;
+            response->message = was_running ? "bed detection already running" : "bed detection started";
+            std::cout << "\n" << response->message << std::endl;
+        });
+
+    auto stop_detection_service = node->create_service<std_srvs::srv::Trigger>(
+        "bed_detection_stop",
+        [&publish_active, &bed_status_pub, &class_count_pub, &conf_pub](
+            const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+            std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+            const bool was_running = detection_enabled.exchange(false);
+            publish_active(false);
+
+            std_msgs::msg::UInt8 bed_msg;
+            bed_msg.data = 0;
+            bed_status_pub->publish(bed_msg);
+            std_msgs::msg::Float32 conf_msg;
+            conf_msg.data = 0.0f;
+            conf_pub->publish(conf_msg);
+            std_msgs::msg::String count_msg;
+            count_msg.data = "";
+            class_count_pub->publish(count_msg);
+
+            response->success = true;
+            response->message = was_running ? "bed detection stopped" : "bed detection already stopped";
+            std::cout << "\n" << response->message << std::endl;
+        });
+
+    auto reset_tracker_service = node->create_service<std_srvs::srv::Trigger>(
+        "reset_tracker",
+        [](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+           std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+            tracker_reset_requested = true;
+            response->success = true;
+            response->message = "tracker reset requested";
+        });
+
+    auto set_tracking_service = node->create_service<std_srvs::srv::SetBool>(
+        "set_tracking",
+        [&node](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+            const auto result = node->set_parameter(rclcpp::Parameter("is_track", request->data));
+            response->success = result.successful;
+            response->message = result.successful
+                ? (request->data ? "unique tracking enabled" : "per-frame counting enabled")
+                : result.reason;
+            if (result.successful) tracker_reset_requested = true;
+        });
 
     cv::Mat frame;
 
@@ -142,11 +197,18 @@ int main(int argc, char *argv[]) {
 
     prepare_buffer(engine, &device_buffers[0], &device_buffers[1], &output_buffer_host, &decode_ptr_host, &decode_ptr_device, p.cuda_post_process, p.input_h, p.input_w);
 
+    publish_active(false);
+
     while (rclcpp::ok()) {
+        // Process web/ROS controls before starting the next inference cycle.
+        rclcpp::spin_some(node);
+
         cap >> frame;
         if (frame.empty()) continue;
 
-        if (start_bed_detection_ == 1) {
+        if (tracker_reset_requested.exchange(false)) tracker.reset();
+
+        if (detection_enabled.load()) {
             std::vector<cv::Mat> img_batch{frame};
 
             cuda_batch_preprocess(img_batch, device_buffers[0], p.input_w, p.input_h, stream);
@@ -161,39 +223,36 @@ int main(int argc, char *argv[]) {
                 batch_process(res_batch, decode_ptr_host, img_batch.size(), bbox_element, img_batch);
             }
 
-            draw_bbox(img_batch, res_batch);
-            frame = img_batch[0];  // use annotated frame for MJPEG stream
-
-            auto &res = res_batch[0];
+            static const std::vector<Detection> no_detections;
+            const auto &res = res_batch.empty() ? no_detections : res_batch[0];
             auto bed_msg = std_msgs::msg::UInt8();
 
-            // per-class counts
+            // Track against the clean camera frame, before annotations are drawn.
             bool is_track = node->get_parameter("is_track").as_bool();
             std::map<int, int> class_counts = count_detections(frame, res, is_track, tracker);
+
+            float max_conf = 0.0f;
+            for (const auto &it : res) {
+                max_conf = std::max(max_conf, it.conf);
+                if (it.conf > conf_score_value) {
+                    bed_msg.data = 1;
+                }
+            }
+
+            auto conf_msg = std_msgs::msg::Float32();
+            conf_msg.data = max_conf;
+            conf_pub->publish(conf_msg);
+            bed_status_pub->publish(bed_msg);
+
             std::string counts_str;
             for (auto &kv : class_counts)
                 counts_str += "class" + std::to_string(kv.first) + ":" + std::to_string(kv.second) + " ";
             auto count_msg = std_msgs::msg::String();
             count_msg.data = counts_str;
             class_count_pub->publish(count_msg);
-            if (!counts_str.empty()) std::cout << "counts: " << counts_str << std::endl;
 
-            if (!res.empty()) {
-                for (auto &it : res) {
-                    std::cout << "it.conf ---> " << it.conf << std::endl;
-                    if (it.conf > conf_score_value) {
-                        auto conf_msg = std_msgs::msg::Float32();
-                        conf_msg.data = it.conf;
-                        conf_pub->publish(conf_msg);
-                        bed_msg.data = 1;
-                        std::cout << "Detected bed." << std::endl;
-                        break;
-                    }
-                }
-            } else {
-                bed_msg.data = 0;
-            }
-            bed_status_pub->publish(bed_msg);
+            draw_bbox(img_batch, res_batch);
+            frame = img_batch[0];  // annotated frame for the MJPEG stream
         }
 
         mjpeg_server.push_frame(frame);
@@ -204,7 +263,6 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        rclcpp::spin_some(node);
     }
 
     cap.release();

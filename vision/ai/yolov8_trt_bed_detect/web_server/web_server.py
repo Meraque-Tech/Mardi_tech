@@ -1,45 +1,128 @@
 #!/usr/bin/env python3
-"""
-YOLOv8 TRT Bed Detect — Flask Web API + WebSocket Server
-"""
+"""YOLOv8 TRT bed detection dashboard, REST API, and ROS 2 bridge."""
 
 import datetime
 import json
 import os
-import subprocess
+import sqlite3
 import threading
 import time
-from pathlib import Path
-
 import urllib.request
-from typing import Optional, List, Dict
+from pathlib import Path
+from typing import List, Optional
+
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, UInt8, Float32
-from std_srvs.srv import Trigger
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Float32, String, UInt8
+from std_srvs.srv import SetBool, Trigger
 
-from flask import Flask, jsonify, send_from_directory, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_sock import Sock
 
-# ── Config ────────────────────────────────────────────────────────────────────
-SAVE_DIR   = os.environ.get("SAVE_DIR",   "/saved_frames")
+
+# Configuration
+SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
-API_PORT   = int(os.environ.get("API_PORT",   "8090"))
+API_PORT = int(os.environ.get("API_PORT", "8090"))
+HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
+HISTORY_SAMPLE_SECONDS = max(0.1, float(os.environ.get("HISTORY_SAMPLE_SECONDS", "1.0")))
 STATIC_DIR = Path(__file__).parent / "static"
 
 os.makedirs(SAVE_DIR, exist_ok=True)
+os.makedirs(os.path.dirname(HISTORY_DB) or ".", exist_ok=True)
 
-# ── Shared state ──────────────────────────────────────────────────────────────
+
+# Shared live state
 state = {
-    "counts":       {},
-    "bed_status":   0,
-    "conf":         0.0,
-    "detecting":    False,
+    "counts": {},
+    "bed_status": 0,
+    "conf": 0.0,
+    "detecting": False,
+    "is_track": False,
     "last_updated": None,
 }
 state_lock = threading.Lock()
 ws_clients = []  # type: List
-ws_lock    = threading.Lock()
+ws_lock = threading.Lock()
+
+
+# Persistent count history
+db_lock = threading.Lock()
+last_history_write = 0.0
+
+
+def _db_connect():
+    connection = sqlite3.connect(HISTORY_DB, timeout=5.0)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def _init_db():
+    with db_lock, _db_connect() as db:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS count_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at TEXT NOT NULL,
+                counts_json TEXT NOT NULL,
+                total INTEGER NOT NULL,
+                bed_status INTEGER NOT NULL,
+                confidence REAL NOT NULL,
+                tracking INTEGER NOT NULL
+            )
+            """
+        )
+
+
+def _store_history(snapshot):
+    global last_history_write
+    now = time.monotonic()
+    if now - last_history_write < HISTORY_SAMPLE_SECONDS:
+        return
+    last_history_write = now
+    with db_lock, _db_connect() as db:
+        db.execute(
+            """
+            INSERT INTO count_history
+                (recorded_at, counts_json, total, bed_status, confidence, tracking)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot["last_updated"],
+                json.dumps(snapshot["counts"], separators=(",", ":"), sort_keys=True),
+                sum(snapshot["counts"].values()),
+                snapshot["bed_status"],
+                snapshot["conf"],
+                int(snapshot["is_track"]),
+            ),
+        )
+
+
+def _history_rows(limit, offset):
+    with db_lock, _db_connect() as db:
+        total = db.execute("SELECT COUNT(*) FROM count_history").fetchone()[0]
+        rows = db.execute(
+            """
+            SELECT id, recorded_at, counts_json, total, bed_status, confidence, tracking
+            FROM count_history ORDER BY id DESC LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+    items = [
+        {
+            "id": row["id"],
+            "time": row["recorded_at"],
+            "counts": json.loads(row["counts_json"]),
+            "total": row["total"],
+            "bed": row["bed_status"],
+            "conf": row["confidence"],
+            "tracking": bool(row["tracking"]),
+        }
+        for row in rows
+    ]
+    return total, items
 
 
 def broadcast(payload: str):
@@ -54,32 +137,63 @@ def broadcast(payload: str):
             ws_clients.remove(ws)
 
 
-# ── ROS 2 node ────────────────────────────────────────────────────────────────
+def _snapshot_payload(message_type="snapshot"):
+    with state_lock:
+        snapshot = dict(state)
+        snapshot["counts"] = dict(state["counts"])
+    snapshot["type"] = message_type
+    return snapshot
+
+
+def broadcast_state(message_type="snapshot"):
+    broadcast(json.dumps(_snapshot_payload(message_type)))
+
+
+# ROS 2 bridge
 class BridgeNode(Node):
     def __init__(self):
         super().__init__("web_bridge")
-        self.create_subscription(String,  "/class_counts",         self._counts_cb, 10)
-        self.create_subscription(UInt8,   "/bed_detection_status", self._status_cb, 10)
-        self.create_subscription(Float32, "/conf",                  self._conf_cb,   10)
+        state_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(String, "/class_counts", self._counts_cb, 10)
+        self.create_subscription(UInt8, "/bed_detection_status", self._status_cb, 10)
+        self.create_subscription(UInt8, "/detection_active", self._active_cb, state_qos)
+        self.create_subscription(Float32, "/conf", self._conf_cb, 10)
+
         self._start_cli = self.create_client(Trigger, "/bed_detection")
+        self._stop_cli = self.create_client(Trigger, "/bed_detection_stop")
+        self._reset_cli = self.create_client(Trigger, "/reset_tracker")
+        self._track_cli = self.create_client(SetBool, "/set_tracking")
+        self._control_lock = threading.Lock()
 
     def _counts_cb(self, msg):
         counts = {}
-        for part in msg.data.strip().split():
-            if ":" in part:
-                k, v = part.split(":")
-                counts[k.replace("class", "")] = int(v)
+        try:
+            for part in msg.data.strip().split():
+                if ":" not in part:
+                    continue
+                key, value = part.split(":", 1)
+                counts[key.replace("class", "")] = int(value)
+        except (TypeError, ValueError):
+            self.get_logger().warning("Ignored malformed /class_counts payload: %r" % msg.data)
+            return
+
         with state_lock:
-            state["counts"]       = counts
-            state["last_updated"] = datetime.datetime.now().isoformat()
-            snap = dict(state)
-        broadcast(json.dumps({
-            "type":    "counts",
-            "counts":  snap["counts"],
-            "bed":     snap["bed_status"],
-            "conf":    snap["conf"],
-            "time":    snap["last_updated"],
-        }))
+            state["counts"] = counts
+            state["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            snapshot = dict(state)
+            snapshot["counts"] = dict(counts)
+
+        if snapshot["detecting"]:
+            try:
+                _store_history(snapshot)
+            except sqlite3.Error as exc:
+                self.get_logger().error("Could not store count history: %s" % exc)
+        broadcast_state()
 
     def _status_cb(self, msg):
         with state_lock:
@@ -89,16 +203,58 @@ class BridgeNode(Node):
         with state_lock:
             state["conf"] = round(float(msg.data), 4)
 
+    def _active_cb(self, msg):
+        with state_lock:
+            state["detecting"] = bool(msg.data)
+        broadcast_state("status")
+
+    def _call(self, client, request_message):
+        # The node is already spinning in _ros_spin. Waiting on an Event here
+        # avoids trying to add it to a second executor from a Flask thread.
+        with self._control_lock:
+            if not client.wait_for_service(timeout_sec=2.0):
+                return False, "ROS service is not available"
+            future = client.call_async(request_message)
+            completed = threading.Event()
+            future.add_done_callback(lambda _future: completed.set())
+            if not completed.wait(timeout=4.0):
+                return False, "ROS service timed out"
+            try:
+                result = future.result()
+            except Exception as exc:
+                return False, "ROS service failed: %s" % exc
+            if result is None:
+                return False, "ROS service returned no response"
+            return bool(result.success), result.message
+
     def call_start(self):
-        if not self._start_cli.wait_for_service(timeout_sec=2.0):
-            return False, "service not available"
-        future = self._start_cli.call_async(Trigger.Request())
-        rclpy.spin_until_future_complete(self, future, timeout_sec=3.0)
-        if future.result():
+        result = self._call(self._start_cli, Trigger.Request())
+        if result[0]:
             with state_lock:
                 state["detecting"] = True
-            return True, future.result().message
-        return False, "no response"
+            broadcast_state("status")
+        return result
+
+    def call_stop(self):
+        result = self._call(self._stop_cli, Trigger.Request())
+        if result[0]:
+            with state_lock:
+                state["detecting"] = False
+            broadcast_state("status")
+        return result
+
+    def call_reset(self):
+        return self._call(self._reset_cli, Trigger.Request())
+
+    def call_set_tracking(self, enabled):
+        message = SetBool.Request()
+        message.data = bool(enabled)
+        ok, detail = self._call(self._track_cli, message)
+        if ok:
+            with state_lock:
+                state["is_track"] = bool(enabled)
+            broadcast_state("status")
+        return ok, detail
 
 
 ros_node = None
@@ -108,38 +264,37 @@ def _ros_spin():
     global ros_node
     rclpy.init(args=None)
     ros_node = BridgeNode()
-    rclpy.spin(ros_node)
-    ros_node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(ros_node)
+    finally:
+        ros_node.destroy_node()
+        ros_node = None
+        rclpy.shutdown()
 
 
-# ── Snapshot from MJPEG ───────────────────────────────────────────────────────
+# Snapshot extraction from the native MJPEG server
 def _grab_frame_bytes():
     # type: () -> Optional[bytes]
-    """
-    Read the MJPEG stream until we find one complete JPEG frame.
-    Returns raw JPEG bytes — no cv2 needed.
-    """
     try:
-        url = f"http://127.0.0.1:{MJPEG_PORT}/"
-        with urllib.request.urlopen(url, timeout=3) as resp:
-            buf = b""
+        url = "http://127.0.0.1:%d/" % MJPEG_PORT
+        with urllib.request.urlopen(url, timeout=3) as response:
+            buffer = b""
             while True:
-                chunk = resp.read(4096)
+                chunk = response.read(4096)
                 if not chunk:
                     break
-                buf += chunk
-                # JPEG starts with FF D8 and ends with FF D9
-                start = buf.find(b"\xff\xd8")
-                end   = buf.find(b"\xff\xd9")
-                if start != -1 and end != -1 and end > start:
-                    return buf[start:end + 2]
+                buffer += chunk
+                start = buffer.find(b"\xff\xd8")
+                end = buffer.find(b"\xff\xd9", start + 2)
+                if start != -1 and end != -1:
+                    return buffer[start:end + 2]
     except Exception:
         return None
+    return None
 
 
-# ── Flask app ─────────────────────────────────────────────────────────────────
-app  = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
+# Flask app
+app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
 sock = Sock(app)
 
 
@@ -157,18 +312,10 @@ def saved_file(filename):
 def websocket(ws):
     with ws_lock:
         ws_clients.append(ws)
-    with state_lock:
-        snap = dict(state)
     try:
-        ws.send(json.dumps({
-            "type":    "counts",
-            "counts":  snap["counts"],
-            "bed":     snap["bed_status"],
-            "conf":    snap["conf"],
-            "time":    snap["last_updated"],
-        }))
+        ws.send(json.dumps(_snapshot_payload()))
         while True:
-            ws.receive(timeout=30)   # keep alive
+            ws.receive(timeout=30)
     except Exception:
         pass
     finally:
@@ -183,33 +330,56 @@ def get_counts():
         return jsonify(state["counts"])
 
 
+@app.route("/api/history")
+def get_history():
+    try:
+        limit = min(max(int(request.args.get("limit", 100)), 1), 5000)
+        offset = max(int(request.args.get("offset", 0)), 0)
+    except ValueError:
+        return jsonify({"success": False, "message": "limit and offset must be integers"}), 400
+    total, items = _history_rows(limit, offset)
+    return jsonify({"total": total, "limit": limit, "offset": offset, "items": items})
+
+
 @app.route("/api/status")
 def get_status():
-    with state_lock:
-        return jsonify({
-            "detecting":    state["detecting"],
-            "bed_status":   state["bed_status"],
-            "conf":         state["conf"],
-            "last_updated": state["last_updated"],
-            "mjpeg_url":    f"http://{{host}}:{MJPEG_PORT}/",
-        })
+    payload = _snapshot_payload()
+    payload.pop("type", None)
+    payload["mjpeg_port"] = MJPEG_PORT
+    return jsonify(payload)
+
+
+def _control_response(method_name):
+    bridge = ros_node
+    if bridge is None:
+        return jsonify({"success": False, "message": "ROS bridge is not ready"}), 503
+    ok, message = getattr(bridge, method_name)()
+    return jsonify({"success": ok, "message": message}), (200 if ok else 503)
 
 
 @app.route("/api/start", methods=["POST"])
 def start_detection():
-    if ros_node is None:
-        return jsonify({"success": False, "message": "ROS node not ready"}), 503
-    ok, msg = ros_node.call_start()
-    if ok:
-        return jsonify({"success": True, "message": msg})
-    return jsonify({"success": False, "message": msg}), 500
+    return _control_response("call_start")
 
 
 @app.route("/api/stop", methods=["POST"])
 def stop_detection():
-    with state_lock:
-        state["detecting"] = False
-    return jsonify({"success": True, "message": "detection stopped"})
+    return _control_response("call_stop")
+
+
+@app.route("/api/reset_tracker", methods=["POST"])
+def reset_tracker():
+    return _control_response("call_reset")
+
+
+@app.route("/api/set_track", methods=["POST"])
+def set_track():
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("enabled", False))
+    if ros_node is None:
+        return jsonify({"success": False, "message": "ROS bridge is not ready"}), 503
+    ok, message = ros_node.call_set_tracking(enabled)
+    return jsonify({"success": ok, "message": message, "is_track": enabled}), (200 if ok else 503)
 
 
 @app.route("/api/save", methods=["POST"])
@@ -217,50 +387,39 @@ def save_frame():
     jpeg = _grab_frame_bytes()
     if jpeg is None:
         return jsonify({"success": False, "message": "could not grab frame"}), 500
-    ts       = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    filename = f"frame_{ts}.jpg"
-    path     = os.path.join(SAVE_DIR, filename)
-    with open(path, "wb") as f:
-        f.write(jpeg)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = "frame_%s.jpg" % timestamp
+    with open(os.path.join(SAVE_DIR, filename), "wb") as output:
+        output.write(jpeg)
     return jsonify({"success": True, "filename": filename})
-
-
-@app.route("/api/set_track", methods=["POST"])
-def set_track():
-    data    = request.get_json(force=True)
-    enabled = str(data.get("enabled", False)).lower()
-    subprocess.Popen(["ros2", "param", "set", "/yolov8_trt", "is_track", enabled])
-    return jsonify({"success": True, "is_track": enabled})
-
-
-@app.route("/api/reset_tracker", methods=["POST"])
-def reset_tracker():
-    broadcast(json.dumps({"type": "tracker_reset"}))
-    return jsonify({"success": True})
 
 
 @app.route("/api/images")
 def list_images():
     files = sorted(Path(SAVE_DIR).glob("*.jpg"), reverse=True)
-    return jsonify([{
-        "filename": f.name,
-        "url":      f"/saved/{f.name}",
-        "size":     f.stat().st_size,
-        "time":     datetime.datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
-    } for f in files])
+    return jsonify([
+        {
+            "filename": item.name,
+            "url": "/saved/%s" % item.name,
+            "size": item.stat().st_size,
+            "time": datetime.datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+        }
+        for item in files
+    ])
 
 
 @app.route("/api/images/<filename>", methods=["DELETE"])
 def delete_image(filename):
+    if Path(filename).name != filename:
+        return jsonify({"success": False, "message": "invalid filename"}), 400
     path = Path(SAVE_DIR) / filename
     if not path.exists():
-        return jsonify({"success": False}), 404
+        return jsonify({"success": False, "message": "image not found"}), 404
     path.unlink()
     return jsonify({"success": True})
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    _init_db()
     threading.Thread(target=_ros_spin, daemon=True).start()
-    time.sleep(1.0)
-    app.run(host="0.0.0.0", port=API_PORT, threaded=True)
+    app.run(host="0.0.0.0", port=API_PORT, threaded=True, use_reloader=False)
