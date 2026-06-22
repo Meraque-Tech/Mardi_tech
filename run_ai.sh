@@ -20,3 +20,7 @@ docker exec -it yolov8-trt-bed-detect-nano \
   bash -c "source /opt/ros/humble/install/setup.bash && source /ros2_ws/install/setup.bash && ros2 service call /bed_detection std_srvs/srv/Trigger {}"
 
 docker logs -f yolov8-trt-bed-detect-nano
+
+
+# docker exec -it yolov8-trt-bed-detect-nano bash
+# docker rm -f yolov8-trt-bed-detect-nano
