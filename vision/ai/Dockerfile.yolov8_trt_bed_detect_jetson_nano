@@ -44,8 +44,8 @@ RUN find /opt/ros /root -name "setup.bash" 2>/dev/null || echo "WARNING: setup.b
 WORKDIR /ros2_ws/src
 COPY yolov8_trt_bed_detect/ yolov8_trt_bed_detect/
 
-# Install web server dependencies (unpinned — let pip resolve for this Python version)
-RUN pip3 install --no-cache-dir fastapi "uvicorn[standard]" websockets
+# Install web server dependencies
+RUN pip3 install --no-cache-dir --ignore-installed flask flask-sock
 
 WORKDIR /ros2_ws
 RUN ROS_SETUP=$(find /opt/ros /root -name "setup.bash" 2>/dev/null | head -1) && \
