@@ -237,6 +237,7 @@ Then monitor output:
 ```bash
 ros2 topic echo /bed_detection_status
 ros2 topic echo /conf
+ros2 topic echo /class_counts
 ```
 
 ---
