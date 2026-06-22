@@ -168,7 +168,8 @@ int main(int argc, char *argv[]) {
             auto bed_msg = std_msgs::msg::UInt8();
 
             // per-class counts
-            std::map<int, int> class_counts = count_detections(frame, res, p.is_track, tracker);
+            bool is_track = node->get_parameter("is_track").as_bool();
+            std::map<int, int> class_counts = count_detections(frame, res, is_track, tracker);
             std::string counts_str;
             for (auto &kv : class_counts)
                 counts_str += "class" + std::to_string(kv.first) + ":" + std::to_string(kv.second) + " ";

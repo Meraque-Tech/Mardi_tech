@@ -240,6 +240,16 @@ ros2 topic echo /conf
 ros2 topic echo /class_counts
 ```
 
+Toggle tracking live without restarting the node:
+
+```bash
+# enable unique object tracking (cumulative counts)
+ros2 param set /yolov8_trt is_track true
+
+# disable (per-frame counts only)
+ros2 param set /yolov8_trt is_track false
+```
+
 ---
 
 ## One-line Docker run (after engine is built)
