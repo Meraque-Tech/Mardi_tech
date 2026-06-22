@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>YOLOv8 TRT Bed Detection</title>
+  <title>YOLOv8 TRT Obj Detection</title>
   <style>
     :root {
       color-scheme: dark; --bg:#0d1017; --card:#181c27; --line:#2a3042;
@@ -74,13 +74,13 @@
 <body>
 <main class="shell">
   <header>
-    <div class="row"><div class="logo">◉</div><div><h1>YOLOv8 TRT</h1><div class="sub">Bed detection dashboard</div></div></div>
+    <div class="row"><div class="logo">◉</div><div><h1>YOLOv8 TRT</h1><div class="sub">Obj detection dashboard</div></div></div>
     <div class="row connection"><span id="ws-dot" class="dot"></span><span id="ws-label" class="sub">Disconnected</span></div>
   </header>
 
   <section class="card status">
     <div class="status-item"><span class="muted">Detection</span><strong><span id="detect-badge" class="badge stopped">STOPPED</span></strong></div>
-    <div class="status-item"><span class="muted">Bed result</span><strong><span id="bed-badge" class="badge clear">CLEAR</span></strong></div>
+    <div class="status-item"><span class="muted">Obj result</span><strong><span id="bed-badge" class="badge clear">CLEAR</span></strong></div>
     <div class="status-item"><span class="muted">Confidence</span><strong id="confidence">0.000</strong></div>
     <div class="status-item"><span class="muted">Current total</span><strong id="current-total">0</strong></div>
     <div class="status-item updated"><span class="muted">Last count update</span><strong id="last-update">—</strong></div>
@@ -129,7 +129,7 @@
     <section class="card history-card">
       <div class="card-head"><div><h2>All counted class history</h2><span id="history-summary" class="muted">Loading…</span></div><button class="link" onclick="loadHistory(historyOffset)">Refresh</button></div>
       <div class="table-wrap">
-        <table><thead><tr><th>Time</th><th>Classes</th><th>Total</th><th>Bed</th><th>Confidence</th><th>Mode</th></tr></thead><tbody id="history-body"></tbody></table>
+        <table><thead><tr><th>Time</th><th>Classes</th><th>Total</th><th>Obj</th><th>Confidence</th><th>Mode</th></tr></thead><tbody id="history-body"></tbody></table>
       </div>
       <div class="pager"><button id="newer-btn" class="gray" onclick="changeHistory(-1)">Newer</button><button id="older-btn" class="gray" onclick="changeHistory(1)">Older</button></div>
     </section>
@@ -159,7 +159,7 @@
   function applySnapshot(data) {
     const running=Boolean(data.detecting), bed=Boolean(data.bed_status);
     const detect=document.getElementById('detect-badge');detect.textContent=running?'RUNNING':'STOPPED';detect.className=`badge ${running?'running':'stopped'}`;
-    const bedEl=document.getElementById('bed-badge');bedEl.textContent=bed?'BED FOUND':'CLEAR';bedEl.className=`badge ${bed?'found':'clear'}`;
+    const bedEl=document.getElementById('bed-badge');bedEl.textContent=bed?'OBJ FOUND':'CLEAR';bedEl.className=`badge ${bed?'found':'clear'}`;
     document.getElementById('confidence').textContent=Number(data.conf||0).toFixed(3);
     if(data.last_updated)document.getElementById('last-update').textContent=formatTime(data.last_updated);
     renderCounts(data.counts||{});
