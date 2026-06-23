@@ -3293,8 +3293,9 @@ def view_artifact(artifact: str, project: str = "runs/detect", name: str = "trai
 @app.get("/api/train/weights/{weight}")
 def download_weight(weight: str, project: str = "runs/detect", name: str = "train"):
     path = resolve_weight_path(project, name, weight)
+    timestamp = datetime.now(MYT).strftime("%Y%m%d_%H%M%S")
     return FileResponse(
         path,
         media_type="application/octet-stream",
-        filename=path.name,
+        filename=f"{weight}_{timestamp}.pt",
     )

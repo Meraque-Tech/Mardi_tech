@@ -1689,6 +1689,20 @@ function saveBlobWithBrowserDownload(blob, filename) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
+function responseDownloadFilename(response, fallback) {
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim());
+    } catch (_error) {
+      return utf8Match[1].trim();
+    }
+  }
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return filenameMatch ? filenameMatch[1].trim() : fallback;
+}
+
 async function apiJson(url, options = {}) {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
@@ -2102,38 +2116,15 @@ async function downloadWeight(weight) {
   button.disabled = true;
   button.textContent = "Downloading...";
   try {
-    const filename = `${weight}.pt`;
-    let directory = null;
-    if ("showDirectoryPicker" in window) {
-      try {
-        directory = await window.showDirectoryPicker();
-      } catch (error) {
-        if (error.name === "AbortError") {
-          return;
-        }
-        if (error.name !== "SecurityError") {
-          throw error;
-        }
-      }
-    }
-
-    setMessage(`Preparing ${filename}...`);
+    setMessage(`Preparing ${weight}.pt...`);
     const response = await fetch(weightDownloadUrl(weight));
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.detail || `Download failed: ${response.status}`);
     }
 
+    const filename = responseDownloadFilename(response, `${weight}.pt`);
     const blob = await response.blob();
-    if (directory) {
-      const file = await directory.getFileHandle(filename, { create: true });
-      const writable = await file.createWritable();
-      await writable.write(blob);
-      await writable.close();
-      setMessage(`Saved ${filename}.`);
-      return;
-    }
-
     saveBlobWithBrowserDownload(blob, filename);
     setMessage(`Downloading ${filename}.`);
   } catch (error) {
