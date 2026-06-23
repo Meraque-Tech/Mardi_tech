@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>YOLOv8 Training</title>
+    <title>YOLO Training</title>
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body>
     <main class="app-shell">
       <header class="topbar">
         <div>
-          <h1>YOLOv8 Training</h1>
+          <h1>YOLO Training</h1>
           <p id="data-root">Loading configuration...</p>
         </div>
         <div class="status-pill status-idle" id="status-pill" role="status" aria-live="polite">Idle</div>
@@ -21,7 +21,7 @@
           <summary>
             <span>
               <strong id="guide-title">How to train a model</strong>
-              <small>A quick YOLOv8 workflow</small>
+              <small>A quick YOLO workflow</small>
             </span>
             <span class="guide-progress" id="guide-progress" role="status" aria-live="polite">Step 1 of 5</span>
           </summary>
@@ -53,7 +53,7 @@
               <span class="guide-step-marker" aria-hidden="true">4</span>
               <div>
                 <strong>Train and monitor</strong>
-                <p>Click Start and watch the status, metrics, and logs while YOLOv8 trains.</p>
+                <p>Click Start and watch the status, metrics, and logs while YOLO trains.</p>
               </div>
             </li>
             <li data-guide-step="5">
@@ -69,9 +69,14 @@
       </section>
 
       <section class="workspace">
-        <div class="panel dataset-panel">
+        <div class="panel dataset-panel collapsible-panel" id="dataset-panel" data-panel-key="dataset" data-default-expanded="true">
           <div class="panel-header">
-            <h2>Dataset</h2>
+            <div class="panel-heading">
+              <button class="secondary compact section-toggle" type="button" data-panel-toggle="dataset" aria-expanded="true" aria-label="Collapse Dataset section">
+                <span aria-hidden="true">▾</span>
+              </button>
+              <h2>Dataset</h2>
+            </div>
             <div class="button-row">
               <button id="download-dataset" class="secondary" type="button" disabled>Download ZIP</button>
               <button id="prepare-dataset" type="button">Prepare Dataset</button>
@@ -125,7 +130,7 @@
                 <input id="rf-version" type="number" min="1">
               </label>
             </div>
-            <p class="source-note">Roboflow provides the YOLOv8 format and train/validation/test split for this dataset version.</p>
+            <p class="source-note">Roboflow provides the YOLO format and train/validation/test split for this dataset version.</p>
             <label class="checkbox-row">
               <input id="roboflow-force-split" type="checkbox">
               Rebuild downloaded train/val/test split
@@ -181,9 +186,14 @@
         </div>
 
         <div class="workspace-side">
-          <div class="panel training-panel">
+          <div class="panel training-panel collapsible-panel" id="training-panel" data-panel-key="training" data-default-expanded="true">
           <div class="panel-header">
-            <h2>Training</h2>
+            <div class="panel-heading">
+              <button class="secondary compact section-toggle" type="button" data-panel-toggle="training" aria-expanded="true" aria-label="Collapse Training section">
+                <span aria-hidden="true">▾</span>
+              </button>
+              <h2>Training</h2>
+            </div>
             <div class="button-row">
               <button id="start-training" type="button" disabled>Start</button>
               <button id="stop-training" class="danger" type="button" disabled>Stop</button>
@@ -262,9 +272,14 @@
 
           </div>
 
-          <section class="panel gpu-panel" aria-labelledby="gpu-monitor-title">
+          <section class="panel gpu-panel collapsible-panel is-collapsed" id="gpu-monitor-panel" data-panel-key="gpu" data-default-expanded="false" aria-labelledby="gpu-monitor-title">
             <div class="panel-header">
-              <h2 id="gpu-monitor-title">GPU Monitor</h2>
+              <div class="panel-heading">
+                <button class="secondary compact section-toggle" type="button" data-panel-toggle="gpu" aria-expanded="false" aria-label="Expand GPU Monitor section">
+                  <span aria-hidden="true">▾</span>
+                </button>
+                <h2 id="gpu-monitor-title">GPU Monitor</h2>
+              </div>
               <span class="gpu-status" id="gpu-status">Checking...</span>
             </div>
             <div class="gpu-cards" id="gpu-cards">
@@ -276,9 +291,15 @@
 
       <div class="message status-message" id="message" role="status" aria-live="polite">Ready. Prepare a dataset to begin.</div>
 
-      <section class="panel advanced-section">
-          <details class="advanced-panel">
-            <summary>Advanced Fine-Tuning</summary>
+      <section class="panel advanced-section advanced-panel collapsible-panel is-collapsed" id="advanced-fine-tuning-panel" data-panel-key="advanced" data-default-expanded="false">
+            <div class="panel-header">
+              <div class="panel-heading">
+                <button class="secondary compact section-toggle" type="button" data-panel-toggle="advanced" aria-expanded="false" aria-label="Expand Advanced Fine-Tuning section">
+                  <span aria-hidden="true">▾</span>
+                </button>
+                <h2>Advanced Fine-Tuning</h2>
+              </div>
+            </div>
 
             <div class="preset-toolbar" role="group" aria-label="Training presets">
               <button class="secondary compact" type="button" aria-pressed="false" data-preset="stable">Stable</button>
@@ -377,12 +398,16 @@
               <span class="tooltip-label" tabindex="0" data-tooltip="Reuse the same project/run folder instead of creating train-2, train-3, and so on.">Reuse output folder</span>
             </label>
             </div>
-          </details>
       </section>
 
-      <section class="panel logs-panel">
+      <section class="panel logs-panel collapsible-panel is-collapsed" id="training-logs-panel" data-panel-key="logs" data-default-expanded="false">
         <div class="panel-header">
-          <h2>Training Progress &amp; Logs</h2>
+          <div class="panel-heading">
+            <button class="secondary compact section-toggle" type="button" data-panel-toggle="logs" aria-expanded="false" aria-label="Expand Training Progress and Logs section">
+              <span aria-hidden="true">▾</span>
+            </button>
+            <h2>Training Progress &amp; Logs</h2>
+          </div>
           <div class="button-row">
             <button id="log-mode-recent" class="secondary compact active-control" type="button" aria-pressed="true" data-log-mode="recent">Recent</button>
             <button id="log-mode-full" class="secondary compact" type="button" aria-pressed="false" data-log-mode="full">Full</button>
@@ -417,9 +442,14 @@
         <pre id="logs" tabindex="0" aria-label="Training logs"></pre>
       </section>
 
-      <section class="panel training-results-panel" id="training-results-panel">
+      <section class="panel training-results-panel collapsible-panel is-collapsed" id="training-results-panel" data-panel-key="results" data-default-expanded="false">
           <div class="panel-header">
-            <h2>Training Results</h2>
+            <div class="panel-heading">
+              <button class="secondary compact section-toggle" type="button" data-panel-toggle="results" aria-expanded="false" aria-label="Expand Training Results section">
+                <span aria-hidden="true">▾</span>
+              </button>
+              <h2>Training Results</h2>
+            </div>
           </div>
 
           <div class="weights-toolbar">

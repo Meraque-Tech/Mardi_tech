@@ -72,6 +72,12 @@ Then open:
 http://localhost:8000
 ```
 
+The Dataset, Training, GPU Monitor, Advanced Fine-Tuning, Training Progress &
+Logs, and Training Results panels use the same collapsible chevron control.
+Their open/closed states are saved in browser storage. Logs and Results open
+automatically when training starts, Results opens again when a run completes,
+and reopening Results redraws its charts.
+
 ## Run With CUDA Container
 
 Use this when you want the UI and training process to run inside a CUDA-enabled

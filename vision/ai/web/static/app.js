@@ -138,6 +138,57 @@ function setMessage(text, isError = false) {
   message.classList.toggle("error", isError);
 }
 
+const PANEL_STORAGE_PREFIX = "yolov8-panel-expanded-";
+
+function setPanelExpanded(panelKey, expanded, { persist = true } = {}) {
+  const panel = document.querySelector(`[data-panel-key="${panelKey}"]`);
+  const toggle = document.querySelector(`[data-panel-toggle="${panelKey}"]`);
+  if (!panel || !toggle) {
+    return;
+  }
+
+  const sectionName = panel.querySelector("h2")?.textContent?.trim() || "section";
+  panel.classList.toggle("is-collapsed", !expanded);
+  toggle.setAttribute("aria-expanded", String(expanded));
+  toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${sectionName} section`);
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(`${PANEL_STORAGE_PREFIX}${panelKey}`, String(expanded));
+    } catch (error) {
+      // Collapsing still works when browser storage is unavailable.
+    }
+  }
+  if (expanded && panelKey === "results") {
+    redrawChartsSoon();
+  }
+}
+
+function initializeCollapsiblePanels() {
+  document.querySelectorAll("[data-panel-key]").forEach((panel) => {
+    const panelKey = panel.dataset.panelKey;
+    let expanded = panel.dataset.defaultExpanded !== "false";
+    try {
+      const saved = window.localStorage.getItem(`${PANEL_STORAGE_PREFIX}${panelKey}`);
+      if (saved !== null) {
+        expanded = saved === "true";
+      }
+    } catch (error) {
+      // Use the markup default when browser storage is unavailable.
+    }
+    setPanelExpanded(panelKey, expanded, { persist: false });
+  });
+
+  document.querySelectorAll("[data-panel-toggle]").forEach((toggle) => {
+    toggle.addEventListener("click", () => {
+      setPanelExpanded(
+        toggle.dataset.panelToggle,
+        toggle.getAttribute("aria-expanded") !== "true",
+      );
+    });
+  });
+}
+
 function updateDatasetPreparationProgress(stage, percent, detail, indeterminate = false) {
   const progress = $("dataset-preparation-progress");
   const track = $("dataset-preparation-track");
@@ -1567,6 +1618,8 @@ async function startTraining() {
     state.running = true;
     state.trainingStarted = true;
     state.trainingCompleted = false;
+    setPanelExpanded("logs", true);
+    setPanelExpanded("results", true);
     state.lastDataRefresh = 0;
     setMessage(`${result.message}\nPID: ${result.pid}`);
     updateCurrentRunDisplay({ ...(result.training_run || {}), running: true });
@@ -1829,6 +1882,10 @@ async function pollStatus() {
     if (state.running) {
       state.trainingStarted = true;
       state.trainingOutcome = "";
+      if (!wasRunning) {
+        setPanelExpanded("logs", true);
+        setPanelExpanded("results", true);
+      }
       setStatusPhase("training");
     } else if (wasRunning && state.stopRequested) {
       state.stopRequested = false;
@@ -1838,6 +1895,7 @@ async function pollStatus() {
     } else if (wasRunning && status.returncode === 0) {
       state.trainingCompleted = true;
       state.trainingOutcome = "completed";
+      setPanelExpanded("results", true);
       setStatusPhase("completed");
       setMessage("Training completed. Results and model weights are ready to review.");
     } else if (wasRunning && status.returncode !== null && status.returncode !== 0) {
@@ -2025,6 +2083,7 @@ try {
 
 loadConfig().catch((error) => setMessage(error.message, true));
 initializeTooltips();
+initializeCollapsiblePanels();
 updateFileSelection();
 updateSplitTotal();
 syncDatasetSourceControls();
