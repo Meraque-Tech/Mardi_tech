@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import html
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
+
+
+MYT = timezone(timedelta(hours=8), name="MYT")
 
 
 def _text(value) -> str:
@@ -25,24 +28,54 @@ def _metric(value) -> str:
         return str(value)
 
 
+def _human_datetime_myt(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=MYT)
+    else:
+        value = value.astimezone(MYT)
+    date_text = value.strftime("%d %B %Y")
+    time_text = value.strftime("%I:%M:%S %p").lstrip("0")
+    return f"{date_text}, {time_text} (MYT, GMT+8)"
+
+
+def _format_myt(value) -> str:
+    if not value:
+        return "N/A"
+    if isinstance(value, datetime):
+        return _human_datetime_myt(value)
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return str(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=MYT)
+    else:
+        parsed = parsed.astimezone(MYT)
+    return _human_datetime_myt(parsed)
+
+
 def _run_timing(run_dir: Path, context: dict) -> tuple[str, str, str]:
     started = context.get("last_started_at") or context.get("created_at") or "N/A"
     results_path = run_dir / "results.csv"
     if not results_path.is_file():
-        return str(started), "N/A", "N/A"
-    completed = datetime.fromtimestamp(results_path.stat().st_mtime).astimezone()
+        return _format_myt(started), "N/A", "N/A"
+    completed = datetime.fromtimestamp(results_path.stat().st_mtime, tz=MYT)
     duration = "N/A"
+    formatted_started = _format_myt(started)
     try:
         start_time = datetime.fromisoformat(str(started))
         if start_time.tzinfo is None:
-            start_time = start_time.astimezone()
+            start_time = start_time.replace(tzinfo=MYT)
+        else:
+            start_time = start_time.astimezone(MYT)
+        formatted_started = _human_datetime_myt(start_time)
         seconds = max(0, int((completed - start_time).total_seconds()))
         hours, remainder = divmod(seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         duration = f"{hours:d}h {minutes:02d}m {seconds:02d}s"
     except (TypeError, ValueError):
         pass
-    return str(started), completed.isoformat(timespec="seconds"), duration
+    return formatted_started, _human_datetime_myt(completed), duration
 
 
 def _load_yaml(path: Path) -> dict:
@@ -328,7 +361,10 @@ def _add_dataset(builder: _ReportBuilder, run_dir: Path, context: dict):
 
 def _add_training(builder: _ReportBuilder, run_dir: Path, context: dict, metrics: dict):
     builder.paragraph("YOLOv8 Model Training Report", "ReportTitle")
-    builder.paragraph(f"Generated {datetime.now().astimezone().isoformat(timespec='seconds')}", "Small")
+    builder.paragraph(
+        f"Generated {_human_datetime_myt(datetime.now(MYT))}",
+        "Small",
+    )
     builder.heading("Run Overview")
     started_at, completed_at, duration = _run_timing(run_dir, context)
     builder.table([
@@ -425,6 +461,7 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
     parameters = context.get("parameters") or {}
     builder.table([
         ["Test run directory", test_dir],
+        ["Test started", _format_myt(context.get("created_at"))],
         ["Evaluated split", metrics.get("split", context.get("dataset_split", "test"))],
         ["Dataset source", context.get("dataset_source")],
         ["Dataset YAML", metrics.get("dataset_yaml", context.get("dataset_yaml"))],
