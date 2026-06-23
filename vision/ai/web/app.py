@@ -922,10 +922,25 @@ def best_metric_summary(history: list[dict]) -> dict:
 
 
 def artifact_status(path: Path) -> dict:
+    available = path.is_file()
+    stat = path.stat() if available else None
     return {
-        "available": path.is_file(),
+        "available": available,
         "path": str(path),
-        "size": path.stat().st_size if path.is_file() else 0,
+        "size": stat.st_size if stat else 0,
+        "modified_at": str(stat.st_mtime_ns) if stat else "0",
+    }
+
+
+def run_artifact_statuses(run_dir: Path) -> dict:
+    return {
+        "results_csv": artifact_status(run_dir / "results.csv"),
+        "accuracy_graph": artifact_status(run_dir / "accuracy_by_epoch.png"),
+        "loss_graph": artifact_status(run_dir / "loss_by_epoch.png"),
+        "confusion_matrix": artifact_status(run_dir / "confusion_matrix.png"),
+        "confusion_matrix_normalized": artifact_status(
+            run_dir / "confusion_matrix_normalized.png"
+        ),
     }
 
 
@@ -936,17 +951,18 @@ def read_run_metrics(run_dir: Path) -> dict:
             "available": False,
             "run_dir": str(run_dir),
             "results_csv": "",
-            "artifacts": {
-                "results_csv": artifact_status(results_path),
-                "accuracy_graph": artifact_status(run_dir / "accuracy_by_epoch.png"),
-                "loss_graph": artifact_status(run_dir / "loss_by_epoch.png"),
-            },
+            "artifacts": run_artifact_statuses(run_dir),
         }
 
     with results_path.open("r", encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
     if not rows:
-        return {"available": False, "run_dir": str(run_dir), "results_csv": str(results_path)}
+        return {
+            "available": False,
+            "run_dir": str(run_dir),
+            "results_csv": str(results_path),
+            "artifacts": run_artifact_statuses(run_dir),
+        }
 
     row = rows[-1]
     precision = float_value(row, "metrics/precision(B)")
@@ -974,11 +990,7 @@ def read_run_metrics(run_dir: Path) -> dict:
         "map50_95": format_metric(map50_95),
         "history": history,
         "best": best_metric_summary(history),
-        "artifacts": {
-            "results_csv": artifact_status(results_path),
-            "accuracy_graph": artifact_status(run_dir / "accuracy_by_epoch.png"),
-            "loss_graph": artifact_status(run_dir / "loss_by_epoch.png"),
-        },
+        "artifacts": run_artifact_statuses(run_dir),
         "note": "Macro and weighted F1 are calculated from final per-class validation rows when available.",
     }
 
@@ -1433,6 +1445,8 @@ def resolve_artifact_path(request: ArtifactRequest) -> Path:
         "results_csv": run_dir / "results.csv",
         "accuracy_graph": run_dir / "accuracy_by_epoch.png",
         "loss_graph": run_dir / "loss_by_epoch.png",
+        "confusion_matrix": run_dir / "confusion_matrix.png",
+        "confusion_matrix_normalized": run_dir / "confusion_matrix_normalized.png",
         "best": run_dir / "weights" / "best.pt",
         "last": run_dir / "weights" / "last.pt",
     }
@@ -2401,6 +2415,16 @@ def download_artifact(request: ArtifactRequest):
     path = resolve_artifact_path(request)
     media_type = "text/csv" if path.suffix == ".csv" else "image/png" if path.suffix == ".png" else "application/octet-stream"
     return FileResponse(path, media_type=media_type, filename=path.name)
+
+
+@app.get("/api/train/artifacts/view/{artifact}")
+def view_artifact(artifact: str, project: str = "runs/detect", name: str = "train"):
+    path = resolve_artifact_path(
+        ArtifactRequest(project=project, name=name, artifact=artifact)
+    )
+    if path.suffix.lower() != ".png":
+        raise HTTPException(status_code=400, detail="Only image artifacts can be viewed.")
+    return FileResponse(path, media_type="image/png")
 
 
 @app.get("/api/train/weights/{weight}")

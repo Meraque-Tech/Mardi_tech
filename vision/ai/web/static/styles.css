@@ -1151,6 +1151,7 @@ textarea:focus {
 .training-results-panel:not(.has-results) .metrics-grid,
 .training-results-panel:not(.has-results) .best-metrics,
 .training-results-panel:not(.has-results) .charts-grid,
+.training-results-panel:not(.has-results) .confusion-matrix-panel,
 .training-results-panel:not(.has-results) .artifact-toolbar,
 .training-results-panel:not(.has-results) .class-metrics {
   display: none;
@@ -1213,6 +1214,73 @@ textarea:focus {
   width: 100%;
   height: 220px;
   margin-top: 8px;
+}
+
+.confusion-matrix-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.confusion-matrix-panel .field-header p,
+.confusion-matrix-panel > p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.confusion-matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.confusion-matrix-grid:empty {
+  display: none;
+}
+
+.confusion-matrix-grid figure {
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fafb;
+}
+
+.confusion-matrix-grid figcaption {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.confusion-matrix-grid a {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.confusion-matrix-grid img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.confusion-axis-label {
+  position: absolute;
+  bottom: 5.5%;
+  left: 50%;
+  padding: 2px 0.55em;
+  transform: translateX(-50%);
+  background: #fff;
+  color: #111;
+  font-size: clamp(7px, 1.2vw, 12px);
+  line-height: 1;
+  pointer-events: none;
 }
 
 .class-metrics {
@@ -1288,6 +1356,7 @@ pre:focus {
   .grid.three,
   .metrics-grid,
   .charts-grid,
+  .confusion-matrix-grid,
   .summary-grid,
   .best-grid {
     grid-template-columns: 1fr;

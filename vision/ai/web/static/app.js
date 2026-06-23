@@ -1108,6 +1108,57 @@ function setArtifactButtons(artifacts) {
   $("download-loss-graph").disabled = !isEnabled("loss_graph") || state.downloads.has("loss_graph");
 }
 
+function artifactViewUrl(artifact, target, status) {
+  const params = new URLSearchParams({
+    project: target.project,
+    name: target.name,
+  });
+  params.set("v", String(status.modified_at || status.size || 0));
+  return `/api/train/artifacts/view/${encodeURIComponent(artifact)}?${params.toString()}`;
+}
+
+function renderConfusionMatrices(artifacts = {}, target = weightTarget()) {
+  const variants = [
+    {
+      artifact: "confusion_matrix_normalized",
+      card: "confusion-matrix-normalized-card",
+      image: "confusion-matrix-normalized-image",
+      link: "confusion-matrix-normalized-link",
+    },
+    {
+      artifact: "confusion_matrix",
+      card: "confusion-matrix-card",
+      image: "confusion-matrix-image",
+      link: "confusion-matrix-link",
+    },
+  ];
+  let availableCount = 0;
+  variants.forEach((variant) => {
+    const status = artifacts?.[variant.artifact] || {};
+    const available = Boolean(status.available);
+    const card = $(variant.card);
+    const image = $(variant.image);
+    const link = $(variant.link);
+    card.hidden = !available;
+    if (!available) {
+      image.removeAttribute("src");
+      link.removeAttribute("href");
+      return;
+    }
+
+    availableCount += 1;
+    const url = artifactViewUrl(variant.artifact, target, status);
+    if (image.getAttribute("src") !== url) {
+      image.src = url;
+    }
+    link.href = url;
+  });
+
+  $("confusion-matrix-status").textContent = availableCount
+    ? "Click a matrix to open the full-resolution validation plot."
+    : "The confusion matrix will appear after validation plots are generated.";
+}
+
 function resetCharts() {
   drawLineChart("accuracy-chart", [], []);
   drawLineChart("loss-chart", [], []);
@@ -1613,6 +1664,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
       renderClassMetrics([]);
       resetCharts();
       setArtifactButtons(metrics.artifacts || false);
+      renderConfusionMatrices(metrics.artifacts || {}, target);
       $("metrics-status").textContent = "No results.csv found for this run yet.";
       return;
     }
@@ -1629,6 +1681,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     renderClassMetrics(metrics.per_class);
     renderMetricCharts(metrics.history);
     setArtifactButtons(metrics.artifacts || true);
+    renderConfusionMatrices(metrics.artifacts || {}, target);
     $("metrics-status").textContent = `Epoch ${metrics.epoch}. ${metrics.note}`;
   } catch (error) {
     if (revision !== state.targetRevision) {
@@ -1637,6 +1690,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     $("training-results-panel").classList.remove("has-results");
     resetCharts();
     setArtifactButtons(false);
+    renderConfusionMatrices({}, target);
     $("metrics-status").textContent = error.message;
   }
 }

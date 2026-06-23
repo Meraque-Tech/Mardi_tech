@@ -375,6 +375,7 @@ mAP50
 mAP50-95
 Detection performance graph by epoch
 Loss graph by epoch
+Raw and normalized validation confusion matrices
 Best epoch summary, including lowest training and validation losses
 ```
 
@@ -382,6 +383,11 @@ Best epoch summary, including lowest training and validation losses
 uses the same per-class scores weighted by class instance counts. Both are
 available after the final per-class validation rows have been written to the
 training log.
+
+When Ultralytics has generated `confusion_matrix.png` and
+`confusion_matrix_normalized.png`, the UI displays both plots for the resolved
+training run. The x-axis is labeled `Actual` and the y-axis is labeled
+`Predicted`. Click either matrix to open its full-resolution image.
 
 ## Outputs And Downloads
 

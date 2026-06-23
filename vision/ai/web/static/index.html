@@ -457,6 +457,31 @@
                 <canvas id="loss-chart" width="520" height="220"></canvas>
               </div>
             </div>
+            <section class="confusion-matrix-panel" id="confusion-matrix-panel" aria-labelledby="confusion-matrix-title">
+              <div class="field-header">
+                <div>
+                  <h4 id="confusion-matrix-title">Confusion Matrix</h4>
+                  <p>Validation predictions by actual and predicted class.</p>
+                </div>
+              </div>
+              <div class="confusion-matrix-grid">
+                <figure id="confusion-matrix-normalized-card" hidden>
+                  <figcaption>Normalized</figcaption>
+                  <a id="confusion-matrix-normalized-link" target="_blank" rel="noopener">
+                    <img id="confusion-matrix-normalized-image" alt="Normalized validation confusion matrix">
+                    <span class="confusion-axis-label" aria-hidden="true">Actual</span>
+                  </a>
+                </figure>
+                <figure id="confusion-matrix-card" hidden>
+                  <figcaption>Raw counts</figcaption>
+                  <a id="confusion-matrix-link" target="_blank" rel="noopener">
+                    <img id="confusion-matrix-image" alt="Validation confusion matrix with raw counts">
+                    <span class="confusion-axis-label" aria-hidden="true">Actual</span>
+                  </a>
+                </figure>
+              </div>
+              <p id="confusion-matrix-status">The confusion matrix will appear after validation plots are generated.</p>
+            </section>
             <div class="artifact-toolbar">
               <button id="download-results-csv" class="secondary compact" type="button" disabled>Download results.csv</button>
               <button id="download-accuracy-graph" class="secondary compact" type="button" disabled>Download performance graph</button>
