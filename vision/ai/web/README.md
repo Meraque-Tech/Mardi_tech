@@ -12,6 +12,7 @@ vision/ai/train/train_yolov8.py
 
 ```text
 app.py                       FastAPI backend
+report_generator.py          Training and combined test PDF reports
 static/                      HTML, CSS, and JavaScript UI
 requirements.txt             Python dependencies
 .env                         Local Roboflow/runtime settings
@@ -77,6 +78,14 @@ Logs, and Training Results panels use the same collapsible chevron control.
 Their open/closed states are saved in browser storage. Logs and Results open
 automatically when training starts, Results opens again when a run completes,
 and reopening Results redraws its charts.
+
+Completed training runs provide a **Download Report** action containing the
+dataset snapshot, annotated class samples, hyperparameters, training and
+validation metrics, per-class results, and available plots. A test run made
+with a training run's `best.pt` also provides **Download Report (including
+test)** with a separate test section and validation-versus-test comparison.
+Tests using standalone uploaded weights are not presented as linked training
+runs, so the combined report remains unavailable for those tests.
 
 ## Run With CUDA Container
 

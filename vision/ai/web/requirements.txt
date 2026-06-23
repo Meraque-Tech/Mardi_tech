@@ -6,3 +6,4 @@ PyYAML
 roboflow
 ultralytics
 scikit-learn
+reportlab

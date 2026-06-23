@@ -1184,6 +1184,30 @@ textarea:focus {
   margin-top: 10px;
 }
 
+#download-training-report,
+#download-combined-report {
+  white-space: nowrap;
+}
+
+button.report-download-button {
+  border-color: #2f6f9f;
+  background: #2f6f9f;
+  color: #fff;
+}
+
+button.report-download-button:hover {
+  border-color: #245779;
+  background: #245779;
+  color: #fff;
+}
+
+button.report-download-button:disabled,
+button.report-download-button:disabled:hover {
+  border-color: #8ba9bf;
+  background: #8ba9bf;
+  color: #fff;
+}
+
 .advanced-group {
   margin-top: 14px;
   padding: 12px;

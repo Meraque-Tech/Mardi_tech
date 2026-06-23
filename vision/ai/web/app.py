@@ -5,6 +5,7 @@ import csv
 import json
 import math
 import os
+import platform
 import re
 import shutil
 import signal
@@ -15,6 +16,7 @@ import time
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -64,6 +66,9 @@ WEB_TEST_PROGRESS_RE = re.compile(
 WEB_TEST_RUN_DIR_RE = re.compile(r"^WEB_TEST_RUN_DIR\s+path=(.+)$")
 RUN_DIRECTORY_PREFIXES = ("Logging results to ", "Results saved to ")
 SPLIT_METADATA_FILE = ".split_metadata.json"
+DATASET_SUMMARY_FILE = ".web_dataset_summary.json"
+TRAINING_REPORT_CONTEXT_FILE = "training_report_context.json"
+TEST_REPORT_CONTEXT_FILE = "test_report_context.json"
 
 app = FastAPI(title="YOLOv8 Training UI")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -163,6 +168,13 @@ def form_bool(value) -> bool:
         return value
     normalized = str(value or "").strip().lower()
     return normalized in {"1", "true", "yes", "y", "on"}
+
+
+def installed_version(package: str) -> str:
+    try:
+        return package_version(package)
+    except PackageNotFoundError:
+        return "unknown"
 
 
 def update_dataset_preparation(
@@ -406,10 +418,17 @@ def dataset_response(
         classes = read_yaml_class_names(yaml_path)
     except HTTPException:
         classes = []
+    summary = inspect_dataset_yaml(yaml_path, classes, progress_callback)
+    try:
+        (yaml_path.parent / DATASET_SUMMARY_FILE).write_text(
+            json.dumps(summary, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        pass
     return {
         "dataset_yaml": str(yaml_path),
         "classes": classes,
-        "summary": inspect_dataset_yaml(yaml_path, classes, progress_callback),
+        "summary": summary,
         "message": message,
     }
 
@@ -1505,6 +1524,51 @@ def should_write_log_line(line: str) -> bool:
     return True
 
 
+def read_json_object(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def write_json_object(path: Path, payload: dict):
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def cached_dataset_summary(yaml_path: Path) -> dict:
+    summary = read_json_object(yaml_path.parent / DATASET_SUMMARY_FILE)
+    if summary:
+        return summary
+    try:
+        classes = read_yaml_class_names(yaml_path)
+        summary = inspect_dataset_yaml(yaml_path, classes)
+    except (HTTPException, OSError, yaml.YAMLError):
+        return {}
+    write_json_object(yaml_path.parent / DATASET_SUMMARY_FILE, summary)
+    return summary
+
+
+def persist_training_report_context(run_dir: Path):
+    if training_run_info is None:
+        return
+    context = training_run_info.get("report_context")
+    if isinstance(context, dict):
+        write_json_object(run_dir / TRAINING_REPORT_CONTEXT_FILE, context)
+
+
+def persist_test_report_context(run_dir: Path):
+    if test_run_info is None:
+        return
+    context = test_run_info.get("report_context")
+    if isinstance(context, dict):
+        write_json_object(run_dir / TEST_REPORT_CONTEXT_FILE, context)
+
+
 def capture_training_run_dir(line: str):
     global training_run_info
     prefix = next((item for item in RUN_DIRECTORY_PREFIXES if line.startswith(item)), None)
@@ -1519,6 +1583,7 @@ def capture_training_run_dir(line: str):
 
     training_run_info["run_dir"] = str(run_dir)
     training_run_info["resolution_type"] = "actual"
+    persist_training_report_context(run_dir)
 
 
 def capture_epoch_progress(line: str) -> bool:
@@ -1545,6 +1610,7 @@ def capture_test_run_dir(line: str):
         except HTTPException:
             return
         test_run_info["run_dir"] = str(run_dir)
+        persist_test_report_context(run_dir)
         return
 
     prefix = next((item for item in RUN_DIRECTORY_PREFIXES if line.startswith(item)), None)
@@ -1557,6 +1623,7 @@ def capture_test_run_dir(line: str):
     except HTTPException:
         return
     test_run_info["run_dir"] = str(run_dir)
+    persist_test_report_context(run_dir)
 
 
 def capture_test_progress(line: str) -> bool:
@@ -1856,6 +1923,8 @@ def current_status() -> dict:
             run_info.setdefault("run_dir", "")
             run_info["resolution_type"] = "not_found"
 
+    progress = epoch_progress(run_info, running)
+    run_info.pop("report_context", None)
     return {
         "running": running,
         "returncode": returncode,
@@ -1863,7 +1932,7 @@ def current_status() -> dict:
         "log_file": str(LOG_FILE),
         "history_log_file": str(training_log_file) if training_log_file else "",
         "training_run": run_info,
-        "epoch_progress": epoch_progress(run_info, running),
+        "epoch_progress": progress,
     }
 
 
@@ -1926,9 +1995,40 @@ def read_test_metrics(run_dir: Path) -> dict:
             "available": True,
             "run_dir": str(run_dir),
             "artifacts": run_test_artifact_statuses(run_dir),
+            "combined_report_available": bool(
+                read_json_object(run_dir / TEST_REPORT_CONTEXT_FILE).get("training_run_dir")
+            ),
         }
     )
     return payload
+
+
+def load_training_report_context(run_dir: Path) -> dict:
+    context = read_json_object(run_dir / TRAINING_REPORT_CONTEXT_FILE)
+    args = read_json_object(run_dir / "args.json")
+    if not args:
+        try:
+            args_payload = yaml.safe_load((run_dir / "args.yaml").read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            args_payload = {}
+        args = args_payload if isinstance(args_payload, dict) else {}
+
+    dataset_value = context.get("dataset_yaml") or args.get("data") or ""
+    dataset_path = Path(str(dataset_value)).expanduser() if dataset_value else None
+    if dataset_path is not None and not dataset_path.is_absolute():
+        dataset_path = (REPO_ROOT / dataset_path).resolve()
+    if dataset_path is not None and dataset_path.is_file():
+        context["dataset_yaml"] = str(dataset_path)
+        if not context.get("dataset_summary"):
+            context["dataset_summary"] = cached_dataset_summary(dataset_path)
+    stored_hyperparameters = context.get("hyperparameters")
+    if not isinstance(stored_hyperparameters, dict):
+        stored_hyperparameters = {}
+    context["hyperparameters"] = {**args, **stored_hyperparameters}
+    context.setdefault("model", args.get("model", "Unknown"))
+    context.setdefault("pretrained", args.get("pretrained", True))
+    context.setdefault("device", args.get("device", "auto"))
+    return context
 
 
 def resolve_test_artifact_path(artifact: str) -> Path:
@@ -1979,6 +2079,7 @@ def current_test_status() -> dict:
         progress_stage = "failed"
         progress_detail = progress_detail or "Model testing failed."
 
+    run_info.pop("report_context", None)
     return {
         "running": running,
         "returncode": returncode,
@@ -2644,6 +2745,7 @@ def start_test(
     if weight_source == "trained":
         weights_path = resolve_weight_path(project, name, "best")
         weights_label = f"best.pt from {project}/{name}"
+        source_training_run = weights_path.parent.parent.resolve()
     elif weight_source == "upload":
         if weight_file is None or not weight_file.filename:
             raise HTTPException(status_code=400, detail="Choose a .pt weights file to upload.")
@@ -2654,6 +2756,7 @@ def start_test(
         weights_path = weights_dir / Path(weight_file.filename).name
         save_upload(weight_file, weights_path, lambda *_args: None, "saving", "Saving weights")
         weights_label = f"uploaded weights {weights_path.name}"
+        source_training_run = None
     else:
         raise HTTPException(status_code=400, detail="Unknown weight source.")
 
@@ -2719,6 +2822,23 @@ def start_test(
         "progress_percent": 0,
         "progress_stage": "starting",
         "progress_detail": "Launching the test job.",
+        "report_context": {
+            "created_at": datetime.now(MYT).isoformat(),
+            "weight_source": weight_source,
+            "weights_label": weights_label,
+            "weights_path": str(weights_path),
+            "training_run_dir": str(source_training_run) if source_training_run else "",
+            "dataset_source": dataset_source,
+            "dataset_yaml": str(dataset_yaml),
+            "dataset_root": dataset_info.get("dataset_root", ""),
+            "dataset_split": dataset_info.get("source_split", "test"),
+            "parameters": {
+                "imgsz": imgsz,
+                "batch": batch,
+                "workers": workers,
+                "device": device or "auto",
+            },
+        },
     }
 
     TEST_LOG_FILE.write_text("", encoding="utf-8")
@@ -2780,7 +2900,7 @@ def start_test(
         "command": cmd,
         "log_file": str(TEST_LOG_FILE),
         "history_log_file": str(test_log_file),
-        "test_run": test_run_info,
+        "test_run": {key: value for key, value in test_run_info.items() if key != "report_context"},
     }
 
 
@@ -2834,6 +2954,51 @@ def download_test_artifact(request: TestArtifactRequest):
     return FileResponse(path, media_type=media_type, filename=path.name)
 
 
+@app.post("/api/test/report/download")
+def download_combined_test_report():
+    if current_test_status()["running"]:
+        raise HTTPException(status_code=409, detail="Wait for model testing to finish before generating the report.")
+    test_dir = current_test_run_dir()
+    if test_dir is None:
+        raise HTTPException(status_code=404, detail="No completed test run was found.")
+    test_metrics_payload = read_test_metrics(test_dir)
+    if not test_metrics_payload.get("available"):
+        raise HTTPException(status_code=409, detail="The selected test run has no completed metrics.")
+    test_context = read_json_object(test_dir / TEST_REPORT_CONTEXT_FILE)
+    test_dataset_value = test_context.get("dataset_yaml") or test_metrics_payload.get("dataset_yaml")
+    if test_dataset_value and not test_context.get("dataset_summary"):
+        test_dataset_path = Path(str(test_dataset_value)).expanduser()
+        if test_dataset_path.is_file():
+            test_context["dataset_summary"] = cached_dataset_summary(test_dataset_path)
+    training_dir_value = test_context.get("training_run_dir")
+    if not training_dir_value:
+        raise HTTPException(
+            status_code=409,
+            detail="A combined report is unavailable because this test used uploaded weights with no linked training run.",
+        )
+    training_dir = Path(training_dir_value).expanduser().resolve()
+    ensure_runs_path(training_dir)
+    training_metrics_payload = read_run_metrics(training_dir)
+    if not training_metrics_payload.get("available"):
+        raise HTTPException(status_code=409, detail="The linked training run has no completed metrics.")
+    try:
+        from .report_generator import generate_combined_report
+
+        report_path = generate_combined_report(
+            training_dir,
+            load_training_report_context(training_dir),
+            training_metrics_payload,
+            test_dir,
+            test_context,
+            test_metrics_payload,
+        )
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="PDF reporting requires the reportlab dependency. Rebuild the container image.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not generate the combined report: {exc}") from exc
+    return FileResponse(report_path, media_type="application/pdf", filename="training_and_test_report.pdf")
+
+
 @app.get("/api/test/artifacts/view/{artifact}")
 def view_test_artifact(artifact: str):
     path = resolve_test_artifact_path(artifact)
@@ -2879,6 +3044,34 @@ def start_training(request: TrainRequest):
             )
         model = str(resume_checkpoint)
 
+    request_payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    report_context = {}
+    if resume_run_dir:
+        report_context = read_json_object(resume_run_dir / TRAINING_REPORT_CONTEXT_FILE)
+    if not report_context:
+        report_dataset_yaml = dataset_yaml
+        if report_dataset_yaml is not None:
+            report_dataset_yaml = report_dataset_yaml.resolve()
+        report_context = {
+            "created_at": datetime.now(MYT).isoformat(),
+            "dataset_yaml": str(report_dataset_yaml) if report_dataset_yaml else "",
+            "dataset_summary": cached_dataset_summary(report_dataset_yaml) if report_dataset_yaml else {},
+            "hyperparameters": request_payload,
+            "model": model,
+            "pretrained": True,
+            "device": request.device or os.getenv("TRAINING_DEVICE") or "auto",
+            "environment": {
+                "python": platform.python_version(),
+                "platform": platform.platform(),
+                "ultralytics": installed_version("ultralytics"),
+                "torch": installed_version("torch"),
+                "gpus": gpu_status().get("gpus", []),
+            },
+        }
+    report_context["last_started_at"] = datetime.now(MYT).isoformat()
+    report_context["hyperparameters"] = request_payload
+    report_context["resume"] = bool(request.resume)
+
     training_run_info = {
         "requested_project": request.project,
         "requested_name": request.name,
@@ -2889,7 +3082,11 @@ def start_training(request: TrainRequest):
         "resolution_type": "actual" if resume_run_dir else "pending",
         "current_epoch": 0,
         "total_epochs": request.epochs,
+        "report_context": report_context,
     }
+
+    if resume_run_dir:
+        persist_training_report_context(resume_run_dir)
 
     ensure_dirs()
     LOG_FILE.write_text("", encoding="utf-8")
@@ -2965,7 +3162,7 @@ def start_training(request: TrainRequest):
         "command": cmd,
         "log_file": str(LOG_FILE),
         "history_log_file": str(training_log_file),
-        "training_run": training_run_info,
+        "training_run": {key: value for key, value in training_run_info.items() if key != "report_context"},
         "resume_checkpoint": str(resume_checkpoint) if resume_checkpoint else "",
     }
 
@@ -3058,6 +3255,29 @@ def download_artifact(request: ArtifactRequest):
     path = resolve_artifact_path(request)
     media_type = "text/csv" if path.suffix == ".csv" else "image/png" if path.suffix == ".png" else "application/octet-stream"
     return FileResponse(path, media_type=media_type, filename=path.name)
+
+
+@app.post("/api/train/report/download")
+def download_training_report(request: WeightRequest):
+    if current_status()["running"]:
+        raise HTTPException(status_code=409, detail="Wait for training to finish before generating the report.")
+    run_dir = resolve_run_dir(request.project, request.name)
+    metrics = read_run_metrics(run_dir)
+    if not metrics.get("available"):
+        raise HTTPException(status_code=409, detail="The selected training run has no completed metrics.")
+    try:
+        from .report_generator import generate_training_report
+
+        report_path = generate_training_report(
+            run_dir,
+            load_training_report_context(run_dir),
+            metrics,
+        )
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="PDF reporting requires the reportlab dependency. Rebuild the container image.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not generate the training report: {exc}") from exc
+    return FileResponse(report_path, media_type="application/pdf", filename="training_report.pdf")
 
 
 @app.get("/api/train/artifacts/view/{artifact}")

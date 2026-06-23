@@ -35,6 +35,7 @@ const state = {
   testStarting: false,
   testStopping: false,
   testMetricsAvailable: false,
+  testCombinedReportAvailable: false,
   testOutcome: "",
   testLogsMode: "recent",
   testDownloads: new Set(),
@@ -1223,6 +1224,10 @@ function setTestArtifactButtons(artifacts) {
   const rocAvailable = Boolean(artifacts?.roc_auc_curve?.available);
   $("download-test-metrics-json").disabled = !metricsAvailable || state.testDownloads.has("metrics_json");
   $("download-test-roc-auc-graph").disabled = !rocAvailable || state.testDownloads.has("roc_auc_curve");
+  $("download-combined-report").disabled = !state.testMetricsAvailable
+    || !state.testCombinedReportAvailable
+    || state.testRunning
+    || state.testDownloads.has("combined_report");
 }
 
 function metricText(value, suffix = "") {
@@ -1427,6 +1432,9 @@ function setArtifactButtons(artifacts) {
   $("download-accuracy-graph").disabled = !isEnabled("accuracy_graph") || state.downloads.has("accuracy_graph");
   $("download-loss-graph").disabled = !isEnabled("loss_graph") || state.downloads.has("loss_graph");
   $("download-roc-auc-graph").disabled = !isEnabled("roc_auc_curve") || state.downloads.has("roc_auc_curve");
+  $("download-training-report").disabled = !state.metricsAvailable
+    || state.running
+    || state.downloads.has("training_report");
 }
 
 function artifactViewUrl(artifact, target, status) {
@@ -2172,6 +2180,33 @@ async function downloadArtifact(artifact, filename) {
   }
 }
 
+async function downloadTrainingReport() {
+  const button = $("download-training-report");
+  const originalText = button.textContent;
+  state.downloads.add("training_report");
+  button.disabled = true;
+  button.textContent = "Generating report...";
+  try {
+    const response = await fetch("/api/train/report/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(weightTarget()),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `Report generation failed: ${response.status}`);
+    }
+    saveBlobWithBrowserDownload(await response.blob(), "training_report.pdf");
+    setMessage("Downloading training_report.pdf.");
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.downloads.delete("training_report");
+    button.textContent = originalText;
+    await refreshMetrics();
+  }
+}
+
 async function startTest() {
   if (state.testStarting || state.testRunning) {
     return;
@@ -2239,6 +2274,7 @@ async function startTest() {
 
     state.testRunning = true;
     state.testMetricsAvailable = false;
+    state.testCombinedReportAvailable = false;
     $("model-testing-panel").classList.remove("has-results");
     setPanelExpanded("testing", true);
     setMessage(`${payload.message}\nPID: ${payload.pid}`);
@@ -2278,6 +2314,7 @@ async function refreshTestResults() {
     const results = await apiJson("/api/test/results");
     if (!results.available) {
       state.testMetricsAvailable = false;
+      state.testCombinedReportAvailable = false;
       $("model-testing-panel").classList.remove("has-results");
       $("test-metric-macro-f1").textContent = "-";
       $("test-metric-weighted-f1").textContent = "-";
@@ -2294,6 +2331,7 @@ async function refreshTestResults() {
     }
 
     state.testMetricsAvailable = true;
+    state.testCombinedReportAvailable = Boolean(results.combined_report_available);
     $("model-testing-panel").classList.add("has-results");
     $("test-metric-macro-f1").textContent = metricText(results.macro_f1);
     $("test-metric-weighted-f1").textContent = metricText(results.weighted_f1);
@@ -2307,6 +2345,7 @@ async function refreshTestResults() {
     setTestArtifactButtons(results.artifacts || {});
     $("test-results-status").textContent = `Evaluated ${results.split || "test"} split from ${results.run_dir}.`;
   } catch (error) {
+    state.testCombinedReportAvailable = false;
     $("model-testing-panel").classList.remove("has-results");
     setTestArtifactButtons({});
     $("test-results-status").textContent = error.message;
@@ -2343,6 +2382,30 @@ async function downloadTestArtifact(artifact, filename) {
   } finally {
     state.testDownloads.delete(artifact);
     button.textContent = originalText;
+    await refreshTestResults();
+  }
+}
+
+async function downloadCombinedReport() {
+  const button = $("download-combined-report");
+  const originalText = button.textContent;
+  state.testDownloads.add("combined_report");
+  button.disabled = true;
+  button.textContent = "Generating report...";
+  try {
+    const response = await fetch("/api/test/report/download", { method: "POST", body: "{}" });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `Report generation failed: ${response.status}`);
+    }
+    saveBlobWithBrowserDownload(await response.blob(), "training_and_test_report.pdf");
+    setMessage("Downloading training_and_test_report.pdf.");
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.testDownloads.delete("combined_report");
+    button.textContent = originalText;
+    setTestArtifactButtons({});
     await refreshTestResults();
   }
 }
@@ -2566,6 +2629,7 @@ $("download-results-csv").addEventListener("click", () => downloadArtifact("resu
 $("download-accuracy-graph").addEventListener("click", () => downloadArtifact("accuracy_graph", "accuracy_by_epoch.png"));
 $("download-loss-graph").addEventListener("click", () => downloadArtifact("loss_graph", "loss_by_epoch.png"));
 $("download-roc-auc-graph").addEventListener("click", () => downloadArtifact("roc_auc_curve", "roc_auc_curve.png"));
+$("download-training-report").addEventListener("click", downloadTrainingReport);
 $("download-run-log").addEventListener("click", () => downloadLog("/api/train/logs/download"));
 $("start-test").addEventListener("click", startTest);
 $("stop-test").addEventListener("click", stopTest);
@@ -2573,6 +2637,7 @@ $("refresh-test-results").addEventListener("click", refreshTestResults);
 $("download-test-log").addEventListener("click", downloadTestLog);
 $("download-test-metrics-json").addEventListener("click", () => downloadTestArtifact("metrics_json", "test_metrics.json"));
 $("download-test-roc-auc-graph").addEventListener("click", () => downloadTestArtifact("roc_auc_curve", "test_roc_auc_curve.png"));
+$("download-combined-report").addEventListener("click", downloadCombinedReport);
 $("project").addEventListener("input", scheduleTargetRefresh);
 $("run-name").addEventListener("input", scheduleTargetRefresh);
 $("upload-file").addEventListener("change", updateFileSelection);
