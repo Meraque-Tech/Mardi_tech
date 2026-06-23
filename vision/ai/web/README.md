@@ -187,6 +187,13 @@ Fill in Roboflow credentials in `.env`, or enter workspace/project/version in
 the UI. The backend always downloads the dataset in YOLOv8 format and uses the
 split configured in that Roboflow dataset version.
 
+Roboflow preparation uses hybrid progress reporting. Server-side version and
+export generation show Roboflow's reported percentage when available, or an
+indeterminate animation otherwise. The ZIP transfer reports downloaded bytes
+when `Content-Length` is available, and extraction, optional split rebuilding,
+copying, and inspection use measured local progress. Older SDK versions fall
+back to the standard Roboflow downloader with indeterminate progress.
+
 After download, the backend validates the exported `data.yaml`. If Roboflow's
 relative paths do not resolve but standard `train`, `valid`/`val`, and `test`
 folders are present, the backend generates a normalized prepared YAML without

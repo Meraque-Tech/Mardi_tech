@@ -168,6 +168,7 @@ def update_dataset_preparation(
             "job_id": job_id,
             "status": status,
             "stage": stage,
+            "mode": "determinate" if safe_total else "indeterminate",
             "current": safe_current,
             "total": safe_total,
             "percent": percent,
@@ -1679,23 +1680,242 @@ def extract_zip_with_progress(
     zip_path: Path,
     extract_dir: Path,
     progress_callback: DatasetProgressCallback,
+    stage: str = "extracting",
 ):
     with zipfile.ZipFile(zip_path) as archive:
         entries = archive.infolist()
         total_bytes = sum(entry.file_size for entry in entries)
         work_total = total_bytes or len(entries)
         extracted_bytes = 0
-        progress_callback("extracting", 0, work_total, f"Extracting 0 of {len(entries)} ZIP entries")
+        progress_callback(stage, 0, work_total, f"Extracting 0 of {len(entries)} ZIP entries")
         for index, entry in enumerate(entries, start=1):
             archive.extract(entry, extract_dir)
             extracted_bytes += entry.file_size
             current = extracted_bytes if total_bytes else index
             progress_callback(
-                "extracting",
+                stage,
                 current,
                 work_total,
                 f"Extracting {index} of {len(entries)} ZIP entries",
             )
+
+
+class RoboflowDirectDownloadUnavailable(Exception):
+    """Raised when the installed SDK cannot expose its export download flow."""
+
+
+def normalized_roboflow_percent(value) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        percent = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(percent):
+        return None
+    if 0 <= percent <= 1:
+        percent *= 100
+    return min(100.0, max(0.0, percent))
+
+
+def report_roboflow_server_progress(
+    progress_callback: DatasetProgressCallback,
+    stage: str,
+    progress,
+    indeterminate_detail: str,
+    determinate_prefix: str,
+):
+    percent = normalized_roboflow_percent(progress)
+    if percent is None:
+        progress_callback(stage, 0, 0, indeterminate_detail)
+        return
+    progress_callback(
+        stage,
+        round(percent * 10),
+        1000,
+        f"{determinate_prefix}: {percent:.1f}%",
+    )
+
+
+def wait_for_roboflow_export(
+    rfapi,
+    api_key: str,
+    workspace: str,
+    project_name: str,
+    version: str,
+    dataset_format: str,
+    progress_callback: DatasetProgressCallback,
+    timeout_seconds: int = 1800,
+) -> str:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Roboflow version preparation timed out.")
+        try:
+            version_response = rfapi.get_version(
+                api_key=api_key,
+                workspace_url=workspace,
+                project_url=project_name,
+                version=version,
+                nocache=True,
+            )
+        except TypeError as exc:
+            raise RoboflowDirectDownloadUnavailable from exc
+        version_info = version_response.get("version", {})
+        generating = bool(
+            version_info.get("generating")
+            or version_info.get("images", 0) == 0
+        )
+        if not generating:
+            break
+        report_roboflow_server_progress(
+            progress_callback,
+            "preparing_roboflow_version",
+            version_info.get("progress"),
+            "Roboflow is preparing the dataset version.",
+            "Preparing Roboflow dataset version",
+        )
+        time.sleep(5)
+
+    while True:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Roboflow export preparation timed out.")
+        try:
+            export_info = rfapi.get_version_export(
+                api_key=api_key,
+                workspace_url=workspace,
+                project_url=project_name,
+                version=version,
+                format=dataset_format,
+            )
+        except TypeError as exc:
+            raise RoboflowDirectDownloadUnavailable from exc
+
+        export = export_info.get("export")
+        if isinstance(export, dict) and export.get("link"):
+            progress_callback(
+                "preparing_roboflow_export",
+                1000,
+                1000,
+                "Roboflow export is ready.",
+            )
+            return str(export["link"])
+        if export_info.get("ready") is False:
+            report_roboflow_server_progress(
+                progress_callback,
+                "preparing_roboflow_export",
+                export_info.get("progress"),
+                "Roboflow is generating the YOLOv8 export.",
+                "Generating YOLOv8 export",
+            )
+            time.sleep(1)
+            continue
+        response_keys = ", ".join(sorted(str(key) for key in export_info)) or "none"
+        raise RuntimeError(
+            f"Unexpected Roboflow export response fields: {response_keys}."
+        )
+
+
+def readable_byte_count(value: int) -> str:
+    amount = float(max(0, value))
+    units = ("B", "KB", "MB", "GB", "TB")
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            digits = 0 if unit == "B" else 1
+            return f"{amount:.{digits}f} {unit}"
+        amount /= 1024
+    return f"{amount:.1f} TB"
+
+
+def stream_roboflow_export(
+    link: str,
+    zip_path: Path,
+    progress_callback: DatasetProgressCallback,
+):
+    try:
+        import requests
+    except ImportError as exc:
+        raise RoboflowDirectDownloadUnavailable from exc
+
+    try:
+        response_context = requests.get(link, stream=True, timeout=(30, 300))
+    except TypeError as exc:
+        raise RoboflowDirectDownloadUnavailable from exc
+
+    with response_context as response:
+        response.raise_for_status()
+        try:
+            total_bytes = max(0, int(response.headers.get("content-length", 0)))
+        except (TypeError, ValueError):
+            total_bytes = 0
+        downloaded = 0
+        progress_callback(
+            "downloading_roboflow",
+            0,
+            total_bytes,
+            (
+                f"Downloading Roboflow dataset: 0 of {readable_byte_count(total_bytes)}"
+                if total_bytes
+                else "Downloading Roboflow dataset; total size is unavailable."
+            ),
+        )
+        with zip_path.open("wb") as output:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                output.write(chunk)
+                downloaded += len(chunk)
+                detail = f"Downloaded {readable_byte_count(downloaded)}"
+                if total_bytes:
+                    detail += f" of {readable_byte_count(total_bytes)}"
+                progress_callback(
+                    "downloading_roboflow",
+                    downloaded,
+                    total_bytes,
+                    detail,
+                )
+
+
+def download_roboflow_dataset_with_progress(
+    version_obj,
+    api_key: str,
+    workspace: str,
+    project_name: str,
+    version: str,
+    dataset_format: str,
+    download_dir: Path,
+    progress_callback: DatasetProgressCallback,
+) -> Path:
+    try:
+        from roboflow.adapters import rfapi
+    except ImportError as exc:
+        raise RoboflowDirectDownloadUnavailable from exc
+
+    required_attributes = ("get_version", "get_version_export")
+    if any(not hasattr(rfapi, attribute) for attribute in required_attributes):
+        raise RoboflowDirectDownloadUnavailable
+
+    resolved_workspace = str(getattr(version_obj, "workspace", workspace) or workspace)
+    resolved_project = str(getattr(version_obj, "project", project_name) or project_name)
+    link = wait_for_roboflow_export(
+        rfapi,
+        api_key,
+        resolved_workspace,
+        resolved_project,
+        str(version_obj.version if hasattr(version_obj, "version") else version),
+        dataset_format,
+        progress_callback,
+    )
+    zip_path = download_dir / "roboflow.zip"
+    stream_roboflow_export(link, zip_path, progress_callback)
+    extract_zip_with_progress(
+        zip_path,
+        download_dir,
+        progress_callback,
+        stage="extracting_roboflow",
+    )
+    zip_path.unlink(missing_ok=True)
+    return download_dir
 
 
 def mark_dataset_preparation_failed(job_id: str, exc: Exception):
@@ -1864,10 +2084,10 @@ def roboflow_dataset(request: RoboflowRequest):
     download_dir = DATA_ROOT / "roboflow" / clean
     progress_callback = dataset_progress_callback(request.job_id)
     progress_callback(
-        "fetching_roboflow",
+        "preparing_roboflow_version",
         0,
         0,
-        "Roboflow is exporting and downloading the dataset.",
+        "Connecting to Roboflow and checking the dataset version.",
     )
 
     try:
@@ -1878,16 +2098,39 @@ def roboflow_dataset(request: RoboflowRequest):
         project = rf.workspace(workspace).project(project_name)
         version_obj = project.version(int(version))
         try:
-            dataset = version_obj.download(dataset_format, location=str(download_dir), overwrite=True)
-        except TypeError:
-            dataset = version_obj.download(dataset_format, location=str(download_dir))
+            dataset_root = download_roboflow_dataset_with_progress(
+                version_obj,
+                str(api_key),
+                str(workspace),
+                str(project_name),
+                str(version),
+                dataset_format,
+                download_dir,
+                progress_callback,
+            )
+        except RoboflowDirectDownloadUnavailable:
+            progress_callback(
+                "fetching_roboflow",
+                0,
+                0,
+                "The installed Roboflow SDK does not expose download progress; using its standard downloader.",
+            )
+            try:
+                dataset = version_obj.download(
+                    dataset_format,
+                    location=str(download_dir),
+                    overwrite=True,
+                )
+            except TypeError:
+                dataset = version_obj.download(dataset_format, location=str(download_dir))
+            dataset_root = Path(getattr(dataset, "location", download_dir))
     except Exception as exc:
+        shutil.rmtree(download_dir, ignore_errors=True)
         error = HTTPException(status_code=502, detail=f"Roboflow download failed: {exc}")
         mark_dataset_preparation_failed(request.job_id, error)
         raise error from exc
 
     try:
-        dataset_root = Path(getattr(dataset, "location", download_dir))
         if request.force_split:
             split = SplitConfig(train=request.train, val=request.val, test=request.test)
             yaml_path = prepare_dataset(

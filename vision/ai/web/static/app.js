@@ -185,11 +185,47 @@ function stopDatasetPreparationPolling() {
   state.preparationPollTimer = null;
 }
 
-function startDatasetPreparationPolling(jobId) {
+function roboflowOverallPercent(stage, stagePercent, forceSplit) {
+  const splitRanges = {
+    reading_labels: [70, 77],
+    calculating_targets: [77, 79],
+    assigning: [79, 85],
+    finalizing_split: [85, 86],
+    copying: [86, 95],
+    inspecting: [95, 100],
+  };
+  const preserveRanges = {
+    validating_dataset: [70, 82],
+    normalizing_paths: [82, 85],
+    inspecting: [85, 100],
+  };
+  const commonRanges = {
+    preparing_roboflow_version: [0, 5],
+    preparing_roboflow_export: [5, 10],
+    downloading_roboflow: [10, 55],
+    extracting_roboflow: [55, 70],
+    complete: [100, 100],
+  };
+  const ranges = { ...commonRanges, ...(forceSplit ? splitRanges : preserveRanges) };
+  const range = ranges[stage];
+  if (!range) {
+    return stagePercent;
+  }
+  const safeStagePercent = Math.min(100, Math.max(0, Number(stagePercent) || 0));
+  return range[0] + ((range[1] - range[0]) * safeStagePercent) / 100;
+}
+
+function startDatasetPreparationPolling(jobId, context = {}) {
   stopDatasetPreparationPolling();
   const revision = state.preparationPollRevision;
+  const progressSource = context.source || state.source;
+  const forceSplit = Boolean(context.forceSplit);
   const stageLabels = {
     fetching_roboflow: "Fetching from Roboflow",
+    preparing_roboflow_version: "Preparing Roboflow version",
+    preparing_roboflow_export: "Preparing YOLOv8 export",
+    downloading_roboflow: "Downloading from Roboflow",
+    extracting_roboflow: "Extracting Roboflow ZIP",
     validating_dataset: "Validating dataset",
     normalizing_paths: "Normalizing dataset paths",
     saving: "Saving upload",
@@ -218,11 +254,16 @@ function startDatasetPreparationPolling(jobId) {
       if (!response.ok) {
         throw new Error(payload.detail || `Progress request failed: ${response.status}`);
       }
+      const percent = progressSource === "roboflow"
+        ? roboflowOverallPercent(payload.stage, payload.percent, forceSplit)
+        : payload.percent;
+      const indeterminate = payload.status === "running"
+        && (payload.mode ? payload.mode === "indeterminate" : !payload.total);
       updateDatasetPreparationProgress(
         stageLabels[payload.stage] || payload.stage || "Preparing dataset",
-        payload.percent,
+        percent,
         payload.detail || "Preparing dataset.",
-        payload.status === "running" && !payload.total,
+        indeterminate,
       );
       if (payload.status === "running") {
         state.preparationPollTimer = window.setTimeout(poll, 300);
@@ -1297,7 +1338,10 @@ async function prepareFolderDataset() {
 
 async function prepareRoboflowDataset() {
   const jobId = preparationJobId();
-  startDatasetPreparationPolling(jobId);
+  startDatasetPreparationPolling(jobId, {
+    source: "roboflow",
+    forceSplit: $("roboflow-force-split").checked,
+  });
   return apiJson("/api/dataset/roboflow", {
     method: "POST",
     body: JSON.stringify({
