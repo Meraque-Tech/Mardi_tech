@@ -512,14 +512,218 @@
               </div>
               <p id="confusion-matrix-status">The confusion matrix will appear after validation plots are generated.</p>
             </section>
+            <section class="roc-auc-panel" id="roc-auc-panel" aria-labelledby="roc-auc-title">
+              <div class="field-header">
+                <div>
+                  <h4 id="roc-auc-title">ROC-AUC</h4>
+                  <p>Image-level one-vs-rest ROC on the validation split, alongside box-level per-class AP below.</p>
+                </div>
+              </div>
+              <div class="roc-auc-grid">
+                <figure id="roc-auc-card" hidden>
+                  <figcaption>Validation ROC-AUC by class</figcaption>
+                  <a id="roc-auc-link" target="_blank" rel="noopener">
+                    <img id="roc-auc-image" alt="Validation ROC-AUC curve by class">
+                  </a>
+                </figure>
+                <div class="roc-auc-summary" id="roc-auc-summary"></div>
+              </div>
+              <p id="roc-auc-status">ROC-AUC will appear after post-training evaluation finishes.</p>
+            </section>
             <div class="artifact-toolbar">
               <button id="download-results-csv" class="secondary compact" type="button" disabled>Download results.csv</button>
               <button id="download-accuracy-graph" class="secondary compact" type="button" disabled>Download performance graph</button>
               <button id="download-loss-graph" class="secondary compact" type="button" disabled>Download loss graph</button>
+              <button id="download-roc-auc-graph" class="secondary compact" type="button" disabled>Download ROC-AUC graph</button>
             </div>
             <div class="class-metrics" id="class-metrics"></div>
             <p id="metrics-status">No results.csv found for this run yet.</p>
           </div>
+      </section>
+
+      <section class="panel testing-panel collapsible-panel is-collapsed" id="model-testing-panel" data-panel-key="testing" data-default-expanded="false">
+        <div class="panel-header">
+          <div class="panel-heading">
+            <button class="secondary compact section-toggle" type="button" data-panel-toggle="testing" aria-expanded="false" aria-label="Expand Model Testing section">
+              <span aria-hidden="true">▾</span>
+            </button>
+            <h2>Model Testing</h2>
+          </div>
+        </div>
+
+        <div class="grid two test-source-grid">
+          <div class="advanced-group">
+            <div class="field-header">
+              <h3>Weights</h3>
+            </div>
+            <div class="button-row toggle-row" role="radiogroup" aria-label="Model weights source">
+              <label class="choice-chip">
+                <input type="radio" name="test-weight-source" value="trained" checked>
+                <span>Use best.pt</span>
+              </label>
+              <label class="choice-chip">
+                <input type="radio" name="test-weight-source" value="upload">
+                <span>Upload .pt</span>
+              </label>
+            </div>
+            <p id="test-trained-weights-note" class="helper-text">Uses the selected run's <code>best.pt</code> from the Training Results section.</p>
+            <div id="test-weight-upload-wrap" hidden>
+              <label>
+                <span>Weights file</span>
+                <input id="test-weight-file" type="file" accept=".pt">
+              </label>
+              <p id="test-weight-selection" class="file-selection">No weights file selected.</p>
+            </div>
+          </div>
+
+          <div class="advanced-group">
+            <div class="field-header">
+              <h3>Dataset</h3>
+            </div>
+            <div class="button-row toggle-row" role="radiogroup" aria-label="Test dataset source">
+              <label class="choice-chip">
+                <input type="radio" name="test-dataset-source" value="prepared" checked>
+                <span>Prepared test split</span>
+              </label>
+              <label class="choice-chip">
+                <input type="radio" name="test-dataset-source" value="upload_zip">
+                <span>Upload ZIP</span>
+              </label>
+              <label class="choice-chip">
+                <input type="radio" name="test-dataset-source" value="upload_folder">
+                <span>Upload folder</span>
+              </label>
+            </div>
+            <p id="test-dataset-note" class="helper-text">Uses the prepared dataset's existing <code>test</code> split.</p>
+            <div id="test-dataset-zip-wrap" hidden>
+              <label>
+                <span>Test dataset ZIP</span>
+                <input id="test-dataset-zip" type="file" accept=".zip">
+              </label>
+              <p id="test-dataset-zip-selection" class="file-selection">No ZIP selected.</p>
+            </div>
+            <div id="test-dataset-folder-wrap" hidden>
+              <label>
+                <span>Test dataset folder</span>
+                <input id="test-dataset-folder" type="file" webkitdirectory directory multiple>
+              </label>
+              <p id="test-dataset-folder-selection" class="file-selection">No folder selected.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid four test-settings-grid">
+          <label>
+            <span>Image size</span>
+            <input id="test-imgsz" type="number" min="32" step="32" value="640">
+          </label>
+          <label>
+            <span>Batch size</span>
+            <input id="test-batch" type="number" min="1" value="16">
+          </label>
+          <label>
+            <span>Workers</span>
+            <input id="test-workers" type="number" min="0" value="2">
+          </label>
+          <label>
+            <span>Device</span>
+            <input id="test-device" type="text" placeholder="0, cpu, or blank for auto">
+          </label>
+        </div>
+
+        <div class="button-row test-action-row">
+          <button id="start-test" type="button">Start Test</button>
+          <button id="stop-test" class="danger" type="button" disabled>Stop Test</button>
+          <button id="refresh-test-results" class="secondary compact" type="button">Refresh Results</button>
+          <button id="download-test-log" class="secondary compact" type="button">Download test log</button>
+        </div>
+
+        <div class="epoch-progress-card test-progress-card">
+          <div class="field-header">
+            <strong>Test Progress</strong>
+            <span id="test-progress-percent">0%</span>
+          </div>
+          <p id="test-progress-label">Waiting to start</p>
+          <div
+            class="epoch-progress-track"
+            id="test-progress-track"
+            role="progressbar"
+            aria-label="Model testing progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-valuetext="Waiting to start"
+          >
+            <span id="test-progress-fill"></span>
+          </div>
+          <p id="test-progress-detail">The current test stage will appear here when testing starts.</p>
+        </div>
+
+        <p id="test-log-status">No model-testing run started yet.</p>
+        <pre id="test-logs" tabindex="0" aria-label="Model testing logs"></pre>
+
+        <div class="metrics-panel">
+          <div class="field-header">
+            <h3>Test Results</h3>
+            <div class="button-row">
+              <button id="download-test-metrics-json" class="secondary compact" type="button" disabled>Download metrics JSON</button>
+              <button id="download-test-roc-auc-graph" class="secondary compact" type="button" disabled>Download ROC-AUC graph</button>
+            </div>
+          </div>
+          <div class="metrics-grid">
+            <div><span>Macro F1</span><strong id="test-metric-macro-f1">-</strong></div>
+            <div><span>Weighted F1</span><strong id="test-metric-weighted-f1">-</strong></div>
+            <div><span>Precision</span><strong id="test-metric-precision">-</strong></div>
+            <div><span>Recall</span><strong id="test-metric-recall">-</strong></div>
+            <div><span>mAP50</span><strong id="test-metric-map50">-</strong></div>
+            <div><span>mAP50-95</span><strong id="test-metric-map">-</strong></div>
+          </div>
+          <section class="confusion-matrix-panel" aria-labelledby="test-confusion-matrix-title">
+            <div class="field-header">
+              <div>
+                <h4 id="test-confusion-matrix-title">Confusion Matrix</h4>
+                <p>Test-set predictions by actual and predicted class.</p>
+              </div>
+            </div>
+            <div class="confusion-matrix-grid">
+              <figure id="test-confusion-matrix-normalized-card" hidden>
+                <figcaption>Normalized</figcaption>
+                <a id="test-confusion-matrix-normalized-link" target="_blank" rel="noopener">
+                  <img id="test-confusion-matrix-normalized-image" alt="Normalized test confusion matrix">
+                  <span class="confusion-axis-label" aria-hidden="true">Actual</span>
+                </a>
+              </figure>
+              <figure id="test-confusion-matrix-card" hidden>
+                <figcaption>Raw counts</figcaption>
+                <a id="test-confusion-matrix-link" target="_blank" rel="noopener">
+                  <img id="test-confusion-matrix-image" alt="Test confusion matrix with raw counts">
+                  <span class="confusion-axis-label" aria-hidden="true">Actual</span>
+                </a>
+              </figure>
+            </div>
+            <p id="test-confusion-matrix-status">The confusion matrix will appear after the test evaluation finishes.</p>
+          </section>
+          <section class="roc-auc-panel" aria-labelledby="test-roc-auc-title">
+            <div class="field-header">
+              <div>
+                <h4 id="test-roc-auc-title">ROC-AUC</h4>
+                <p>Image-level one-vs-rest ROC on the evaluated test split.</p>
+              </div>
+            </div>
+            <div class="roc-auc-grid">
+              <figure id="test-roc-auc-card" hidden>
+                <figcaption>Test ROC-AUC by class</figcaption>
+                <a id="test-roc-auc-link" target="_blank" rel="noopener">
+                  <img id="test-roc-auc-image" alt="Test ROC-AUC curve by class">
+                </a>
+              </figure>
+              <div class="roc-auc-summary" id="test-roc-auc-summary"></div>
+            </div>
+            <p id="test-roc-auc-status">ROC-AUC will appear after the test evaluation finishes.</p>
+          </section>
+          <div class="class-metrics" id="test-class-metrics"></div>
+          <p id="test-results-status">No test results available yet.</p>
+        </div>
       </section>
 
     </main>

@@ -6,7 +6,7 @@ import unittest
 
 
 INDEX_HTML = Path(__file__).parent / "static" / "index.html"
-EXPECTED_PANELS = {"dataset", "training", "gpu", "advanced", "logs", "results"}
+EXPECTED_PANELS = {"dataset", "training", "gpu", "advanced", "logs", "results", "testing"}
 
 
 class CollapsibleMarkupParser(HTMLParser):

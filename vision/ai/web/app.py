@@ -31,10 +31,13 @@ from .stratified_split import SPLIT_NAMES, stratified_split
 WEB_DIR = Path(__file__).resolve().parent
 REPO_ROOT = WEB_DIR.parents[2]
 TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_yolov8.py"
+TEST_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "test_yolov8.py"
 STATIC_DIR = WEB_DIR / "static"
 LOG_DIR = WEB_DIR / "logs"
 LOG_FILE = LOG_DIR / "current.log"
+TEST_LOG_FILE = LOG_DIR / "test-current.log"
 RUNS_ROOT = REPO_ROOT / "runs"
+TEST_RUNS_ROOT = RUNS_ROOT / "test"
 MYT = timezone(timedelta(hours=8), name="MYT")
 
 load_dotenv(WEB_DIR / ".env")
@@ -55,6 +58,10 @@ ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
 PROGRESS_LINE_RE = re.compile(r":\s*\d+%\s+.*\b\d+/\d+\b")
 WEB_PROGRESS_RE = re.compile(r"^WEB_TRAINING_PROGRESS\s+epoch=(\d+)\s+total=(\d+)$")
+WEB_TEST_PROGRESS_RE = re.compile(
+    r"^WEB_TEST_PROGRESS\s+percent=(\d+)\s+stage=([A-Za-z0-9_-]+)(?:\s+detail=(.*))?$"
+)
+WEB_TEST_RUN_DIR_RE = re.compile(r"^WEB_TEST_RUN_DIR\s+path=(.+)$")
 RUN_DIRECTORY_PREFIXES = ("Logging results to ", "Results saved to ")
 SPLIT_METADATA_FILE = ".split_metadata.json"
 
@@ -65,6 +72,10 @@ training_process: Optional[subprocess.Popen] = None
 training_started_at: Optional[float] = None
 training_log_file: Optional[Path] = None
 training_run_info: Optional[dict] = None
+test_process: Optional[subprocess.Popen] = None
+test_started_at: Optional[float] = None
+test_log_file: Optional[Path] = None
+test_run_info: Optional[dict] = None
 dataset_preparation_jobs: dict[str, dict] = {}
 dataset_preparation_lock = threading.Lock()
 dataset_downloads: dict[str, dict] = {}
@@ -137,9 +148,21 @@ class ArtifactRequest(BaseModel):
     artifact: str
 
 
+class TestArtifactRequest(BaseModel):
+    artifact: str
+
+
 def ensure_dirs():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    TEST_RUNS_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def form_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or "").strip().lower()
+    return normalized in {"1", "true", "yes", "y", "on"}
 
 
 def update_dataset_preparation(
@@ -941,7 +964,19 @@ def run_artifact_statuses(run_dir: Path) -> dict:
         "confusion_matrix_normalized": artifact_status(
             run_dir / "confusion_matrix_normalized.png"
         ),
+        "roc_auc_curve": artifact_status(run_dir / "roc_auc_curve.png"),
     }
+
+
+def read_web_metrics(run_dir: Path) -> dict:
+    metrics_path = run_dir / "web_metrics.json"
+    if not metrics_path.is_file():
+        return {}
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def read_run_metrics(run_dir: Path) -> dict:
@@ -971,7 +1006,22 @@ def read_run_metrics(run_dir: Path) -> dict:
     testing_loss = sum_values(row, ["val/box_loss", "val/cls_loss", "val/dfl_loss"])
     map50 = float_value(row, "metrics/mAP50(B)")
     map50_95 = float_value(row, "metrics/mAP50-95(B)")
-    class_metrics = parse_class_metrics_from_log(LOG_FILE)
+    web_metrics = read_web_metrics(run_dir)
+    class_metrics = {
+        "macro_f1": web_metrics.get("macro_f1"),
+        "weighted_f1": web_metrics.get("weighted_f1"),
+        "classes": web_metrics.get("per_class"),
+    }
+    if not isinstance(class_metrics["classes"], list) or not class_metrics["classes"]:
+        class_metrics = parse_class_metrics_from_log(LOG_FILE)
+    roc_auc = web_metrics.get("roc_auc")
+    if not isinstance(roc_auc, dict):
+        roc_auc = {
+            "mode": "image_presence",
+            "split": "val",
+            "classes": [],
+            "note": "ROC-AUC will appear after web metrics are generated for this run.",
+        }
     history = build_metric_history(rows)
 
     return {
@@ -982,6 +1032,7 @@ def read_run_metrics(run_dir: Path) -> dict:
         "macro_f1": class_metrics["macro_f1"],
         "weighted_f1": class_metrics["weighted_f1"],
         "per_class": class_metrics["classes"],
+        "roc_auc": roc_auc,
         "training_loss": format_metric(training_loss),
         "testing_loss": format_metric(testing_loss),
         "precision": format_metric(precision),
@@ -1297,6 +1348,143 @@ def prepare_roboflow_download(
     return yaml_path, False
 
 
+def resolve_test_split_source(
+    dataset_root: Path,
+    payload: Optional[dict] = None,
+) -> tuple[str, Optional[Path]]:
+    if isinstance(payload, dict):
+        for split_name in ("test", "val", "train"):
+            images_path = split_image_folder(dataset_root, payload.get(split_name))
+            if has_image_files(images_path):
+                return split_name, images_path
+
+    layouts = split_dirs(dataset_root)
+    for split_name in ("test", "val", "train"):
+        layout = layouts.get(split_name)
+        if layout and has_image_files(layout["images"]):
+            return split_name, layout["images"]
+
+    flat = flat_dirs(dataset_root)
+    if flat and has_image_files(flat["images"]):
+        return "flat", flat["images"]
+
+    return "", None
+
+
+def build_test_dataset_yaml(
+    dataset_root: Path,
+    images_path: Path,
+    classes: list[str],
+    output_name: str,
+) -> Path:
+    dataset_root = dataset_root.resolve()
+    images_path = images_path.resolve()
+    labels_path = label_folder_for_images(dataset_root, images_path)
+    if labels_path is None or not labels_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded test dataset does not contain a matching labels folder.",
+        )
+
+    try:
+        relative_images = images_path.relative_to(dataset_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="The detected test images are outside the dataset root.",
+        ) from exc
+
+    output_dir = DATA_ROOT / "test_prepared" / clean_name(output_name, "test_dataset")
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    yaml_path = output_dir / "data.yaml"
+    payload = {
+        "path": str(dataset_root),
+        "test": relative_images.as_posix(),
+        "names": {index: name for index, name in enumerate(classes)},
+    }
+    yaml_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    return yaml_path
+
+
+def resolve_reference_classes(reference_dataset_yaml: str) -> list[str]:
+    if not reference_dataset_yaml:
+        return []
+    reference_path, _, _ = prepared_dataset_yaml(reference_dataset_yaml)
+    return read_yaml_class_names(reference_path)
+
+
+def prepare_custom_test_dataset(
+    source: Path,
+    output_name: str,
+    reference_dataset_yaml: str = "",
+) -> tuple[Path, dict]:
+    dataset_root = find_dataset_root(source)
+    source_yaml = find_dataset_yaml(dataset_root)
+    payload = None
+    classes: list[str] = []
+    yaml_root = dataset_root
+
+    if source_yaml:
+        try:
+            payload = yaml.safe_load(source_yaml.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not read uploaded dataset YAML: {exc}",
+            ) from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Uploaded dataset YAML must contain a mapping.")
+        yaml_root = resolve_yaml_dataset_root(source_yaml, payload)
+        classes = normalize_yaml_names(payload.get("names"))
+
+    if not classes:
+        classes = resolve_reference_classes(reference_dataset_yaml)
+    if not classes:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No class names were found in the uploaded dataset. Include a data.yaml "
+                "or prepare a dataset in the UI first so its class names can be reused."
+            ),
+        )
+
+    selected_split, images_path = resolve_test_split_source(yaml_root, payload)
+    if images_path is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No usable labeled images were found in the uploaded test dataset. "
+                "Include a YOLO images/labels layout or a data.yaml with a test split."
+            ),
+        )
+
+    yaml_path = build_test_dataset_yaml(yaml_root, images_path, classes, output_name)
+    return yaml_path, {
+        "dataset_root": str(yaml_root),
+        "source_split": selected_split,
+        "classes": classes,
+    }
+
+
+def resolve_prepared_test_dataset_yaml(dataset_yaml: str) -> tuple[Path, dict]:
+    yaml_path, dataset_root, portable_payload = prepared_dataset_yaml(dataset_yaml)
+    if not portable_payload.get("test"):
+        raise HTTPException(
+            status_code=400,
+            detail="The prepared dataset does not contain a test split to evaluate.",
+        )
+    return yaml_path, {
+        "dataset_root": str(dataset_root),
+        "source_split": "test",
+        "classes": normalize_yaml_names(portable_payload.get("names")),
+    }
+
+
 def clean_log_line(raw_line: str) -> str:
     cleaned = ANSI_ESCAPE_RE.sub("", raw_line)
     cleaned = cleaned.replace("\r", "")
@@ -1347,6 +1535,43 @@ def capture_epoch_progress(line: str) -> bool:
     return True
 
 
+def capture_test_run_dir(line: str):
+    global test_run_info
+    match = WEB_TEST_RUN_DIR_RE.match(line)
+    if match is not None and test_run_info is not None:
+        run_dir = Path(match.group(1).strip()).expanduser().resolve()
+        try:
+            ensure_runs_path(run_dir)
+        except HTTPException:
+            return
+        test_run_info["run_dir"] = str(run_dir)
+        return
+
+    prefix = next((item for item in RUN_DIRECTORY_PREFIXES if line.startswith(item)), None)
+    if prefix is None or test_run_info is None:
+        return
+
+    run_dir = Path(line[len(prefix):].strip()).expanduser().resolve()
+    try:
+        ensure_runs_path(run_dir)
+    except HTTPException:
+        return
+    test_run_info["run_dir"] = str(run_dir)
+
+
+def capture_test_progress(line: str) -> bool:
+    global test_run_info
+    match = WEB_TEST_PROGRESS_RE.match(line)
+    if match is None:
+        return False
+
+    if test_run_info is not None:
+        test_run_info["progress_percent"] = max(0, min(100, int(match.group(1))))
+        test_run_info["progress_stage"] = match.group(2)
+        test_run_info["progress_detail"] = (match.group(3) or "").strip()
+    return True
+
+
 def stream_training_logs(process: subprocess.Popen, log_paths: list[Path]):
     handles = [path.open("a", encoding="utf-8") for path in log_paths]
     try:
@@ -1368,10 +1593,38 @@ def stream_training_logs(process: subprocess.Popen, log_paths: list[Path]):
             handle.close()
 
 
+def stream_test_logs(process: subprocess.Popen, log_paths: list[Path]):
+    handles = [path.open("a", encoding="utf-8") for path in log_paths]
+    try:
+        if process.stdout is None:
+            return
+
+        for raw_line in process.stdout:
+            line = clean_log_line(raw_line)
+            capture_test_run_dir(line)
+            if capture_test_progress(line):
+                continue
+            if not should_write_log_line(line):
+                continue
+            for handle in handles:
+                handle.write(line + "\n")
+                handle.flush()
+    finally:
+        for handle in handles:
+            handle.close()
+
+
 def read_log_tail(max_chars: int = 20000) -> str:
     if not LOG_FILE.is_file():
         return ""
     data = LOG_FILE.read_text(encoding="utf-8", errors="replace")
+    return data[-max_chars:]
+
+
+def read_log_tail_from(path: Path, max_chars: int = 20000) -> str:
+    if not path.is_file():
+        return ""
+    data = path.read_text(encoding="utf-8", errors="replace")
     return data[-max_chars:]
 
 
@@ -1392,6 +1645,36 @@ def latest_timestamped_log() -> Optional[Path]:
     if not logs:
         return None
     return max(logs, key=lambda path: path.stat().st_mtime)
+
+
+def latest_timestamped_test_log() -> Optional[Path]:
+    logs = [path for path in LOG_DIR.glob("test-*.log") if path.is_file()]
+    if not logs:
+        return None
+    return max(logs, key=lambda path: path.stat().st_mtime)
+
+
+def latest_artifact_run_dir(search_root: Path, marker_paths: tuple[str, ...]) -> Optional[Path]:
+    if not search_root.exists():
+        return None
+
+    candidates = []
+    for path in search_root.rglob("*"):
+        if not path.is_dir():
+            continue
+        if any((path / marker).is_file() for marker in marker_paths):
+            candidates.append(path)
+
+    if not candidates:
+        return None
+
+    return max(
+        candidates,
+        key=lambda path: max(
+            (item.stat().st_mtime for item in path.rglob("*") if item.is_file()),
+            default=0,
+        ),
+    )
 
 
 def completed_epoch_from_results(run_info: dict) -> int:
@@ -1447,6 +1730,7 @@ def resolve_artifact_path(request: ArtifactRequest) -> Path:
         "loss_graph": run_dir / "loss_by_epoch.png",
         "confusion_matrix": run_dir / "confusion_matrix.png",
         "confusion_matrix_normalized": run_dir / "confusion_matrix_normalized.png",
+        "roc_auc_curve": run_dir / "roc_auc_curve.png",
         "best": run_dir / "weights" / "best.pt",
         "last": run_dir / "weights" / "last.pt",
     }
@@ -1580,6 +1864,133 @@ def current_status() -> dict:
         "history_log_file": str(training_log_file) if training_log_file else "",
         "training_run": run_info,
         "epoch_progress": epoch_progress(run_info, running),
+    }
+
+
+def current_test_run_dir() -> Optional[Path]:
+    run_info = test_run_info or {}
+    run_dir_value = run_info.get("run_dir")
+    if run_dir_value:
+        run_dir = Path(run_dir_value).expanduser().resolve()
+        if run_dir.is_dir():
+            try:
+                ensure_runs_path(run_dir)
+            except HTTPException:
+                pass
+            else:
+                return run_dir
+
+    latest = latest_artifact_run_dir(
+        TEST_RUNS_ROOT,
+        ("test_metrics.json", "confusion_matrix.png", "confusion_matrix_normalized.png"),
+    )
+    if latest:
+        ensure_runs_path(latest)
+    return latest
+
+
+def run_test_artifact_statuses(run_dir: Path) -> dict:
+    return {
+        "metrics_json": artifact_status(run_dir / "test_metrics.json"),
+        "confusion_matrix": artifact_status(run_dir / "confusion_matrix.png"),
+        "confusion_matrix_normalized": artifact_status(
+            run_dir / "confusion_matrix_normalized.png"
+        ),
+        "roc_auc_curve": artifact_status(run_dir / "roc_auc_curve.png"),
+    }
+
+
+def read_test_metrics(run_dir: Path) -> dict:
+    metrics_path = run_dir / "test_metrics.json"
+    if not metrics_path.is_file():
+        return {
+            "available": False,
+            "run_dir": str(run_dir),
+            "artifacts": run_test_artifact_statuses(run_dir),
+        }
+
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {
+            "available": False,
+            "run_dir": str(run_dir),
+            "artifacts": run_test_artifact_statuses(run_dir),
+        }
+
+    if not isinstance(payload, dict):
+        payload = {}
+
+    payload.update(
+        {
+            "available": True,
+            "run_dir": str(run_dir),
+            "artifacts": run_test_artifact_statuses(run_dir),
+        }
+    )
+    return payload
+
+
+def resolve_test_artifact_path(artifact: str) -> Path:
+    run_dir = current_test_run_dir()
+    if run_dir is None:
+        raise HTTPException(status_code=404, detail="No test run artifacts were found.")
+
+    artifact_map = {
+        "metrics_json": run_dir / "test_metrics.json",
+        "confusion_matrix": run_dir / "confusion_matrix.png",
+        "confusion_matrix_normalized": run_dir / "confusion_matrix_normalized.png",
+        "roc_auc_curve": run_dir / "roc_auc_curve.png",
+    }
+    path = artifact_map.get(artifact)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Unknown test artifact.")
+    ensure_runs_path(path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Test artifact not found: {path}")
+    return path
+
+
+def current_test_status() -> dict:
+    global test_process
+    returncode = None
+    running = False
+    if test_process is not None:
+        returncode = test_process.poll()
+        if returncode is None:
+            running = True
+        else:
+            test_process = None
+
+    run_info = dict(test_run_info or {})
+    if not run_info.get("run_dir"):
+        run_dir = current_test_run_dir()
+        if run_dir is not None:
+            run_info["run_dir"] = str(run_dir)
+
+    progress_percent = max(0, min(100, int(run_info.get("progress_percent") or 0)))
+    progress_stage = run_info.get("progress_stage") or ("running" if running else "idle")
+    progress_detail = run_info.get("progress_detail") or ""
+    if not running and returncode == 0:
+        progress_percent = 100
+        progress_stage = "complete"
+        progress_detail = progress_detail or "Model testing complete."
+    elif not running and returncode not in {None, 0}:
+        progress_stage = "failed"
+        progress_detail = progress_detail or "Model testing failed."
+
+    return {
+        "running": running,
+        "returncode": returncode,
+        "started_at": test_started_at,
+        "log_file": str(TEST_LOG_FILE),
+        "history_log_file": str(test_log_file) if test_log_file else "",
+        "test_run": run_info,
+        "progress": {
+            "percent": progress_percent,
+            "stage": progress_stage,
+            "detail": progress_detail,
+        },
     }
 
 
@@ -2201,6 +2612,236 @@ def roboflow_dataset(request: RoboflowRequest):
         raise
 
 
+@app.post("/api/test/start")
+def start_test(
+    weight_source: str = Form("trained"),
+    project: str = Form("runs/detect"),
+    name: str = Form("train"),
+    prepared_dataset_yaml: str = Form(""),
+    reference_dataset_yaml: str = Form(""),
+    dataset_source: str = Form("prepared"),
+    imgsz: int = Form(640),
+    batch: int = Form(16),
+    workers: int = Form(2),
+    device: str = Form(""),
+    weight_file: Optional[UploadFile] = File(None),
+    dataset_zip: Optional[UploadFile] = File(None),
+    dataset_files: Optional[list[UploadFile]] = File(None),
+):
+    global test_process, test_started_at, test_log_file, test_run_info
+
+    if current_status()["running"]:
+        raise HTTPException(status_code=409, detail="Training is running. Stop training before testing.")
+    if current_test_status()["running"]:
+        raise HTTPException(status_code=409, detail="Model testing is already running.")
+
+    ensure_dirs()
+    test_name = f"test-{datetime.now(MYT).strftime('%Y%m%d-%H%M%S')}"
+    test_project_path = normalize_training_project_path("runs/test")
+    test_input_root = DATA_ROOT / "test_inputs" / test_name
+    test_input_root.mkdir(parents=True, exist_ok=True)
+
+    if weight_source == "trained":
+        weights_path = resolve_weight_path(project, name, "best")
+        weights_label = f"best.pt from {project}/{name}"
+    elif weight_source == "upload":
+        if weight_file is None or not weight_file.filename:
+            raise HTTPException(status_code=400, detail="Choose a .pt weights file to upload.")
+        if Path(weight_file.filename).suffix.lower() != ".pt":
+            raise HTTPException(status_code=400, detail="Uploaded weights must be a .pt file.")
+        weights_dir = test_input_root / "weights"
+        weights_dir.mkdir(parents=True, exist_ok=True)
+        weights_path = weights_dir / Path(weight_file.filename).name
+        save_upload(weight_file, weights_path, lambda *_args: None, "saving", "Saving weights")
+        weights_label = f"uploaded weights {weights_path.name}"
+    else:
+        raise HTTPException(status_code=400, detail="Unknown weight source.")
+
+    if dataset_source == "prepared":
+        if not prepared_dataset_yaml:
+            raise HTTPException(status_code=400, detail="Prepare a dataset before using the prepared test split.")
+        dataset_yaml, dataset_info = resolve_prepared_test_dataset_yaml(prepared_dataset_yaml)
+    elif dataset_source == "upload_zip":
+        if dataset_zip is None or not dataset_zip.filename:
+            raise HTTPException(status_code=400, detail="Choose a labeled YOLO ZIP file for testing.")
+        if not dataset_zip.filename.lower().endswith(".zip"):
+            raise HTTPException(status_code=400, detail="Uploaded test dataset must be a ZIP file.")
+        upload_dir = test_input_root / "zip"
+        extract_dir = test_input_root / "zip_extracted"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = upload_dir / Path(dataset_zip.filename).name
+        save_upload(dataset_zip, zip_path, lambda *_args: None, "saving", "Saving test ZIP")
+        try:
+            with zipfile.ZipFile(zip_path) as archive:
+                archive.extractall(extract_dir)
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="Uploaded test dataset is not a valid ZIP.") from exc
+        dataset_yaml, dataset_info = prepare_custom_test_dataset(
+            extract_dir,
+            f"{test_name}-dataset",
+            reference_dataset_yaml,
+        )
+    elif dataset_source == "upload_folder":
+        files = dataset_files or []
+        if not files:
+            raise HTTPException(status_code=400, detail="Choose a labeled YOLO folder for testing.")
+        upload_dir = test_input_root / "folder"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_root = upload_dir.resolve()
+        for upload in files:
+            relative_path = safe_upload_path(upload.filename or "")
+            target = (upload_dir / relative_path).resolve()
+            try:
+                target.relative_to(upload_root)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid upload path: {upload.filename}") from exc
+            save_upload(upload, target, lambda *_args: None, "saving", "Saving test file")
+        dataset_yaml, dataset_info = prepare_custom_test_dataset(
+            upload_dir,
+            f"{test_name}-dataset",
+            reference_dataset_yaml,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Unknown dataset source.")
+
+    test_run_info = {
+        "project": str(test_project_path),
+        "name": test_name,
+        "expected_run_dir": str(test_project_path / test_name),
+        "run_dir": "",
+        "weights_source": weight_source,
+        "weights_label": weights_label,
+        "dataset_source": dataset_source,
+        "dataset_yaml": str(dataset_yaml),
+        "dataset_root": dataset_info.get("dataset_root", ""),
+        "dataset_split": dataset_info.get("source_split", ""),
+        "progress_percent": 0,
+        "progress_stage": "starting",
+        "progress_detail": "Launching the test job.",
+    }
+
+    TEST_LOG_FILE.write_text("", encoding="utf-8")
+    timestamp = datetime.now(MYT).strftime("%Y%m%d-%H%M%S")
+    test_log_file = LOG_DIR / f"test-{timestamp}.log"
+    cmd = [
+        TRAINING_PYTHON,
+        str(TEST_SCRIPT),
+        "--weights",
+        str(weights_path),
+        "--data",
+        str(dataset_yaml),
+        "--imgsz",
+        str(imgsz),
+        "--batch",
+        str(batch),
+        "--workers",
+        str(workers),
+        "--split",
+        "test",
+        "--project",
+        str(test_project_path),
+        "--name",
+        test_name,
+    ]
+    if device.strip():
+        cmd.extend(["--device", device.strip()])
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    header = (
+        "Model testing started.\n"
+        f"Command: {' '.join(cmd)}\n"
+        f"Weights: {weights_label}\n"
+        f"Dataset: {dataset_info.get('source_split', 'test')} split from {dataset_info.get('dataset_root', dataset_yaml)}\n\n"
+    )
+    TEST_LOG_FILE.write_text(header, encoding="utf-8")
+    test_log_file.write_text(header, encoding="utf-8")
+    test_process = subprocess.Popen(
+        cmd,
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=env,
+        start_new_session=True,
+        text=True,
+        bufsize=1,
+    )
+    threading.Thread(
+        target=stream_test_logs,
+        args=(test_process, [TEST_LOG_FILE, test_log_file]),
+        daemon=True,
+    ).start()
+    test_started_at = time.time()
+
+    return {
+        "message": "Model testing started.",
+        "pid": test_process.pid,
+        "command": cmd,
+        "log_file": str(TEST_LOG_FILE),
+        "history_log_file": str(test_log_file),
+        "test_run": test_run_info,
+    }
+
+
+@app.post("/api/test/stop")
+def stop_test():
+    global test_process
+
+    if test_process is None or test_process.poll() is not None:
+        test_process = None
+        return {"message": "No model-testing process is running."}
+
+    os.killpg(os.getpgid(test_process.pid), signal.SIGTERM)
+    return {"message": "Stop signal sent to the test job."}
+
+
+@app.get("/api/test/status")
+def test_status():
+    status = current_test_status()
+    status["log_tail"] = read_log_tail_from(TEST_LOG_FILE, 4000)
+    status["gpu"] = gpu_status()
+    return status
+
+
+@app.get("/api/test/logs", response_class=PlainTextResponse)
+def test_logs():
+    return read_log_tail_from(TEST_LOG_FILE)
+
+
+@app.get("/api/test/logs/download")
+def download_test_log():
+    path = test_log_file if test_log_file and test_log_file.is_file() else latest_timestamped_test_log()
+    if path is None and TEST_LOG_FILE.is_file():
+        path = TEST_LOG_FILE
+    if not path:
+        raise HTTPException(status_code=404, detail="No test log found.")
+    return FileResponse(path, media_type="text/plain", filename=path.name)
+
+
+@app.get("/api/test/results")
+def test_results():
+    run_dir = current_test_run_dir()
+    if run_dir is None:
+        return {"available": False, "run_dir": "", "artifacts": {}}
+    return read_test_metrics(run_dir)
+
+
+@app.post("/api/test/artifacts/download")
+def download_test_artifact(request: TestArtifactRequest):
+    path = resolve_test_artifact_path(request.artifact)
+    media_type = "application/json" if path.suffix == ".json" else "image/png"
+    return FileResponse(path, media_type=media_type, filename=path.name)
+
+
+@app.get("/api/test/artifacts/view/{artifact}")
+def view_test_artifact(artifact: str):
+    path = resolve_test_artifact_path(artifact)
+    if path.suffix.lower() != ".png":
+        raise HTTPException(status_code=400, detail="Only image artifacts can be viewed.")
+    return FileResponse(path, media_type="image/png")
+
+
 @app.post("/api/train/start")
 def start_training(request: TrainRequest):
     global training_process, training_started_at, training_log_file, training_run_info
@@ -2208,6 +2849,8 @@ def start_training(request: TrainRequest):
     status = current_status()
     if status["running"]:
         raise HTTPException(status_code=409, detail="Training is already running.")
+    if current_test_status()["running"]:
+        raise HTTPException(status_code=409, detail="Model testing is running. Stop testing before training.")
 
     dataset_yaml = Path(request.dataset_yaml).expanduser() if request.dataset_yaml else None
     if not request.resume and (dataset_yaml is None or not dataset_yaml.is_file()):

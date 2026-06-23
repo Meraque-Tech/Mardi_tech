@@ -369,12 +369,14 @@ It can also download the timestamped log for the current or most recent run.
 
 ## Metrics
 
-The UI reads Ultralytics `results.csv` and final validation log rows to show:
+The UI reads Ultralytics `results.csv`, saved web metrics, and validation
+artifacts to show:
 
 ```text
 Macro F1
 Weighted F1
 Per-class F1
+Per-class AP50 and AP50-95
 Training loss
 Validation loss
 mAP50
@@ -382,18 +384,24 @@ mAP50-95
 Detection performance graph by epoch
 Loss graph by epoch
 Raw and normalized validation confusion matrices
+Validation ROC-AUC curve and per-class AUC summary
 Best epoch summary, including lowest training and validation losses
 ```
 
 `Macro F1` is the equal-weight mean of the final per-class F1 scores. `Weighted F1`
 uses the same per-class scores weighted by class instance counts. Both are
-available after the final per-class validation rows have been written to the
-training log.
+saved into `web_metrics.json` after training completes.
 
 When Ultralytics has generated `confusion_matrix.png` and
 `confusion_matrix_normalized.png`, the UI displays both plots for the resolved
 training run. The x-axis is labeled `Actual` and the y-axis is labeled
 `Predicted`. Click either matrix to open its full-resolution image.
+
+The ROC-AUC view is image-level one-vs-rest on the validation split. For each
+class, the score is the highest predicted confidence for that class in an image,
+and the target is whether that class appears anywhere in the image. This makes
+ROC-AUC well-defined for the UI while the AP columns remain box-level detection
+metrics from YOLO validation.
 
 ## Outputs And Downloads
 

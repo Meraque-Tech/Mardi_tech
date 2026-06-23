@@ -3,6 +3,9 @@
 
 import argparse
 import csv
+from contextlib import contextmanager
+from functools import wraps
+import json
 import os
 from pathlib import Path
 
@@ -36,6 +39,40 @@ TRAINING_CONFIG = {
 }
 
 WEB_PROGRESS_PREFIX = "WEB_TRAINING_PROGRESS"
+IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpeg", ".jpg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
+
+
+def confusion_matrix_axis_label(label):
+    """Use clearer terminology for the ground-truth confusion-matrix axis."""
+    return "Actual" if label == "True" else label
+
+
+@contextmanager
+def use_actual_confusion_matrix_axis_label():
+    """Temporarily customize Ultralytics' matplotlib confusion-matrix label."""
+    try:
+        from matplotlib.axes import Axes
+    except ImportError:
+        yield
+        return
+
+    original_set_xlabel = Axes.set_xlabel
+
+    @wraps(original_set_xlabel)
+    def set_xlabel(axes, xlabel, *args, **kwargs):
+        return original_set_xlabel(
+            axes,
+            confusion_matrix_axis_label(xlabel),
+            *args,
+            **kwargs,
+        )
+
+    Axes.set_xlabel = set_xlabel
+    try:
+        yield
+    finally:
+        if Axes.set_xlabel is set_xlabel:
+            Axes.set_xlabel = original_set_xlabel
 
 
 def report_epoch_start(trainer):
@@ -240,6 +277,15 @@ def row_float(row: dict, key: str):
         return None
 
 
+def rounded_metric(value, digits: int = 4):
+    if value is None:
+        return None
+    try:
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return None
+
+
 def total_loss(row: dict, prefix: str):
     values = [
         row_float(row, f"{prefix}/box_loss"),
@@ -248,7 +294,7 @@ def total_loss(row: dict, prefix: str):
     ]
     if any(value is None for value in values):
         return None
-    return sum(value for value in values if value is not None)
+    return sum(values)
 
 
 def f1_score(row: dict):
@@ -279,6 +325,286 @@ def plot_metric_series(output_path: Path, title: str, xlabel: str, ylabel: str, 
     plt.tight_layout()
     plt.savefig(output_path, dpi=160)
     plt.close()
+
+
+def plot_roc_auc_curves(output_path: Path, curves: list[dict]):
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(10, 6))
+    plt.plot([0, 1], [0, 1], linestyle="--", color="#94a3b8", linewidth=1.5, label="Chance")
+    for curve in curves:
+        plt.plot(
+            curve["fpr"],
+            curve["tpr"],
+            linewidth=2,
+            label=f'{curve["class_name"]} (AUC {curve["auc"]:.3f})',
+        )
+
+    plt.title("Validation ROC-AUC by Class")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.xlim(0, 1)
+    plt.ylim(0, 1.02)
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc="lower right", fontsize=9)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=160)
+    plt.close()
+
+
+def normalize_class_names(names) -> dict[int, str]:
+    if isinstance(names, dict):
+        return {int(key): str(value) for key, value in names.items()}
+    if isinstance(names, (list, tuple)):
+        return {index: str(value) for index, value in enumerate(names)}
+    return {}
+
+
+def build_per_class_metrics(metrics) -> dict:
+    if metrics is None or not hasattr(metrics, "summary"):
+        return {"macro_f1": None, "weighted_f1": None, "per_class": []}
+
+    classes = []
+    for row in metrics.summary():
+        precision = rounded_metric(row.get("Box-P"))
+        recall = rounded_metric(row.get("Box-R"))
+        f1 = rounded_metric(row.get("Box-F1"))
+        images = int(row.get("Images") or 0)
+        instances = int(row.get("Instances") or 0)
+        classes.append(
+            {
+                "class_name": str(row.get("Class", "")),
+                "images": images,
+                "instances": instances,
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "map50": rounded_metric(row.get("mAP50")),
+                "map50_95": rounded_metric(row.get("mAP50-95")),
+            }
+        )
+
+    macro_f1 = None
+    if classes:
+        macro_f1 = sum(row["f1"] or 0 for row in classes) / len(classes)
+
+    total_instances = sum(row["instances"] for row in classes)
+    weighted_f1 = None
+    if total_instances:
+        weighted_f1 = sum((row["f1"] or 0) * row["instances"] for row in classes) / total_instances
+
+    return {
+        "macro_f1": rounded_metric(macro_f1),
+        "weighted_f1": rounded_metric(weighted_f1),
+        "per_class": classes,
+    }
+
+
+def resolve_dataset_entries(data_config: dict, split_name: str) -> list[Path]:
+    base_path = Path(str(data_config.get("path") or ".")).expanduser()
+    raw_value = data_config.get(split_name)
+    if raw_value is None:
+        return []
+    values = raw_value if isinstance(raw_value, list) else [raw_value]
+    resolved = []
+    for value in values:
+        candidate = Path(str(value)).expanduser()
+        if not candidate.is_absolute():
+            candidate = base_path / candidate
+        resolved.append(candidate)
+    return resolved
+
+
+def collect_split_images(entries: list[Path]) -> list[Path]:
+    images = []
+    for entry in entries:
+        if entry.is_dir():
+            images.extend(
+                path
+                for path in sorted(entry.rglob("*"))
+                if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+            )
+            continue
+        if entry.is_file() and entry.suffix.lower() == ".txt":
+            for line in entry.read_text(encoding="utf-8", errors="replace").splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                path = Path(stripped).expanduser()
+                if not path.is_absolute():
+                    path = entry.parent / path
+                if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+                    images.append(path)
+            continue
+        if entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS:
+            images.append(entry)
+    unique_images = []
+    seen = set()
+    for path in images:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_images.append(resolved)
+    return unique_images
+
+
+def image_label_path(image_path: Path) -> Path:
+    parts = list(image_path.parts)
+    if "images" in parts:
+        index = parts.index("images")
+        return Path(*parts[:index], "labels", *parts[index + 1 :]).with_suffix(".txt")
+    return image_path.with_suffix(".txt")
+
+
+def read_image_classes(label_path: Path) -> set[int]:
+    if not label_path.is_file():
+        return set()
+    classes = set()
+    for line in label_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        class_id = stripped.split(maxsplit=1)[0]
+        try:
+            classes.add(int(float(class_id)))
+        except ValueError:
+            continue
+    return classes
+
+
+def build_image_level_roc_auc(run_dir: Path, weights_path: Path, data_config: dict, config: dict) -> dict:
+    names = normalize_class_names(data_config.get("names"))
+    if not names:
+        return {
+            "mode": "image_presence",
+            "split": "val",
+            "classes": [],
+            "note": "ROC-AUC is unavailable because class names were not found in the dataset config.",
+        }
+
+    val_entries = resolve_dataset_entries(data_config, "val")
+    image_paths = collect_split_images(val_entries)
+    if not image_paths:
+        return {
+            "mode": "image_presence",
+            "split": "val",
+            "classes": [],
+            "note": "ROC-AUC is unavailable because no validation images were found.",
+        }
+
+    from sklearn.metrics import auc, roc_curve
+    from ultralytics import YOLO
+
+    device = config.get("device")
+    predictor = YOLO(str(weights_path))
+    batch_size = config.get("batch")
+    if not isinstance(batch_size, int) or batch_size <= 0:
+        batch_size = 16
+
+    y_true_by_class = {class_id: [] for class_id in names}
+    y_score_by_class = {class_id: [] for class_id in names}
+    prediction_stream = predictor.predict(
+        source=[str(path) for path in image_paths],
+        stream=True,
+        imgsz=config["imgsz"],
+        conf=0.001,
+        iou=0.7,
+        batch=batch_size,
+        device=device,
+        verbose=False,
+    )
+
+    for image_path, result in zip(image_paths, prediction_stream):
+        gt_classes = read_image_classes(image_label_path(image_path))
+        scores = {class_id: 0.0 for class_id in names}
+        boxes = getattr(result, "boxes", None)
+        if boxes is not None and boxes.cls is not None and boxes.conf is not None:
+            predicted_classes = boxes.cls.tolist()
+            confidences = boxes.conf.tolist()
+            for raw_class, raw_confidence in zip(predicted_classes, confidences):
+                class_id = int(raw_class)
+                if class_id not in scores:
+                    continue
+                confidence = float(raw_confidence)
+                if confidence > scores[class_id]:
+                    scores[class_id] = confidence
+        for class_id in names:
+            y_true_by_class[class_id].append(1 if class_id in gt_classes else 0)
+            y_score_by_class[class_id].append(scores[class_id])
+
+    curves = []
+    summary = []
+    for class_id, class_name in names.items():
+        y_true = y_true_by_class[class_id]
+        y_score = y_score_by_class[class_id]
+        positives = sum(y_true)
+        negatives = len(y_true) - positives
+        entry = {
+            "class_name": class_name,
+            "positive_images": positives,
+            "negative_images": negatives,
+            "auc": None,
+        }
+        if positives == 0 or negatives == 0:
+            summary.append(entry)
+            continue
+        fpr, tpr, _ = roc_curve(y_true, y_score)
+        auc_value = float(auc(fpr, tpr))
+        entry["auc"] = rounded_metric(auc_value)
+        summary.append(entry)
+        curves.append(
+            {
+                "class_name": class_name,
+                "auc": auc_value,
+                "fpr": fpr.tolist(),
+                "tpr": tpr.tolist(),
+            }
+        )
+
+    if curves:
+        plot_roc_auc_curves(run_dir / "roc_auc_curve.png", curves)
+
+    return {
+        "mode": "image_presence",
+        "split": "val",
+        "classes": summary,
+        "note": "ROC-AUC is calculated per class from validation image-level class presence using the best checkpoint.",
+    }
+
+
+def save_web_metrics(run_dir: Path, metrics, data_config: dict, config: dict):
+    payload = build_per_class_metrics(metrics)
+    weights_path = run_dir / "weights" / "best.pt"
+    if not weights_path.is_file():
+        weights_path = run_dir / "weights" / "last.pt"
+
+    if weights_path.is_file():
+        try:
+            payload["roc_auc"] = build_image_level_roc_auc(run_dir, weights_path, data_config, config)
+        except Exception as exc:
+            print(f"Could not generate ROC-AUC artifacts: {exc}")
+            payload["roc_auc"] = {
+                "mode": "image_presence",
+                "split": "val",
+                "classes": [],
+                "note": f"ROC-AUC is unavailable: {exc}",
+            }
+    else:
+        payload["roc_auc"] = {
+            "mode": "image_presence",
+            "split": "val",
+            "classes": [],
+            "note": "ROC-AUC is unavailable because no trained weights were found.",
+        }
+
+    output_path = run_dir / "web_metrics.json"
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"Saved web metrics to {output_path}")
 
 
 def save_training_graphs(run_dir: Path):
@@ -364,6 +690,7 @@ def main():
         "cos_lr": config["cos_lr"],
         "warmup_epochs": config["warmup_epochs"],
         "pretrained": config["pretrained"],
+        "plots": True,
         "exist_ok": config["exist_ok"],
         "seed": config["seed"],
         "project": config["project"],
@@ -380,13 +707,18 @@ def main():
     if config["device"] is not None:
         train_kwargs["device"] = config["device"]
 
-    model.train(**train_kwargs)
+    with use_actual_confusion_matrix_axis_label():
+        metrics = model.train(**train_kwargs)
 
     run_dir = Path(getattr(model.trainer, "save_dir", Path(config["project"]) / config["name"]))
     try:
         save_training_graphs(run_dir)
     except Exception as exc:
         print(f"Could not save training graphs: {exc}")
+    try:
+        save_web_metrics(run_dir, metrics, getattr(model.trainer, "data", {}), config)
+    except Exception as exc:
+        print(f"Could not save web metrics: {exc}")
 
 
 if __name__ == "__main__":

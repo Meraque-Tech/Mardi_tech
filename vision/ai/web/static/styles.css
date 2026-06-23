@@ -435,7 +435,8 @@ button.section-toggle {
 }
 
 .advanced-section,
-.training-results-panel {
+.training-results-panel,
+.testing-panel {
   margin-top: 16px;
 }
 
@@ -544,6 +545,49 @@ button[aria-pressed="true"] {
   font-size: 12px;
 }
 
+.helper-text {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.toggle-row {
+  margin-top: 8px;
+}
+
+.choice-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.choice-chip input {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+}
+
+.choice-chip span {
+  line-height: 1.2;
+}
+
+.choice-chip:has(input:checked) {
+  border-color: var(--accent);
+  background: #e7f3ef;
+  color: var(--accent-strong);
+}
+
 .file-selection.error {
   color: var(--danger);
   font-weight: 800;
@@ -557,6 +601,10 @@ button[aria-pressed="true"] {
 
 .grid.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .grid.three {
@@ -1168,9 +1216,35 @@ textarea:focus {
 .training-results-panel:not(.has-results) .best-metrics,
 .training-results-panel:not(.has-results) .charts-grid,
 .training-results-panel:not(.has-results) .confusion-matrix-panel,
+.training-results-panel:not(.has-results) .roc-auc-panel,
 .training-results-panel:not(.has-results) .artifact-toolbar,
 .training-results-panel:not(.has-results) .class-metrics {
   display: none;
+}
+
+.testing-panel:not(.has-results) .confusion-matrix-panel,
+.testing-panel:not(.has-results) .roc-auc-panel,
+.testing-panel:not(.has-results) .class-metrics {
+  display: none;
+}
+
+.test-source-grid,
+.test-settings-grid,
+.test-progress-card {
+  margin-top: 14px;
+}
+
+.test-action-row {
+  align-items: center;
+  margin-top: 14px;
+}
+
+.test-action-row button,
+.test-action-row button.compact {
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .best-metrics {
@@ -1239,7 +1313,9 @@ textarea:focus {
 }
 
 .confusion-matrix-panel .field-header p,
-.confusion-matrix-panel > p {
+.confusion-matrix-panel > p,
+.roc-auc-panel .field-header p,
+.roc-auc-panel > p {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 12px;
@@ -1297,6 +1373,68 @@ textarea:focus {
   font-size: clamp(7px, 1.2vw, 12px);
   line-height: 1;
   pointer-events: none;
+}
+
+.roc-auc-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.roc-auc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.roc-auc-grid figure,
+.roc-auc-summary {
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fafb;
+}
+
+.roc-auc-grid figcaption,
+.roc-auc-summary h4 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.roc-auc-grid a {
+  display: block;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.roc-auc-grid img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.roc-auc-summary table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.roc-auc-summary th,
+.roc-auc-summary td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.roc-auc-summary th {
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .class-metrics {
@@ -1370,9 +1508,11 @@ pre:focus {
   .workspace,
   .grid.two,
   .grid.three,
+  .grid.four,
   .metrics-grid,
   .charts-grid,
   .confusion-matrix-grid,
+  .roc-auc-grid,
   .summary-grid,
   .best-grid {
     grid-template-columns: 1fr;

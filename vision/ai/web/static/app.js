@@ -31,6 +31,13 @@ const state = {
   datasetNameEdited: false,
   resumeAvailable: false,
   resumeCheckpoint: "",
+  testRunning: false,
+  testStarting: false,
+  testStopping: false,
+  testMetricsAvailable: false,
+  testOutcome: "",
+  testLogsMode: "recent",
+  testDownloads: new Set(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -424,7 +431,9 @@ function syncTrainingGuide() {
 }
 
 function syncActionStates() {
-  const locked = state.running || state.isStarting || state.isStopping;
+  const trainingLocked = state.running || state.isStarting || state.isStopping;
+  const testLocked = state.testRunning || state.testStarting || state.testStopping;
+  const locked = trainingLocked || testLocked;
   const preparing = state.isPreparing || state.isDetecting;
   const hasDataset = Boolean(state.datasetYaml);
   const canResume = state.resumeAvailable && $("resume").checked;
@@ -464,6 +473,7 @@ function syncActionStates() {
   } else if (state.running) {
     setStatusPhase("training");
   }
+  syncTestActionStates();
   syncTrainingGuide();
 }
 
@@ -944,20 +954,275 @@ function updateFileSelection() {
     $("folder-selection").classList.remove("error");
     $("folder-selection").textContent = "No folder selected. Folder upload supports up to 1,000 files; use ZIP for larger datasets.";
     updateDatasetNameSuggestion();
-    syncActionStates();
+  } else {
+    const totalSize = folderFiles.reduce((sum, file) => sum + file.size, 0);
+    const firstPath = folderFiles[0].webkitRelativePath || folderFiles[0].name;
+    const folderName = firstPath.split("/")[0];
+    state.folderTooLarge = folderFiles.length > 1000;
+    $("folder-selection").classList.toggle("error", state.folderTooLarge);
+    const limitNote = folderFiles.length > 1000
+      ? " Too many files for folder upload; use Upload ZIP."
+      : " Folder upload supports up to 1,000 files.";
+    $("folder-selection").textContent = `${folderName}: ${folderFiles.length} files (${formatBytes(totalSize)}).${limitNote}`;
+    updateDatasetNameSuggestion();
+  }
+  syncActionStates();
+
+  const testWeight = $("test-weight-file").files[0];
+  $("test-weight-selection").textContent = testWeight
+    ? `${testWeight.name} (${formatBytes(testWeight.size)})`
+    : "No weights file selected.";
+
+  const testZip = $("test-dataset-zip").files[0];
+  $("test-dataset-zip-selection").textContent = testZip
+    ? `${testZip.name} (${formatBytes(testZip.size)})`
+    : "No ZIP selected.";
+
+  const testFolderFiles = Array.from($("test-dataset-folder").files);
+  if (!testFolderFiles.length) {
+    $("test-dataset-folder-selection").textContent = "No folder selected.";
+  } else {
+    const firstPath = testFolderFiles[0].webkitRelativePath || testFolderFiles[0].name;
+    const folderLabel = firstPath.split("/")[0];
+    const totalFolderBytes = testFolderFiles.reduce((sum, file) => sum + file.size, 0);
+    $("test-dataset-folder-selection").textContent = `${folderLabel}: ${testFolderFiles.length} files (${formatBytes(totalFolderBytes)}).`;
+  }
+  syncTestSourceControls();
+}
+
+function selectedTestWeightSource() {
+  return document.querySelector('input[name="test-weight-source"]:checked')?.value || "trained";
+}
+
+function selectedTestDatasetSource() {
+  return document.querySelector('input[name="test-dataset-source"]:checked')?.value || "prepared";
+}
+
+function syncTestSourceControls() {
+  const weightSource = selectedTestWeightSource();
+  const datasetSource = selectedTestDatasetSource();
+
+  $("test-weight-upload-wrap").hidden = weightSource !== "upload";
+  $("test-trained-weights-note").hidden = weightSource !== "trained";
+
+  $("test-dataset-zip-wrap").hidden = datasetSource !== "upload_zip";
+  $("test-dataset-folder-wrap").hidden = datasetSource !== "upload_folder";
+  const datasetNotes = {
+    prepared: "Uses the prepared dataset's existing test split.",
+    upload_zip: "Upload a labeled YOLO ZIP. A data.yaml is preferred; otherwise the prepared dataset classes are reused.",
+    upload_folder: "Upload a labeled YOLO folder. A data.yaml is preferred; otherwise the prepared dataset classes are reused.",
+  };
+  $("test-dataset-note").textContent = datasetNotes[datasetSource] || datasetNotes.prepared;
+  syncTestActionStates();
+}
+
+function syncTestActionStates() {
+  const trainingBusy = state.running || state.isStarting || state.isStopping;
+  const testingBusy = state.testRunning || state.testStarting || state.testStopping;
+  const sourcePrepared = selectedTestDatasetSource() === "prepared";
+  const sourceUploadZip = selectedTestDatasetSource() === "upload_zip";
+  const sourceUploadFolder = selectedTestDatasetSource() === "upload_folder";
+  const weightUpload = selectedTestWeightSource() === "upload";
+  const hasPreparedDataset = Boolean(state.datasetYaml);
+  const hasZip = Boolean($("test-dataset-zip").files[0]);
+  const hasFolder = Boolean($("test-dataset-folder").files.length);
+  const hasWeightFile = Boolean($("test-weight-file").files[0]);
+  const canStart = !trainingBusy
+    && !testingBusy
+    && (
+      (sourcePrepared && hasPreparedDataset)
+      || (sourceUploadZip && hasZip)
+      || (sourceUploadFolder && hasFolder)
+    )
+    && (!weightUpload || hasWeightFile);
+
+  $("start-test").disabled = !canStart;
+  $("start-test").textContent = state.testStarting ? "Starting..." : "Start Test";
+  $("stop-test").disabled = !state.testRunning || state.testStopping;
+  $("stop-test").textContent = state.testStopping ? "Stopping..." : "Stop Test";
+  $("refresh-test-results").disabled = state.testStarting;
+
+  document.querySelectorAll("#model-testing-panel input, #model-testing-panel select, #model-testing-panel textarea").forEach((control) => {
+    if (control.id === "stop-test") {
+      return;
+    }
+    if (control.id === "start-test") {
+      return;
+    }
+    if (control.id === "refresh-test-results") {
+      return;
+    }
+    if (control.type === "button") {
+      return;
+    }
+    control.disabled = trainingBusy || testingBusy;
+  });
+}
+
+function renderTestProgress(progress = {}, phase = "idle") {
+  const percent = Math.min(100, Math.max(0, Number(progress.percent) || 0));
+  const stage = progress.stage || phase || "idle";
+  const detail = progress.detail || "The current test stage will appear here when testing starts.";
+  const stageLabels = {
+    idle: "Waiting to start",
+    starting: "Starting model testing",
+    initializing: "Initializing",
+    evaluating: "Evaluating test split",
+    saving_metrics: "Saving metrics",
+    complete: "Model testing complete",
+    failed: "Model testing failed",
+  };
+  const label = stageLabels[stage] || stage.replace(/_/g, " ");
+  $("test-progress-label").textContent = label;
+  $("test-progress-percent").textContent = `${Math.round(percent)}%`;
+  $("test-progress-fill").style.width = `${percent}%`;
+  $("test-progress-detail").textContent = detail;
+  const track = $("test-progress-track");
+  track.setAttribute("aria-valuenow", String(Math.round(percent)));
+  track.setAttribute("aria-valuetext", `${label}: ${Math.round(percent)}%`);
+}
+
+function testArtifactViewUrl(artifact, status) {
+  const params = new URLSearchParams();
+  params.set("v", String(status.modified_at || status.size || 0));
+  return `/api/test/artifacts/view/${encodeURIComponent(artifact)}?${params.toString()}`;
+}
+
+function renderTestConfusionMatrices(artifacts = {}) {
+  const variants = [
+    {
+      artifact: "confusion_matrix_normalized",
+      card: "test-confusion-matrix-normalized-card",
+      image: "test-confusion-matrix-normalized-image",
+      link: "test-confusion-matrix-normalized-link",
+    },
+    {
+      artifact: "confusion_matrix",
+      card: "test-confusion-matrix-card",
+      image: "test-confusion-matrix-image",
+      link: "test-confusion-matrix-link",
+    },
+  ];
+  let availableCount = 0;
+  variants.forEach((variant) => {
+    const status = artifacts?.[variant.artifact] || {};
+    const available = Boolean(status.available);
+    const card = $(variant.card);
+    const image = $(variant.image);
+    const link = $(variant.link);
+    card.hidden = !available;
+    if (!available) {
+      image.removeAttribute("src");
+      link.removeAttribute("href");
+      return;
+    }
+    availableCount += 1;
+    const url = testArtifactViewUrl(variant.artifact, status);
+    if (image.getAttribute("src") !== url) {
+      image.src = url;
+    }
+    link.href = url;
+  });
+  $("test-confusion-matrix-status").textContent = availableCount
+    ? "Click a matrix to open the full-resolution test plot."
+    : "The confusion matrix will appear after the test evaluation finishes.";
+}
+
+function renderTestRocAuc(rocAuc = {}, artifacts = {}) {
+  const status = artifacts?.roc_auc_curve || {};
+  const available = Boolean(status.available);
+  const card = $("test-roc-auc-card");
+  const image = $("test-roc-auc-image");
+  const link = $("test-roc-auc-link");
+  card.hidden = !available;
+  if (!available) {
+    image.removeAttribute("src");
+    link.removeAttribute("href");
+  } else {
+    const url = testArtifactViewUrl("roc_auc_curve", status);
+    if (image.getAttribute("src") !== url) {
+      image.src = url;
+    }
+    link.href = url;
+  }
+
+  const classes = Array.isArray(rocAuc.classes) ? rocAuc.classes : [];
+  const container = $("test-roc-auc-summary");
+  if (!classes.length) {
+    container.innerHTML = "";
+  } else {
+    const rows = classes.map((item) => `
+      <tr>
+        <td>${escapeHtml(item.class_name)}</td>
+        <td>${item.positive_images || 0}</td>
+        <td>${item.negative_images || 0}</td>
+        <td>${metricText(item.auc)}</td>
+      </tr>
+    `).join("");
+    container.innerHTML = `
+      <h4>Per-Class AUC</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Class</th>
+            <th>Positive images</th>
+            <th>Negative images</th>
+            <th>AUC</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  $("test-roc-auc-status").textContent = available
+    ? `Click the ROC plot to open the full-resolution image. ${rocAuc.note || ""}`.trim()
+    : (rocAuc.note || "ROC-AUC will appear after the test evaluation finishes.");
+}
+
+function renderTestClassMetrics(classes) {
+  const container = $("test-class-metrics");
+  if (!Array.isArray(classes) || !classes.length) {
+    container.innerHTML = "";
     return;
   }
-  const totalSize = folderFiles.reduce((sum, file) => sum + file.size, 0);
-  const firstPath = folderFiles[0].webkitRelativePath || folderFiles[0].name;
-  const folderName = firstPath.split("/")[0];
-  state.folderTooLarge = folderFiles.length > 1000;
-  $("folder-selection").classList.toggle("error", state.folderTooLarge);
-  const limitNote = folderFiles.length > 1000
-    ? " Too many files for folder upload; use Upload ZIP."
-    : " Folder upload supports up to 1,000 files.";
-  $("folder-selection").textContent = `${folderName}: ${folderFiles.length} files (${formatBytes(totalSize)}).${limitNote}`;
-  updateDatasetNameSuggestion();
-  syncActionStates();
+
+  const rows = classes.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.class_name)}</td>
+      <td>${item.instances}</td>
+      <td>${metricText(item.map50)}</td>
+      <td>${metricText(item.map50_95)}</td>
+      <td>${metricText(item.f1)}</td>
+      <td>${metricText(item.precision)}</td>
+      <td>${metricText(item.recall)}</td>
+    </tr>
+  `).join("");
+
+  container.innerHTML = `
+    <h4>Per-Class Test Metrics</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Class</th>
+          <th>Instances</th>
+          <th>AP50</th>
+          <th>AP50-95</th>
+          <th>F1</th>
+          <th>Precision</th>
+          <th>Recall</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function setTestArtifactButtons(artifacts) {
+  const metricsAvailable = Boolean(artifacts?.metrics_json?.available);
+  const rocAvailable = Boolean(artifacts?.roc_auc_curve?.available);
+  $("download-test-metrics-json").disabled = !metricsAvailable || state.testDownloads.has("metrics_json");
+  $("download-test-roc-auc-graph").disabled = !rocAvailable || state.testDownloads.has("roc_auc_curve");
 }
 
 function metricText(value, suffix = "") {
@@ -987,6 +1252,8 @@ function renderClassMetrics(classes) {
     <tr>
       <td>${escapeHtml(item.class_name)}</td>
       <td>${item.instances}</td>
+      <td>${metricText(item.map50)}</td>
+      <td>${metricText(item.map50_95)}</td>
       <td>${metricText(item.f1)}</td>
       <td>${metricText(item.precision)}</td>
       <td>${metricText(item.recall)}</td>
@@ -994,12 +1261,14 @@ function renderClassMetrics(classes) {
   `).join("");
 
   container.innerHTML = `
-    <h4>Per-Class F1</h4>
+    <h4>Per-Class Metrics</h4>
     <table>
       <thead>
         <tr>
           <th>Class</th>
           <th>Instances</th>
+          <th>AP50</th>
+          <th>AP50-95</th>
           <th>F1</th>
           <th>Precision</th>
           <th>Recall</th>
@@ -1157,6 +1426,7 @@ function setArtifactButtons(artifacts) {
   $("download-results-csv").disabled = !isEnabled("results_csv") || state.downloads.has("results_csv");
   $("download-accuracy-graph").disabled = !isEnabled("accuracy_graph") || state.downloads.has("accuracy_graph");
   $("download-loss-graph").disabled = !isEnabled("loss_graph") || state.downloads.has("loss_graph");
+  $("download-roc-auc-graph").disabled = !isEnabled("roc_auc_curve") || state.downloads.has("roc_auc_curve");
 }
 
 function artifactViewUrl(artifact, target, status) {
@@ -1208,6 +1478,59 @@ function renderConfusionMatrices(artifacts = {}, target = weightTarget()) {
   $("confusion-matrix-status").textContent = availableCount
     ? "Click a matrix to open the full-resolution validation plot."
     : "The confusion matrix will appear after validation plots are generated.";
+}
+
+function renderRocAuc(rocAuc = {}, artifacts = {}, target = weightTarget()) {
+  const status = artifacts?.roc_auc_curve || {};
+  const available = Boolean(status.available);
+  const card = $("roc-auc-card");
+  const image = $("roc-auc-image");
+  const link = $("roc-auc-link");
+  card.hidden = !available;
+  if (!available) {
+    image.removeAttribute("src");
+    link.removeAttribute("href");
+  } else {
+    const url = artifactViewUrl("roc_auc_curve", target, status);
+    if (image.getAttribute("src") !== url) {
+      image.src = url;
+    }
+    link.href = url;
+  }
+
+  const classes = Array.isArray(rocAuc.classes) ? rocAuc.classes : [];
+  const container = $("roc-auc-summary");
+  if (!classes.length) {
+    container.innerHTML = "";
+  } else {
+    const rows = classes.map((item) => `
+      <tr>
+        <td>${escapeHtml(item.class_name)}</td>
+        <td>${item.positive_images || 0}</td>
+        <td>${item.negative_images || 0}</td>
+        <td>${metricText(item.auc)}</td>
+      </tr>
+    `).join("");
+    container.innerHTML = `
+      <h4>Per-Class AUC</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Class</th>
+            <th>Positive images</th>
+            <th>Negative images</th>
+            <th>AUC</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  const note = rocAuc.note || "ROC-AUC will appear after post-training evaluation finishes.";
+  $("roc-auc-status").textContent = available
+    ? `Click the ROC plot to open the full-resolution image. ${note}`
+    : note;
 }
 
 function resetCharts() {
@@ -1374,6 +1697,7 @@ async function loadConfig() {
   const config = await apiJson("/api/config");
   $("data-root").textContent = `Dataset workspace: ${config.data_root}`;
   $("device").value = config.default_device || "";
+  $("test-device").value = config.default_device || "";
   $("rf-workspace").value = config.roboflow.workspace || "";
   $("rf-project").value = config.roboflow.project || "";
   $("rf-version").value = config.roboflow.version || "";
@@ -1718,6 +2042,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
       resetCharts();
       setArtifactButtons(metrics.artifacts || false);
       renderConfusionMatrices(metrics.artifacts || {}, target);
+      renderRocAuc({}, metrics.artifacts || {}, target);
       $("metrics-status").textContent = "No results.csv found for this run yet.";
       return;
     }
@@ -1735,6 +2060,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     renderMetricCharts(metrics.history);
     setArtifactButtons(metrics.artifacts || true);
     renderConfusionMatrices(metrics.artifacts || {}, target);
+    renderRocAuc(metrics.roc_auc || {}, metrics.artifacts || {}, target);
     $("metrics-status").textContent = `Epoch ${metrics.epoch}. ${metrics.note}`;
   } catch (error) {
     if (revision !== state.targetRevision) {
@@ -1744,6 +2070,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     resetCharts();
     setArtifactButtons(false);
     renderConfusionMatrices({}, target);
+    renderRocAuc({}, {}, target);
     $("metrics-status").textContent = error.message;
   }
 }
@@ -1845,6 +2172,185 @@ async function downloadArtifact(artifact, filename) {
   }
 }
 
+async function startTest() {
+  if (state.testStarting || state.testRunning) {
+    return;
+  }
+
+  const weightSource = selectedTestWeightSource();
+  const datasetSource = selectedTestDatasetSource();
+  if (datasetSource === "prepared" && !state.datasetYaml) {
+    setMessage("Prepare a dataset first so the test split is available.", true);
+    return;
+  }
+  if (weightSource === "upload" && !$("test-weight-file").files[0]) {
+    setMessage("Choose a .pt weights file to test.", true);
+    return;
+  }
+  if (datasetSource === "upload_zip" && !$("test-dataset-zip").files[0]) {
+    setMessage("Choose a labeled YOLO ZIP file for testing.", true);
+    return;
+  }
+  if (datasetSource === "upload_folder" && !$("test-dataset-folder").files.length) {
+    setMessage("Choose a labeled YOLO folder for testing.", true);
+    return;
+  }
+
+  state.testStarting = true;
+  state.testOutcome = "";
+  syncActionStates();
+  renderTestProgress({ percent: 0, stage: "starting", detail: "Uploading inputs and launching the test job." }, "starting");
+  setMessage("Starting model testing...");
+
+  try {
+    const form = new FormData();
+    form.append("weight_source", weightSource);
+    form.append("project", $("project").value || "runs/detect");
+    form.append("name", $("run-name").value || "train");
+    form.append("prepared_dataset_yaml", state.datasetYaml || "");
+    form.append("reference_dataset_yaml", state.datasetYaml || "");
+    form.append("dataset_source", datasetSource);
+    form.append("imgsz", $("test-imgsz").value);
+    form.append("batch", $("test-batch").value);
+    form.append("workers", $("test-workers").value);
+    form.append("device", $("test-device").value || $("device").value || "");
+
+    const weightFile = $("test-weight-file").files[0];
+    if (weightSource === "upload" && weightFile) {
+      form.append("weight_file", weightFile);
+    }
+
+    const datasetZip = $("test-dataset-zip").files[0];
+    if (datasetSource === "upload_zip" && datasetZip) {
+      form.append("dataset_zip", datasetZip);
+    }
+
+    if (datasetSource === "upload_folder") {
+      Array.from($("test-dataset-folder").files).forEach((file) => {
+        form.append("dataset_files", file, file.webkitRelativePath || file.name);
+      });
+    }
+
+    const response = await fetch("/api/test/start", { method: "POST", body: form });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `Request failed: ${response.status}`);
+    }
+
+    state.testRunning = true;
+    state.testMetricsAvailable = false;
+    $("model-testing-panel").classList.remove("has-results");
+    setPanelExpanded("testing", true);
+    setMessage(`${payload.message}\nPID: ${payload.pid}`);
+    $("test-logs").textContent = "";
+    await Promise.all([refreshTestResults(), pollStatus()]);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.testStarting = false;
+    syncActionStates();
+  }
+}
+
+async function stopTest() {
+  if (!state.testRunning || state.testStopping) {
+    return;
+  }
+  state.testStopping = true;
+  syncActionStates();
+  try {
+    const payload = await apiJson("/api/test/stop", { method: "POST", body: "{}" });
+    setMessage(payload.message);
+    await pollStatus();
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.testStopping = false;
+    syncActionStates();
+  }
+}
+
+async function refreshTestResults() {
+  const button = $("refresh-test-results");
+  button.disabled = true;
+  button.textContent = "Refreshing...";
+  try {
+    const results = await apiJson("/api/test/results");
+    if (!results.available) {
+      state.testMetricsAvailable = false;
+      $("model-testing-panel").classList.remove("has-results");
+      $("test-metric-macro-f1").textContent = "-";
+      $("test-metric-weighted-f1").textContent = "-";
+      $("test-metric-precision").textContent = "-";
+      $("test-metric-recall").textContent = "-";
+      $("test-metric-map50").textContent = "-";
+      $("test-metric-map").textContent = "-";
+      renderTestClassMetrics([]);
+      renderTestConfusionMatrices({});
+      renderTestRocAuc({}, {});
+      setTestArtifactButtons({});
+      $("test-results-status").textContent = "No test results available yet.";
+      return;
+    }
+
+    state.testMetricsAvailable = true;
+    $("model-testing-panel").classList.add("has-results");
+    $("test-metric-macro-f1").textContent = metricText(results.macro_f1);
+    $("test-metric-weighted-f1").textContent = metricText(results.weighted_f1);
+    $("test-metric-precision").textContent = metricText(results.precision);
+    $("test-metric-recall").textContent = metricText(results.recall);
+    $("test-metric-map50").textContent = metricText(results.map50);
+    $("test-metric-map").textContent = metricText(results.map50_95);
+    renderTestClassMetrics(results.per_class);
+    renderTestConfusionMatrices(results.artifacts || {});
+    renderTestRocAuc(results.roc_auc || {}, results.artifacts || {});
+    setTestArtifactButtons(results.artifacts || {});
+    $("test-results-status").textContent = `Evaluated ${results.split || "test"} split from ${results.run_dir}.`;
+  } catch (error) {
+    $("model-testing-panel").classList.remove("has-results");
+    setTestArtifactButtons({});
+    $("test-results-status").textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Refresh Results";
+  }
+}
+
+async function downloadTestArtifact(artifact, filename) {
+  const buttonIds = {
+    metrics_json: "download-test-metrics-json",
+    roc_auc_curve: "download-test-roc-auc-graph",
+  };
+  const button = $(buttonIds[artifact]);
+  const originalText = button.textContent;
+  state.testDownloads.add(artifact);
+  button.disabled = true;
+  button.textContent = "Downloading...";
+  try {
+    const response = await fetch("/api/test/artifacts/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ artifact }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `Download failed: ${response.status}`);
+    }
+    saveBlobWithBrowserDownload(await response.blob(), filename);
+    setMessage(`Downloading ${filename}.`);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.testDownloads.delete(artifact);
+    button.textContent = originalText;
+    await refreshTestResults();
+  }
+}
+
+function downloadTestLog() {
+  window.location.href = "/api/test/logs/download";
+}
+
 function logEndpoint() {
   if (state.logMode === "full") {
     return "/api/train/logs/full";
@@ -1875,9 +2381,14 @@ async function pollStatus() {
   }
   state.pollInFlight = true;
   try {
-    const status = await apiJson("/api/train/status");
+    const [status, testStatus] = await Promise.all([
+      apiJson("/api/train/status"),
+      apiJson("/api/test/status"),
+    ]);
     const wasRunning = state.running;
     state.running = Boolean(status.running);
+    const wasTestRunning = state.testRunning;
+    state.testRunning = Boolean(testStatus.running);
 
     if (state.running) {
       state.trainingStarted = true;
@@ -1927,7 +2438,10 @@ async function pollStatus() {
       ? `Current log: ${status.log_file} | Run log: ${status.history_log_file}`
       : `Current log: ${status.log_file}`;
     const now = Date.now();
-    if (now - state.lastDataRefresh >= 6000 || wasRunning !== state.running) {
+    const shouldRefreshData = now - state.lastDataRefresh >= 6000
+      || wasRunning !== state.running
+      || wasTestRunning !== state.testRunning;
+    if (shouldRefreshData) {
       state.lastDataRefresh = now;
       const revision = state.targetRevision;
       const target = weightTarget();
@@ -1935,6 +2449,31 @@ async function pollStatus() {
         refreshWeightsStatus(target, revision),
         refreshMetrics(target, revision),
       ]);
+    }
+
+    if (state.testRunning) {
+      state.testOutcome = "";
+      setPanelExpanded("testing", true);
+    } else if (wasTestRunning && testStatus.returncode === 0) {
+      state.testOutcome = "completed";
+      setPanelExpanded("testing", true);
+      setMessage("Model testing completed. Test metrics and plots are ready to review.");
+    } else if (wasTestRunning && testStatus.returncode !== null && testStatus.returncode !== 0) {
+      state.testOutcome = "failed";
+      setPanelExpanded("testing", true);
+      setMessage(`Model testing stopped with exit code ${testStatus.returncode}. Review the test log.`, true);
+    }
+
+    renderTestProgress(
+      testStatus.progress,
+      state.testRunning ? "running" : (state.testOutcome || "idle"),
+    );
+    $("test-logs").textContent = testStatus.log_tail || "No model-testing log output yet.";
+    $("test-log-status").textContent = testStatus.history_log_file
+      ? `Current log: ${testStatus.log_file} | Run log: ${testStatus.history_log_file}`
+      : `Current log: ${testStatus.log_file}`;
+    if (shouldRefreshData) {
+      await refreshTestResults();
     }
   } catch (error) {
     setStatusPhase("error");
@@ -2026,13 +2565,29 @@ $("download-last").addEventListener("click", () => downloadWeight("last"));
 $("download-results-csv").addEventListener("click", () => downloadArtifact("results_csv", "results.csv"));
 $("download-accuracy-graph").addEventListener("click", () => downloadArtifact("accuracy_graph", "accuracy_by_epoch.png"));
 $("download-loss-graph").addEventListener("click", () => downloadArtifact("loss_graph", "loss_by_epoch.png"));
+$("download-roc-auc-graph").addEventListener("click", () => downloadArtifact("roc_auc_curve", "roc_auc_curve.png"));
 $("download-run-log").addEventListener("click", () => downloadLog("/api/train/logs/download"));
+$("start-test").addEventListener("click", startTest);
+$("stop-test").addEventListener("click", stopTest);
+$("refresh-test-results").addEventListener("click", refreshTestResults);
+$("download-test-log").addEventListener("click", downloadTestLog);
+$("download-test-metrics-json").addEventListener("click", () => downloadTestArtifact("metrics_json", "test_metrics.json"));
+$("download-test-roc-auc-graph").addEventListener("click", () => downloadTestArtifact("roc_auc_curve", "test_roc_auc_curve.png"));
 $("project").addEventListener("input", scheduleTargetRefresh);
 $("run-name").addEventListener("input", scheduleTargetRefresh);
 $("upload-file").addEventListener("change", updateFileSelection);
 $("folder-files").addEventListener("change", updateFileSelection);
+$("test-weight-file").addEventListener("change", updateFileSelection);
+$("test-dataset-zip").addEventListener("change", updateFileSelection);
+$("test-dataset-folder").addEventListener("change", updateFileSelection);
 ["upload-force-split", "folder-force-split", "roboflow-force-split"].forEach((id) => {
   $(id).addEventListener("change", syncDatasetSourceControls);
+});
+document.querySelectorAll('input[name="test-weight-source"]').forEach((input) => {
+  input.addEventListener("change", syncTestSourceControls);
+});
+document.querySelectorAll('input[name="test-dataset-source"]').forEach((input) => {
+  input.addEventListener("change", syncTestSourceControls);
 });
 $("dataset-name").addEventListener("input", () => {
   state.datasetNameEdited = true;
