@@ -9,8 +9,10 @@ import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
+import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,7 +20,7 @@ from typing import Callable, Optional
 
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -65,11 +67,14 @@ training_log_file: Optional[Path] = None
 training_run_info: Optional[dict] = None
 dataset_preparation_jobs: dict[str, dict] = {}
 dataset_preparation_lock = threading.Lock()
+dataset_downloads: dict[str, dict] = {}
+dataset_download_lock = threading.Lock()
 gpu_status_cache: dict = {"checked_at": 0.0, "payload": None}
 gpu_status_lock = threading.Lock()
 
 DatasetProgressCallback = Callable[[str, int, int, str], None]
 GPU_STATUS_CACHE_SECONDS = 2.0
+DATASET_DOWNLOAD_MAX_AGE_SECONDS = 60 * 60
 
 
 class SplitConfig(BaseModel):
@@ -90,6 +95,10 @@ class RoboflowRequest(BaseModel):
     test: int = Field(default=15, ge=0, le=100)
     force_split: bool = False
     job_id: str = ""
+
+
+class DatasetDownloadRequest(BaseModel):
+    dataset_yaml: str
 
 
 class TrainRequest(BaseModel):
@@ -400,6 +409,135 @@ def split_image_folder(dataset_root: Path, value) -> Optional[Path]:
         if path.exists():
             return path
     return None
+
+
+def prepared_dataset_yaml(dataset_yaml: str) -> tuple[Path, Path, dict]:
+    yaml_path = Path(dataset_yaml).expanduser()
+    if not yaml_path.is_absolute():
+        yaml_path = DATA_ROOT / yaml_path
+    yaml_path = yaml_path.resolve()
+    data_root = DATA_ROOT.resolve()
+
+    try:
+        yaml_path.relative_to(data_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail="Dataset downloads are limited to the web dataset workspace.",
+        ) from exc
+
+    if not yaml_path.is_file() or yaml_path.suffix.lower() not in {".yaml", ".yml"}:
+        raise HTTPException(status_code=404, detail="Prepared dataset YAML was not found.")
+
+    try:
+        payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise HTTPException(status_code=400, detail=f"Could not read dataset YAML: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Dataset YAML must contain a mapping.")
+
+    dataset_root = resolve_yaml_dataset_root(yaml_path, payload)
+    try:
+        dataset_root.relative_to(data_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail="The prepared dataset points outside the web dataset workspace.",
+        ) from exc
+    if not dataset_root.is_dir():
+        raise HTTPException(status_code=404, detail="Prepared dataset directory was not found.")
+
+    portable_payload = dict(payload)
+    portable_payload["path"] = "."
+    for split in SPLIT_NAMES:
+        split_value = payload.get(split)
+        if not split_value:
+            portable_payload.pop(split, None)
+            continue
+
+        split_values = split_value if isinstance(split_value, list) else [split_value]
+        portable_values = []
+        for value in split_values:
+            split_path = Path(str(value)).expanduser()
+            if not split_path.is_absolute():
+                split_path = dataset_root / split_path
+            split_path = split_path.resolve()
+            try:
+                relative_path = split_path.relative_to(dataset_root)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Dataset {split} path points outside the dataset directory.",
+                ) from exc
+            if not split_path.exists():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Dataset {split} path was not found: {relative_path}",
+                )
+            portable_values.append(relative_path.as_posix())
+
+        portable_payload[split] = portable_values if isinstance(split_value, list) else portable_values[0]
+
+    if not portable_payload.get("train") or not portable_payload.get("val"):
+        raise HTTPException(status_code=400, detail="Prepared dataset must contain train and val paths.")
+
+    return yaml_path, dataset_root, portable_payload
+
+
+def build_dataset_archive(dataset_yaml: str) -> tuple[Path, str]:
+    yaml_path, dataset_root, portable_payload = prepared_dataset_yaml(dataset_yaml)
+    archive_name = f"{clean_name(dataset_root.name, 'prepared_dataset')}.zip"
+    source_yaml_relative = (
+        yaml_path.relative_to(dataset_root)
+        if yaml_path.is_relative_to(dataset_root)
+        else None
+    )
+    descriptor, archive_value = tempfile.mkstemp(prefix="yolov8-dataset-", suffix=".zip")
+    os.close(descriptor)
+    archive_path = Path(archive_value)
+
+    try:
+        with zipfile.ZipFile(archive_path, "w", allowZip64=True) as archive:
+            archive.writestr(
+                "data.yaml",
+                yaml.safe_dump(portable_payload, sort_keys=False),
+                compress_type=zipfile.ZIP_DEFLATED,
+            )
+            files = sorted(
+                (item for item in dataset_root.rglob("*") if item.is_file()),
+                key=lambda item: item.relative_to(dataset_root).as_posix(),
+            )
+            for item in files:
+                relative_path = item.relative_to(dataset_root)
+                if (
+                    relative_path.as_posix() == "data.yaml"
+                    or relative_path == source_yaml_relative
+                    or item.is_symlink()
+                ):
+                    continue
+                compression = (
+                    zipfile.ZIP_STORED
+                    if item.suffix.lower() in IMAGE_EXTENSIONS
+                    else zipfile.ZIP_DEFLATED
+                )
+                archive.write(item, relative_path.as_posix(), compress_type=compression)
+    except Exception:
+        archive_path.unlink(missing_ok=True)
+        raise
+
+    return archive_path, archive_name
+
+
+def cleanup_expired_dataset_downloads():
+    cutoff = time.time() - DATASET_DOWNLOAD_MAX_AGE_SECONDS
+    expired_paths = []
+    with dataset_download_lock:
+        for download_id, download in list(dataset_downloads.items()):
+            if download["created_at"] < cutoff:
+                expired_paths.append(Path(download["path"]))
+                dataset_downloads.pop(download_id, None)
+    for path in expired_paths:
+        path.unlink(missing_ok=True)
 
 
 def label_folder_for_images(dataset_root: Path, images_path: Optional[Path]) -> Optional[Path]:
@@ -1461,6 +1599,42 @@ def dataset_preparation_status(job_id: str):
         if progress is None:
             raise HTTPException(status_code=404, detail="Dataset preparation job not found.")
         return dict(progress)
+
+
+@app.post("/api/dataset/download/prepare")
+def prepare_dataset_download(request: DatasetDownloadRequest):
+    cleanup_expired_dataset_downloads()
+    archive_path, filename = build_dataset_archive(request.dataset_yaml)
+    download_id = uuid.uuid4().hex
+    with dataset_download_lock:
+        dataset_downloads[download_id] = {
+            "path": str(archive_path),
+            "filename": filename,
+            "created_at": time.time(),
+        }
+    return {
+        "download_url": f"/api/dataset/download/{download_id}",
+        "filename": filename,
+        "size": archive_path.stat().st_size,
+    }
+
+
+@app.get("/api/dataset/download/{download_id}")
+def download_prepared_dataset(download_id: str, background_tasks: BackgroundTasks):
+    with dataset_download_lock:
+        download = dataset_downloads.pop(download_id, None)
+    if download is None:
+        raise HTTPException(status_code=404, detail="Dataset download is unavailable or has expired.")
+
+    archive_path = Path(download["path"])
+    if not archive_path.is_file():
+        raise HTTPException(status_code=404, detail="Prepared dataset ZIP was not found.")
+    background_tasks.add_task(archive_path.unlink, missing_ok=True)
+    return FileResponse(
+        archive_path,
+        media_type="application/zip",
+        filename=download["filename"],
+    )
 
 
 def upload_size(upload: UploadFile) -> int:

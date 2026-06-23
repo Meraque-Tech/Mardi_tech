@@ -242,6 +242,12 @@ test  15%
 Validation data is used during training for metrics and early stopping. Test
 data is reserved for final evaluation when present in the dataset.
 
+After preparation, click `Download ZIP` in the Dataset panel to download the
+exact prepared train/validation/test split. The archive contains the images,
+labels, split metadata, and a portable `data.yaml` whose dataset path is `.`.
+Large archives are created as temporary server files and removed after the
+browser starts the download.
+
 When rebuilding a split, the backend uses deterministic multi-label
 stratification with seed `42`. It balances the image-level presence of every
 class across train/validation/test, uses object-instance counts as a
@@ -388,6 +394,7 @@ runs/detect/train/weights/last.pt
 The UI can download:
 
 ```text
+prepared-dataset.zip
 best.pt
 last.pt
 results.csv

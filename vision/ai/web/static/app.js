@@ -344,6 +344,10 @@ function syncActionStates() {
   $("detect-classes").disabled = locked || preparing;
   $("detect-classes").textContent = state.isDetecting ? "Detecting..." : "Auto Fetch";
   $("detect-classes").setAttribute("aria-busy", String(state.isDetecting));
+  const datasetDownloadActive = state.downloads.has("dataset");
+  $("download-dataset").disabled = !hasDataset || preparing || datasetDownloadActive;
+  $("download-dataset").textContent = datasetDownloadActive ? "Preparing ZIP..." : "Download ZIP";
+  $("download-dataset").setAttribute("aria-busy", String(datasetDownloadActive));
   $("start-training").disabled = locked || preparing || (!hasDataset && !canResume);
   $("start-training").textContent = state.isStarting ? "Starting..." : "Start";
   $("start-training").setAttribute("aria-busy", String(state.isStarting));
@@ -1360,6 +1364,34 @@ async function prepareDataset() {
   }
 }
 
+async function downloadPreparedDataset() {
+  if (!state.datasetYaml || state.downloads.has("dataset")) {
+    return;
+  }
+
+  state.downloads.add("dataset");
+  syncActionStates();
+  setMessage("Preparing the dataset ZIP. Large datasets may take several minutes...");
+  try {
+    const result = await apiJson("/api/dataset/download/prepare", {
+      method: "POST",
+      body: JSON.stringify({ dataset_yaml: state.datasetYaml }),
+    });
+    const link = document.createElement("a");
+    link.href = result.download_url;
+    link.download = result.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setMessage(`Downloading ${result.filename} (${formatBytes(result.size)}).`);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.downloads.delete("dataset");
+    syncActionStates();
+  }
+}
+
 async function detectClasses() {
   if (state.isDetecting) {
     return;
@@ -1827,6 +1859,7 @@ document.querySelectorAll(".tab").forEach((button) => {
 });
 
 $("prepare-dataset").addEventListener("click", prepareDataset);
+$("download-dataset").addEventListener("click", downloadPreparedDataset);
 $("detect-classes").addEventListener("click", detectClasses);
 $("start-training").addEventListener("click", startTraining);
 $("stop-training").addEventListener("click", stopTraining);
