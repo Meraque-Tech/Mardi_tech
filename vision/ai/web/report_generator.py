@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from .dataset_provenance import roboflow_pre_augmentation_summary
+
 
 MYT = timezone(timedelta(hours=8), name="MYT")
 
@@ -303,17 +305,43 @@ class _ReportBuilder:
 
 def _add_dataset(builder: _ReportBuilder, run_dir: Path, context: dict):
     summary = context.get("dataset_summary") or {}
+    pre_augmentation = summary.get("pre_augmentation") or {}
+    if not pre_augmentation and summary.get("dataset_root"):
+        pre_augmentation = roboflow_pre_augmentation_summary(
+            Path(summary["dataset_root"]),
+            summary.get("splits") or {},
+        )
     yaml_value = context.get("dataset_yaml") or ""
     builder.heading("Dataset Information")
     builder.table([
         ["Dataset YAML", yaml_value or "Unavailable"],
         ["Dataset root", summary.get("dataset_root", "Unavailable")],
-        ["Total images", summary.get("total_images", "N/A")],
+        ["Exported images used by YOLOv8", summary.get("total_images", "N/A")],
         ["Classes", summary.get("class_count", len(summary.get("classes") or []))],
         ["Split strategy", summary.get("split_strategy", "N/A")],
         ["Split seed", summary.get("split_seed", "N/A")],
     ], widths=[42 * builder.mm, 133 * builder.mm])
-    split_rows = [["Split", "Images", "Missing labels", "Configured ratio"]]
+
+    if pre_augmentation.get("available"):
+        builder.heading("Original Dataset Before Augmentation", 3)
+        count_basis = "Estimated" if pre_augmentation.get("counts_are_estimated") else "Reconstructed by exact division"
+        builder.table([
+            ["Original source images", pre_augmentation.get("total_images", "N/A")],
+            ["Training outputs per source image", pre_augmentation.get("augmentation_multiplier", "N/A")],
+            ["Count basis", count_basis],
+            ["Metadata source", pre_augmentation.get("metadata_source", "N/A")],
+        ], widths=[70 * builder.mm, 105 * builder.mm], header=False)
+        original_rows = [["Original split", "Source images", "Original ratio"]]
+        original_ratios = pre_augmentation.get("split_ratios") or {}
+        for split in ("train", "val", "test"):
+            entry = (pre_augmentation.get("splits") or {}).get(split) or {}
+            original_rows.append([split.title(), entry.get("images", 0), f"{original_ratios.get(split, 0)}%"])
+        builder.table(original_rows, widths=[58 * builder.mm, 58 * builder.mm, 59 * builder.mm])
+        if pre_augmentation.get("note"):
+            builder.paragraph(pre_augmentation["note"], "Small")
+
+    builder.heading("Exported Dataset After Augmentation", 3)
+    split_rows = [["Exported split", "Images", "Missing labels", "Exported ratio"]]
     ratios = summary.get("split_ratios") or {}
     for split in ("train", "val", "test"):
         entry = (summary.get("splits") or {}).get(split) or {}

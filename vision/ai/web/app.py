@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .dataset_provenance import roboflow_pre_augmentation_summary
 from .stratified_split import SPLIT_NAMES, stratified_split
 
 
@@ -413,12 +414,13 @@ def dataset_response(
     yaml_path: Path,
     message: str,
     progress_callback: Optional[DatasetProgressCallback] = None,
+    source_metadata: Optional[dict] = None,
 ) -> dict:
     try:
         classes = read_yaml_class_names(yaml_path)
     except HTTPException:
         classes = []
-    summary = inspect_dataset_yaml(yaml_path, classes, progress_callback)
+    summary = inspect_dataset_yaml(yaml_path, classes, progress_callback, source_metadata)
     try:
         (yaml_path.parent / DATASET_SUMMARY_FILE).write_text(
             json.dumps(summary, indent=2), encoding="utf-8"
@@ -654,6 +656,7 @@ def inspect_dataset_yaml(
     yaml_path: Path,
     classes: list[str],
     progress_callback: Optional[DatasetProgressCallback] = None,
+    source_metadata: Optional[dict] = None,
 ) -> dict:
     warnings = []
     try:
@@ -820,7 +823,7 @@ def inspect_dataset_yaml(
     if unknown_class_rows:
         warnings.append(f"{unknown_class_rows} annotations reference unknown class IDs.")
 
-    return {
+    summary = {
         "dataset_root": str(dataset_root),
         "class_count": len(classes),
         "classes": classes,
@@ -834,6 +837,10 @@ def inspect_dataset_yaml(
         "missing_labels": total_missing,
         "warnings": warnings,
     }
+    pre_augmentation = roboflow_pre_augmentation_summary(dataset_root, splits, source_metadata)
+    if pre_augmentation:
+        summary["pre_augmentation"] = pre_augmentation
+    return summary
 
 
 def float_value(row: dict, key: str) -> Optional[float]:
@@ -2698,7 +2705,20 @@ def roboflow_dataset(request: RoboflowRequest):
                 else "Roboflow dataset is ready."
             )
 
-        response = dataset_response(yaml_path, message, progress_callback)
+        response = dataset_response(
+            yaml_path,
+            message,
+            progress_callback,
+            source_metadata=(
+                {
+                    "augmentation": getattr(version_obj, "augmentation", None),
+                    "images": getattr(version_obj, "images", None),
+                    "splits": getattr(version_obj, "splits", None),
+                }
+                if not request.force_split
+                else None
+            ),
+        )
         update_dataset_preparation(
             request.job_id,
             "complete",

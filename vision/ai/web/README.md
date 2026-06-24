@@ -401,6 +401,11 @@ Best epoch summary, including lowest training and validation losses
 uses the same per-class scores weighted by class instance counts. Both are
 saved into `web_metrics.json` after training completes.
 
+For Roboflow exports, generated PDF reports distinguish the original split
+before offline augmentation from the exported files used by YOLOv8. The report
+records the training-output multiplier and labels reconstructed counts as
+estimated when the exported training count is not evenly divisible by it.
+
 When Ultralytics has generated `confusion_matrix.png` and
 `confusion_matrix_normalized.png`, the UI displays both plots for the resolved
 training run. The x-axis is labeled `Actual` and the y-axis is labeled
