@@ -324,12 +324,11 @@ weight decay   regularization strength
 warmup epochs  learning-rate warmup duration
 freeze layers  freeze the first N layers
 cosine LR      enable cosine learning-rate schedule
-activation     SiLU, ReLU, Leaky ReLU, Mish, GELU, Hardswish
 exist_ok       reuse the same output folder instead of train-2/train-3
 ```
 
 Training launched from the web UI always starts from the pretrained weights
-for the selected YOLOv8 model size.
+for the selected YOLOv8 model size and uses YOLOv8's default SiLU activation.
 
 The defaults shown when the page loads are also the backend defaults: Nano,
 100 epochs, image size 640, batch 16, patience 20, 2 workers, Adam, seed 42,

@@ -36,6 +36,12 @@ class CollapsibleSectionTests(unittest.TestCase):
             self.assertIn(attributes.get("aria-expanded"), {"true", "false"})
             self.assertTrue(attributes.get("aria-label"))
 
+    def test_activation_architecture_control_is_not_exposed(self):
+        markup = INDEX_HTML.read_text(encoding="utf-8")
+
+        self.assertNotIn('id="activation"', markup)
+        self.assertNotIn("Model Architecture", markup)
+
 
 if __name__ == "__main__":
     unittest.main()

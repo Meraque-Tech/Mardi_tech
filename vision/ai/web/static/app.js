@@ -73,7 +73,6 @@ const CONTROL_DEFAULTS = {
   "warmup-epochs": 3.0,
   freeze: "",
   "cos-lr": false,
-  activation: "silu",
   "exist-ok": false,
   resume: false,
 };
@@ -91,7 +90,6 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 3.0,
     "cos-lr": false,
-    activation: "silu",
   },
   low_vram: {
     "model-size": "nano",
@@ -106,7 +104,6 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 3.0,
     "cos-lr": true,
-    activation: "silu",
   },
   quick: {
     "model-size": "nano",
@@ -121,7 +118,6 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 1.0,
     "cos-lr": false,
-    activation: "silu",
   },
   accuracy: {
     "model-size": "small",
@@ -136,7 +132,6 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 3.0,
     "cos-lr": true,
-    activation: "silu",
   },
 };
 
@@ -1953,7 +1948,6 @@ async function startTraining() {
         cos_lr: $("cos-lr").checked,
         warmup_epochs: numberValue("warmup-epochs"),
         freeze: optionalNumberValue("freeze"),
-        activation: $("activation").value,
         exist_ok: $("exist-ok").checked,
         seed: numberValue("seed"),
         project: $("project").value,
