@@ -38,6 +38,30 @@ TRAINING_CONFIG = {
     "resume": False,
 }
 
+# The datasets used by this trainer are augmented during Roboflow preparation.
+# Keep Ultralytics' online augmentations disabled so those prepared images are
+# not augmented a second time while they are loaded for training.
+DISABLED_TRAINING_AUGMENTATIONS = {
+    "mosaic": 0.0,
+    "close_mosaic": 0,
+    "hsv_h": 0.0,
+    "hsv_s": 0.0,
+    "hsv_v": 0.0,
+    "degrees": 0.0,
+    "translate": 0.0,
+    "scale": 0.0,
+    "shear": 0.0,
+    "perspective": 0.0,
+    "flipud": 0.0,
+    "fliplr": 0.0,
+    "bgr": 0.0,
+    "mixup": 0.0,
+    "cutmix": 0.0,
+    "copy_paste": 0.0,
+    "auto_augment": None,
+    "erasing": 0.0,
+}
+
 WEB_PROGRESS_PREFIX = "WEB_TRAINING_PROGRESS"
 IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpeg", ".jpg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
 
@@ -73,6 +97,28 @@ def use_actual_confusion_matrix_axis_label():
     finally:
         if Axes.set_xlabel is set_xlabel:
             Axes.set_xlabel = original_set_xlabel
+
+
+@contextmanager
+def use_disabled_ultralytics_albumentations():
+    """Prevent Ultralytics from adding its optional Albumentations defaults."""
+    try:
+        from ultralytics.data import augment as ultralytics_augment
+    except ImportError:
+        yield
+        return
+
+    original_albumentations = ultralytics_augment.Albumentations
+
+    def empty_albumentations(*args, **kwargs):
+        return ultralytics_augment.Compose([])
+
+    ultralytics_augment.Albumentations = empty_albumentations
+    try:
+        yield
+    finally:
+        if ultralytics_augment.Albumentations is empty_albumentations:
+            ultralytics_augment.Albumentations = original_albumentations
 
 
 def report_epoch_start(trainer):
@@ -696,6 +742,7 @@ def main():
         "project": config["project"],
         "name": config["name"],
         "resume": config["resume"],
+        **DISABLED_TRAINING_AUGMENTATIONS,
     }
 
     if not config["resume"]:
@@ -707,7 +754,7 @@ def main():
     if config["device"] is not None:
         train_kwargs["device"] = config["device"]
 
-    with use_actual_confusion_matrix_axis_label():
+    with use_disabled_ultralytics_albumentations(), use_actual_confusion_matrix_axis_label():
         metrics = model.train(**train_kwargs)
 
     run_dir = Path(getattr(model.trainer, "save_dir", Path(config["project"]) / config["name"]))
