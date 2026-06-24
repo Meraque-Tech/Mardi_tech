@@ -38,22 +38,21 @@ TRAINING_CONFIG = {
     "resume": False,
 }
 
-# The datasets used by this trainer are augmented during Roboflow preparation.
-# Keep Ultralytics' online augmentations disabled so those prepared images are
-# not augmented a second time while they are loaded for training.
-DISABLED_TRAINING_AUGMENTATIONS = {
-    "mosaic": 0.0,
-    "close_mosaic": 0,
-    "hsv_h": 0.0,
-    "hsv_s": 0.0,
-    "hsv_v": 0.0,
+# Apply the selected Ultralytics online augmentations during training. Keep
+# every unlisted geometric or mixing transform explicitly disabled.
+TRAINING_AUGMENTATIONS = {
+    "mosaic": 1.0,
+    "close_mosaic": 10,
+    "hsv_h": 0.015,
+    "hsv_s": 0.7,
+    "hsv_v": 0.4,
     "degrees": 0.0,
-    "translate": 0.0,
-    "scale": 0.0,
+    "translate": 0.1,
+    "scale": 0.5,
     "shear": 0.0,
     "perspective": 0.0,
     "flipud": 0.0,
-    "fliplr": 0.0,
+    "fliplr": 0.5,
     "bgr": 0.0,
     "mixup": 0.0,
     "cutmix": 0.0,
@@ -742,7 +741,7 @@ def main():
         "project": config["project"],
         "name": config["name"],
         "resume": config["resume"],
-        **DISABLED_TRAINING_AUGMENTATIONS,
+        **TRAINING_AUGMENTATIONS,
     }
 
     if not config["resume"]:
