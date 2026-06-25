@@ -475,6 +475,8 @@
               <button id="refresh-metrics" class="secondary compact" type="button">Refresh</button>
             </div>
             <div class="metrics-grid">
+              <div><span>Precision</span><strong id="metric-precision">-</strong></div>
+              <div><span>Recall</span><strong id="metric-recall">-</strong></div>
               <div><span>Macro F1</span><strong id="metric-macro-f1">-</strong></div>
               <div><span>Weighted F1</span><strong id="metric-weighted-f1">-</strong></div>
               <div><span>Training loss</span><strong id="metric-train-loss">-</strong></div>
@@ -753,6 +755,14 @@
               <div class="field-header">
                 <h3>Weights</h3>
               </div>
+              <label>
+                Inference backend
+                <select id="inference-backend">
+                  <option value="pytorch">PyTorch / Ultralytics</option>
+                  <option value="tensorrt">TensorRT engine</option>
+                </select>
+              </label>
+              <p class="field-note" id="inference-backend-note">TensorRT exports an engine on first use, then reuses it for faster NVIDIA GPU inference.</p>
               <div class="button-row toggle-row" role="radiogroup" aria-label="Inference weights source">
                 <label class="choice-chip">
                   <input type="radio" name="inference-weight-source" value="selected" checked>
@@ -818,8 +828,9 @@
                   <img id="inference-input-image" alt="Uploaded inference media preview" hidden>
                   <video id="inference-input-video" controls hidden></video>
                 </div>
+                <p id="inference-input-preview-status" class="helper-text"></p>
               </div>
-              <div class="grid three inference-settings">
+              <div class="grid four inference-settings">
                 <label>
                   Image size
                   <input id="inference-imgsz" type="number" min="32" step="32" value="640">
@@ -832,11 +843,31 @@
                   NMS IoU
                   <input id="inference-iou" type="number" min="0" max="1" step="0.01" value="0.2">
                 </label>
+                <label>
+                  Video stride
+                  <input id="inference-vid-stride" type="number" min="1" step="1" value="1">
+                </label>
               </div>
+              <label class="checkbox-row">
+                <input id="inference-live-preview-enabled" type="checkbox" checked>
+                Show live annotated preview
+              </label>
             </div>
           </div>
 
           <div class="message status-message inference-message" id="inference-message" role="status" aria-live="polite">Ready for YOLO inference.</div>
+
+          <section class="inference-preview-shell" id="inference-live-preview-shell" hidden>
+            <div class="field-header">
+              <div>
+                <h3>Live Preview</h3>
+                <p id="inference-live-preview-summary">Waiting for annotated frames.</p>
+              </div>
+            </div>
+            <div class="inference-preview">
+              <img id="inference-live-preview-image" alt="Latest annotated inference frame">
+            </div>
+          </section>
 
           <section class="inference-results" id="inference-results" hidden>
             <div class="field-header">

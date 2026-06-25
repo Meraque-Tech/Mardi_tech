@@ -182,11 +182,11 @@ living implementation plan for `report_generator.py`.
 
 ### Implementation Status
 
-Work started in `vision/ai/web/report_generator.py` and is currently paused.
-The implementation so far adds deterministic report interpretation helpers and
-reorganizes the generated PDF around management-facing sections while retaining
-technical evidence in an appendix. No frontend changes are planned because the
-existing report download endpoints call the same generator functions.
+The implementation in `vision/ai/web/report_generator.py` now adds
+deterministic report interpretation helpers and reorganizes the generated PDF
+around management-facing sections while retaining technical evidence in an
+appendix. The Training Results UI also displays overall precision and recall
+from the same run metrics used by the report.
 
 Completed so far:
 
@@ -197,8 +197,13 @@ Completed so far:
   combined training-and-test report is generated.
 - Added Model and Dataset Overview, Dataset Quality and Risks, Training
   Configuration, Training Behaviour, Validation Performance, Qualitative
-  Results, Operational Performance and Limitations, Conclusion and
-  Recommendation, and Technical Appendix sections.
+  Results, Conclusion and Recommendation, and Technical Appendix sections.
+- Added original-vs-exported dataset split reporting when original split
+  information is available.
+- Added comma formatting for count-style values to improve readability.
+- Removed the Operational Performance and Limitations section from the generated
+  report.
+- Added overall precision and recall cards to the Training Results UI.
 - Updated combined reports so the independent test set is treated as the
   primary evidence when test metrics are available.
 - Preserved `_add_dataset()` so the existing dataset provenance tests continue
@@ -212,19 +217,16 @@ Verified so far:
 - `python3 -m py_compile vision/ai/web/report_generator.py` could not complete
   because Python could not write to the existing `vision/ai/web/__pycache__`
   directory.
+- Temporary sample training and combined training/test PDFs generated
+  successfully with ReportLab.
 
-Remaining before completion:
+Remaining follow-up items:
 
-- Generate at least one sample training PDF and one combined training/test PDF
-  to catch ReportLab layout issues.
 - Review the report visually for section ordering, page breaks, long table
   wrapping, and repeated plots.
 - Decide whether the weak-class and recommendation thresholds should remain
   fixed in the generator or become configurable constants.
 - Add focused tests for the new helper functions and report section generation.
-- Consider capturing inference speed explicitly during validation/test runs;
-  the current operational section can report artifact size, target hardware,
-  thresholds, and limitations, but not measured deployment speed.
 - Improve qualitative examples if dedicated success, false-positive,
   false-negative, and difficult-case artifacts become available.
 
@@ -313,15 +315,7 @@ Add representative annotated examples showing:
 - False negatives
 - Difficult cases such as overlap, distance, blur, and poor lighting
 
-### 9. Operational Performance and Limitations
-
-Add deployment-relevant information containing:
-
-- Inference speed, model size, and target hardware
-- Confidence and NMS thresholds
-- Data or operating conditions that were not tested
-
-### 10. Conclusion and Recommendation
+### 9. Conclusion and Recommendation
 
 End the main report with:
 
@@ -330,7 +324,7 @@ End the main report with:
 - Classes or scenarios requiring additional attention
 - Overall training and validation behaviour
 
-### 11. Technical Appendix
+### 10. Technical Appendix
 
 Move detailed supporting material to an appendix:
 

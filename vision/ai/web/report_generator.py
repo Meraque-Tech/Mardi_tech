@@ -18,6 +18,10 @@ MYT = timezone(timedelta(hours=8), name="MYT")
 def _text(value) -> str:
     if value is None or value == "":
         return "N/A"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"{value:,}"
+    if isinstance(value, float) and value.is_integer() and abs(value) >= 1000:
+        return f"{int(value):,}"
     return html.escape(str(value))
 
 
@@ -28,6 +32,13 @@ def _metric(value) -> str:
         return f"{float(value):.4f}"
     except (TypeError, ValueError):
         return str(value)
+
+
+def _count(value) -> str:
+    number = _to_int(value)
+    if number is None:
+        return _text(value)
+    return f"{number:,}"
 
 
 def _human_datetime_myt(value: datetime) -> str:
@@ -232,8 +243,10 @@ def _recommendation(validation_metrics: dict, test_metrics: dict | None = None) 
     if band == "strong" and not weak:
         return f"Use the model for a controlled deployment pilot, with continued monitoring against the {evidence_label} baseline."
     if band in {"strong", "usable"}:
-        weak_text = _join_limited([item["class_name"] for item in weak], 3)
-        return f"Proceed to operational review, but collect more examples for weaker classes before broad deployment: {weak_text}."
+        if weak:
+            weak_text = _join_limited([item["class_name"] for item in weak], 3)
+            return f"Proceed to real-world testing while collecting more examples for weaker classes before broader deployment: {weak_text}."
+        return f"Proceed to real-world testing and monitor performance against the {evidence_label} baseline before broader deployment."
     if band == "incomplete":
         return "Do not make a deployment decision yet because the report does not include enough completed evaluation metrics."
     return "Keep the model in development and improve data coverage, labels, or training configuration before deployment."
@@ -257,6 +270,7 @@ def _result_sentence(validation_metrics: dict, test_metrics: dict | None = None)
 
 def _dataset_summary_text(context: dict) -> str:
     summary = context.get("dataset_summary") or {}
+    pre_augmentation = summary.get("pre_augmentation") or {}
     total_images = summary.get("total_images", "N/A")
     class_count = summary.get("class_count", len(summary.get("classes") or []))
     split_ratios = summary.get("split_ratios") or {}
@@ -265,9 +279,12 @@ def _dataset_summary_text(context: dict) -> str:
         for split in ("train", "val", "test")
         if split in split_ratios
     )
+    original_text = ""
+    if pre_augmentation.get("available") and _nonempty(pre_augmentation.get("total_images")):
+        original_text = f"The original source dataset contains {_count(pre_augmentation.get('total_images'))} images before augmentation. "
     if split_text:
-        return f"The exported dataset contains {total_images} images across {class_count} classes with split ratios of {split_text}."
-    return f"The exported dataset contains {total_images} images across {class_count} classes."
+        return f"{original_text}The exported dataset contains {_count(total_images)} images across {_count(class_count)} classes with split ratios of {split_text}."
+    return f"{original_text}The exported dataset contains {_count(total_images)} images across {_count(class_count)} classes."
 
 
 def _imbalance_summary(summary: dict) -> tuple[str, list[dict]]:
@@ -284,9 +301,9 @@ def _imbalance_summary(summary: dict) -> tuple[str, list[dict]]:
     if min_images == 0:
         text = "At least one class has no labeled images, so class-level evaluation is high risk."
     elif max_images >= min_images * 3:
-        text = f"The largest class has {max_images} images versus {min_images} in the smallest class, indicating material class imbalance."
+        text = f"The largest class has {_count(max_images)} images versus {_count(min_images)} in the smallest class, indicating material class imbalance."
     else:
-        text = f"Class image counts range from {min_images} to {max_images}, with no severe image-count imbalance detected."
+        text = f"Class image counts range from {_count(min_images)} to {_count(max_images)}, with no severe image-count imbalance detected."
     return text, underrepresented
 
 
@@ -673,7 +690,7 @@ def _add_executive_summary(
     builder.heading("Executive Summary")
     builder.table([
         ["Item", "Summary"],
-        ["Dataset", f"{summary.get('total_images', 'N/A')} images, {summary.get('class_count', len(summary.get('classes') or []))} classes"],
+        ["Dataset", f"{_count(summary.get('total_images', 'N/A'))} images, {_count(summary.get('class_count', len(summary.get('classes') or [])))} classes"],
         ["Best checkpoint", _checkpoint_label(run_dir)],
         ["Best tracked epoch", best.get("epoch", "N/A")],
         ["Primary evidence", evidence_label.title()],
@@ -691,6 +708,8 @@ def _add_model_dataset_overview(builder: _ReportBuilder, context: dict):
     pre_augmentation = summary.get("pre_augmentation") or {}
     ratios = summary.get("split_ratios") or {}
     splits = summary.get("splits") or {}
+    original_ratios = pre_augmentation.get("split_ratios") or {}
+    original_splits = pre_augmentation.get("splits") or {}
     builder.heading("Model and Dataset Overview")
     builder.paragraph(_text(_dataset_summary_text(context)))
     rows = [
@@ -705,11 +724,25 @@ def _add_model_dataset_overview(builder: _ReportBuilder, context: dict):
     ]
     builder.table(rows, widths=[64 * builder.mm, 111 * builder.mm])
 
-    split_rows = [["Split", "Images", "Percent"]]
-    for split in ("train", "val", "test"):
-        entry = splits.get(split) or {}
-        split_rows.append([split.title(), entry.get("images", 0), f"{ratios.get(split, 0)}%"])
-    builder.table(split_rows, widths=[58 * builder.mm, 58 * builder.mm, 59 * builder.mm])
+    if pre_augmentation.get("available"):
+        split_rows = [["Split", "Original images", "Original percent", "Exported images", "Exported percent"]]
+        for split in ("train", "val", "test"):
+            original_entry = original_splits.get(split) or {}
+            exported_entry = splits.get(split) or {}
+            split_rows.append([
+                split.title(),
+                original_entry.get("images", "N/A"),
+                f"{original_ratios.get(split, 0)}%",
+                exported_entry.get("images", 0),
+                f"{ratios.get(split, 0)}%",
+            ])
+        builder.table(split_rows, widths=[35 * builder.mm, 36 * builder.mm, 36 * builder.mm, 34 * builder.mm, 34 * builder.mm])
+    else:
+        split_rows = [["Split", "Exported images", "Exported percent"]]
+        for split in ("train", "val", "test"):
+            entry = splits.get(split) or {}
+            split_rows.append([split.title(), entry.get("images", 0), f"{ratios.get(split, 0)}%"])
+        builder.table(split_rows, widths=[58 * builder.mm, 58 * builder.mm, 59 * builder.mm])
 
     classes = summary.get("classes") or []
     if classes:
@@ -853,31 +886,6 @@ def _add_qualitative_results(builder: _ReportBuilder, run_dir: Path, test_dir: P
         builder.image(path)
 
 
-def _add_operational_performance(builder: _ReportBuilder, run_dir: Path, context: dict):
-    builder.heading("Operational Performance and Limitations")
-    hyperparameters = context.get("hyperparameters") or _load_yaml(run_dir / "args.yaml")
-    environment = context.get("environment") or {}
-    gpu_names = ", ".join(str(item.get("name")) for item in environment.get("gpus", []) if item.get("name")) or "Unavailable"
-    weights_path = run_dir / "weights" / "best.pt"
-    model_size = f"{weights_path.stat().st_size / (1024 * 1024):.1f} MB" if weights_path.is_file() else "Unavailable"
-    rows = [
-        ["Item", "Value"],
-        ["Model artifact size", model_size],
-        ["Target/runtime hardware", gpu_names],
-        ["Confidence threshold", hyperparameters.get("conf", "Ultralytics default")],
-        ["NMS IoU threshold", hyperparameters.get("iou", "Ultralytics default")],
-        ["Image size", hyperparameters.get("imgsz", "N/A")],
-    ]
-    builder.table(rows, widths=[70 * builder.mm, 105 * builder.mm])
-    builder.paragraph(
-        _text(
-            "Operating conditions not represented in the dataset or test split should be treated "
-            "as untested until additional labeled examples are evaluated."
-        ),
-        "Small",
-    )
-
-
 def _add_conclusion_and_recommendation(
     builder: _ReportBuilder,
     context: dict,
@@ -1002,7 +1010,6 @@ def _add_training(
     _add_training_behaviour(builder, run_dir, metrics)
     _add_validation_performance(builder, run_dir, metrics)
     _add_qualitative_results(builder, run_dir)
-    _add_operational_performance(builder, run_dir, context)
     if include_conclusion:
         _add_conclusion_and_recommendation(builder, context, metrics, test_metrics)
     if include_appendix:

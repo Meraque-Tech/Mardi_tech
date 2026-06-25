@@ -42,6 +42,9 @@ const state = {
   inferenceWeights: [],
   inferenceRunning: false,
   inferenceInputObjectUrl: "",
+  inferencePollTimer: null,
+  inferencePollRevision: 0,
+  inferenceJobId: "",
   trainingSessions: [],
 };
 
@@ -1892,6 +1895,7 @@ function renderInferenceInputPreview(media) {
   const shell = $("inference-input-preview-shell");
   const image = $("inference-input-image");
   const video = $("inference-input-video");
+  const status = $("inference-input-preview-status");
   if (state.inferenceInputObjectUrl) {
     URL.revokeObjectURL(state.inferenceInputObjectUrl);
     state.inferenceInputObjectUrl = "";
@@ -1902,8 +1906,10 @@ function renderInferenceInputPreview(media) {
     image.removeAttribute("src");
     video.hidden = true;
     video.pause();
+    video.onerror = null;
     video.removeAttribute("src");
     $("inference-input-summary").textContent = "No uploaded media selected yet.";
+    status.textContent = "";
     return;
   }
 
@@ -1911,15 +1917,23 @@ function renderInferenceInputPreview(media) {
   state.inferenceInputObjectUrl = objectUrl;
   shell.hidden = false;
   $("inference-input-summary").textContent = `${media.name} (${formatBytes(media.size)})`;
+  status.textContent = "";
   if ((media.type || "").startsWith("video/") || /\.(mov|mp4|avi|mkv|webm)$/i.test(media.name)) {
     image.hidden = true;
     image.removeAttribute("src");
     video.hidden = false;
     video.src = objectUrl;
+    video.onerror = () => {
+      status.textContent = "This video could not be previewed in the browser, but it can still be uploaded for inference.";
+    };
+    if (/\.mov$/i.test(media.name)) {
+      status.textContent = "MOV preview may appear black if the browser cannot decode the camera codec. The server will still process it.";
+    }
     video.load();
   } else {
     video.hidden = true;
     video.pause();
+    video.onerror = null;
     video.removeAttribute("src");
     image.hidden = false;
     image.src = objectUrl;
@@ -1955,12 +1969,127 @@ function renderInferenceDetections(detections) {
     </table>`;
 }
 
+function inferenceStageLabel(stage) {
+  const labels = {
+    queued: "Queued",
+    starting: "Starting",
+    loading_model: "Loading model",
+    exporting_engine: "Preparing engine",
+    processing: "Processing frames",
+    encoding: "Encoding video",
+    complete: "Complete",
+    failed: "Failed",
+  };
+  return labels[stage] || String(stage || "Processing");
+}
+
+function resetInferenceResultForRun() {
+  $("inference-results").hidden = true;
+  $("download-inference-result").removeAttribute("href");
+  $("inference-result-summary").textContent = "No inference result yet.";
+  $("inference-result-image-shell").hidden = true;
+  $("inference-result-video-shell").hidden = true;
+  $("inference-result-image").hidden = true;
+  $("inference-result-image").removeAttribute("src");
+  $("inference-result-video").hidden = true;
+  $("inference-result-video").pause();
+  $("inference-result-video").removeAttribute("src");
+  $("inference-detections").innerHTML = "";
+  $("inference-live-preview-shell").hidden = true;
+  $("inference-live-preview-image").removeAttribute("src");
+  $("inference-live-preview-summary").textContent = "Waiting for annotated frames.";
+}
+
+function stopInferencePolling() {
+  state.inferencePollRevision += 1;
+  window.clearTimeout(state.inferencePollTimer);
+  state.inferencePollTimer = null;
+}
+
+function renderInferenceLivePreview(job) {
+  if (!$("inference-live-preview-enabled").checked) {
+    $("inference-live-preview-shell").hidden = true;
+    return;
+  }
+  if (!job.preview_available || !job.job_id) {
+    return;
+  }
+  $("inference-live-preview-shell").hidden = false;
+  $("inference-live-preview-image").src = `/api/inference/preview/${encodeURIComponent(job.job_id)}?t=${Date.now()}`;
+  const total = Number(job.total_frames) || 0;
+  const frames = Number(job.frames) || 0;
+  $("inference-live-preview-summary").textContent = total
+    ? `Latest annotated frame while processing ${frames} of ${total}.`
+    : `Latest annotated frame while processing ${frames} frames.`;
+}
+
+function updateInferenceJobProgress(job) {
+  const stage = inferenceStageLabel(job.stage);
+  const percent = Number(job.percent) || 0;
+  const total = Number(job.total_frames) || 0;
+  const frames = Number(job.frames) || 0;
+  const frameText = total ? ` ${frames} / ${total} frames.` : frames ? ` ${frames} frames.` : "";
+  setInferenceUploadProgress(
+    true,
+    percent,
+    `${stage}: ${job.detail || "Inference is running."}${frameText}`,
+  );
+  renderInferenceLivePreview(job);
+}
+
+function pollInferenceJob(jobId, revision) {
+  const poll = async () => {
+    if (revision !== state.inferencePollRevision) {
+      return;
+    }
+    try {
+      const job = await apiJson(`/api/inference/status/${encodeURIComponent(jobId)}`);
+      if (revision !== state.inferencePollRevision) {
+        return;
+      }
+      updateInferenceJobProgress(job);
+      if (job.status === "complete") {
+        state.inferenceRunning = false;
+        $("run-inference").textContent = "Run Inference";
+        setInferenceMessage("Inference complete.");
+        renderInferenceResult(job.result || {});
+        syncInferenceControls();
+        return;
+      }
+      if (job.status === "failed") {
+        state.inferenceRunning = false;
+        $("run-inference").textContent = "Run Inference";
+        setInferenceMessage(job.error || job.detail || "Inference failed.", true);
+        syncInferenceControls();
+        return;
+      }
+      state.inferencePollTimer = window.setTimeout(poll, 750);
+    } catch (error) {
+      if (revision !== state.inferencePollRevision) {
+        return;
+      }
+      state.inferencePollTimer = window.setTimeout(poll, 1200);
+    }
+  };
+  poll();
+}
+
 function renderInferenceResult(result) {
+  if (!result || !result.result_url) {
+    setInferenceMessage("Inference completed, but the result payload was missing.", true);
+    return;
+  }
   const cacheBust = `t=${Date.now()}`;
   const resultUrl = `${result.result_url}?${cacheBust}`;
   $("inference-results").hidden = false;
   $("download-inference-result").href = result.download_url || result.result_url;
-  const summary = `${result.engine || "YOLO inference"} processed ${result.frames || 0} frame${result.frames === 1 ? "" : "s"} with ${result.detections || 0} detection${result.detections === 1 ? "" : "s"} in ${metricText(result.elapsed_ms)} ms.`;
+  const videoDetails = result.media_type === "video"
+    ? ` Video stride ${result.video_stride || 1}; browser MP4 ${result.browser_video ? "ready" : "fallback"}.`
+    : "";
+  const backendDetails = result.backend === "tensorrt"
+    ? ` TensorRT engine ${result.engine_cached ? "reused" : "exported"}${result.engine_export_ms ? ` in ${metricText(result.engine_export_ms)} ms` : ""}.`
+    : "";
+  const summary = `${result.engine || "YOLO inference"} (${result.backend || "pytorch"}) processed ${result.frames || 0} frame${result.frames === 1 ? "" : "s"} with ${result.detections || 0} detection${result.detections === 1 ? "" : "s"} in ${metricText(result.elapsed_ms)} ms.${backendDetails}${videoDetails}`;
   $("inference-result-summary").textContent = summary;
 
   const image = $("inference-result-image");
@@ -2000,9 +2129,14 @@ function uploadInferenceRequest(form) {
       setInferenceUploadProgress(true, percent, `Uploading media: ${formatBytes(event.loaded)} of ${formatBytes(event.total)}.`);
     });
     xhr.addEventListener("load", () => {
-      const payload = xhr.response && typeof xhr.response === "object"
-        ? xhr.response
-        : JSON.parse(xhr.responseText || "{}");
+      let payload = {};
+      try {
+        payload = xhr.response && typeof xhr.response === "object"
+          ? xhr.response
+          : JSON.parse(xhr.responseText || "{}");
+      } catch (error) {
+        payload = {};
+      }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(payload);
       } else {
@@ -2035,32 +2169,37 @@ async function runInference() {
   const form = new FormData();
   form.append("weight_source", source);
   form.append("weight_path", $("inference-weight-select").value);
+  form.append("backend", $("inference-backend").value || "pytorch");
   form.append("imgsz", $("inference-imgsz").value || "640");
   form.append("conf", $("inference-conf").value || "0.25");
   form.append("iou", $("inference-iou").value || "0.45");
+  form.append("vid_stride", $("inference-vid-stride").value || "1");
   form.append("media_file", media);
   if (source === "upload") {
     form.append("weight_file", $("inference-weight-file").files[0]);
   }
 
+  stopInferencePolling();
+  resetInferenceResultForRun();
   state.inferenceRunning = true;
   syncInferenceControls();
   button.textContent = "Running...";
-  setInferenceMessage("Running YOLO inference on the uploaded media.");
+  setInferenceMessage("Uploading media and starting inference job.");
   setInferenceUploadProgress(true, 0, `Preparing upload for ${media.name}.`);
   try {
     const payload = await uploadInferenceRequest(form);
-    setInferenceUploadProgress(true, 100, "Upload complete. Processing inference result.");
-    renderInferenceResult(payload);
-    setInferenceMessage("Inference complete.");
+    state.inferenceJobId = payload.job_id || "";
+    if (!state.inferenceJobId) {
+      throw new Error("Inference job did not return a job ID.");
+    }
+    updateInferenceJobProgress(payload);
+    setInferenceMessage("Inference job started.");
+    const revision = state.inferencePollRevision;
+    pollInferenceJob(state.inferenceJobId, revision);
   } catch (error) {
-    setInferenceMessage(error.message, true);
-  } finally {
     state.inferenceRunning = false;
     button.textContent = "Run Inference";
-    if (!$("inference-media-file").files[0]) {
-      setInferenceUploadProgress(false);
-    }
+    setInferenceMessage(error.message, true);
     syncInferenceControls();
   }
 }
@@ -2402,6 +2541,8 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     if (!metrics.available) {
       state.metricsAvailable = false;
       $("training-results-panel").classList.remove("has-results");
+      $("metric-precision").textContent = "-";
+      $("metric-recall").textContent = "-";
       $("metric-macro-f1").textContent = "-";
       $("metric-weighted-f1").textContent = "-";
       $("metric-train-loss").textContent = "-";
@@ -2420,6 +2561,8 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
 
     state.metricsAvailable = true;
     $("training-results-panel").classList.add("has-results");
+    $("metric-precision").textContent = metricText(metrics.precision);
+    $("metric-recall").textContent = metricText(metrics.recall);
     $("metric-macro-f1").textContent = metricText(metrics.macro_f1);
     $("metric-weighted-f1").textContent = metricText(metrics.weighted_f1);
     $("metric-train-loss").textContent = metricText(metrics.training_loss);
@@ -2438,6 +2581,8 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
       return;
     }
     $("training-results-panel").classList.remove("has-results");
+    $("metric-precision").textContent = "-";
+    $("metric-recall").textContent = "-";
     resetCharts();
     setArtifactButtons(false);
     renderConfusionMatrices({}, target);
