@@ -96,6 +96,279 @@ def _load_json(path: Path) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _to_float(value) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
+def _to_int(value) -> int | None:
+    number = _to_float(value)
+    if number is None:
+        return None
+    return int(number)
+
+
+def _nonempty(value) -> bool:
+    return value is not None and value != "" and value != "N/A"
+
+
+def _join_limited(values: list[str], limit: int = 4) -> str:
+    values = [str(value) for value in values if value]
+    if not values:
+        return "None identified"
+    if len(values) <= limit:
+        return ", ".join(values)
+    return f"{', '.join(values[:limit])}, and {len(values) - limit} more"
+
+
+def _first_present(*values):
+    for value in values:
+        if _nonempty(value):
+            return value
+    return None
+
+
+def _metric_value(metrics: dict, *keys: str) -> float | None:
+    for key in keys:
+        value = _to_float(metrics.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _f1_label(metrics: dict) -> str:
+    if _nonempty(metrics.get("macro_f1")):
+        return "macro F1"
+    if _nonempty(metrics.get("weighted_f1")):
+        return "weighted F1"
+    return "F1"
+
+
+def _f1_value(metrics: dict) -> float | None:
+    return _metric_value(metrics, "macro_f1", "weighted_f1")
+
+
+def _best_epoch(metrics: dict) -> dict:
+    best = metrics.get("best") or {}
+    return (
+        best.get("best_map50_95")
+        or best.get("best_map50")
+        or best.get("lowest_validation_loss")
+        or {}
+    )
+
+
+def _checkpoint_label(run_dir: Path) -> str:
+    if (run_dir / "weights" / "best.pt").is_file():
+        return "best.pt"
+    if (run_dir / "weights" / "last.pt").is_file():
+        return "last.pt"
+    return "Unavailable"
+
+
+def _primary_evidence(validation_metrics: dict, test_metrics: dict | None = None) -> tuple[str, dict]:
+    if test_metrics and test_metrics.get("available", True):
+        return "independent test set", test_metrics
+    return "validation set", validation_metrics
+
+
+def _metric_band(metrics: dict) -> str:
+    map50 = _metric_value(metrics, "map50")
+    map95 = _metric_value(metrics, "map50_95")
+    recall = _metric_value(metrics, "recall")
+    f1 = _f1_value(metrics)
+    decisive = [value for value in (map95, f1, recall) if value is not None]
+    if map50 is None and not decisive:
+        return "incomplete"
+    if (map95 is not None and map95 >= 0.70) and (recall is None or recall >= 0.80) and (f1 is None or f1 >= 0.80):
+        return "strong"
+    if (map50 is not None and map50 >= 0.75) and (map95 is None or map95 >= 0.45):
+        return "usable"
+    return "needs_review"
+
+
+def _weak_classes(metrics: dict, limit: int | None = None) -> list[dict]:
+    weak = []
+    for row in metrics.get("per_class") or []:
+        reasons = []
+        recall = _to_float(row.get("recall"))
+        f1 = _to_float(row.get("f1"))
+        map95 = _to_float(row.get("map50_95"))
+        instances = _to_int(row.get("instances")) or 0
+        if instances and instances < 10:
+            reasons.append("few evaluation instances")
+        if recall is not None and recall < 0.60:
+            reasons.append("low recall")
+        if f1 is not None and f1 < 0.60:
+            reasons.append("low F1")
+        if map95 is not None and map95 < 0.40:
+            reasons.append("low AP50-95")
+        if reasons:
+            weak.append({
+                "class_name": row.get("class_name", "Unknown"),
+                "instances": instances,
+                "recall": recall,
+                "f1": f1,
+                "map50_95": map95,
+                "reasons": ", ".join(reasons),
+            })
+    weak.sort(key=lambda item: (
+        item["f1"] if item["f1"] is not None else 1.0,
+        item["recall"] if item["recall"] is not None else 1.0,
+        item["instances"],
+    ))
+    return weak[:limit] if limit else weak
+
+
+def _recommendation(validation_metrics: dict, test_metrics: dict | None = None) -> str:
+    evidence_label, evidence = _primary_evidence(validation_metrics, test_metrics)
+    band = _metric_band(evidence)
+    weak = _weak_classes(evidence, limit=3)
+    if band == "strong" and not weak:
+        return f"Use the model for a controlled deployment pilot, with continued monitoring against the {evidence_label} baseline."
+    if band in {"strong", "usable"}:
+        weak_text = _join_limited([item["class_name"] for item in weak], 3)
+        return f"Proceed to operational review, but collect more examples for weaker classes before broad deployment: {weak_text}."
+    if band == "incomplete":
+        return "Do not make a deployment decision yet because the report does not include enough completed evaluation metrics."
+    return "Keep the model in development and improve data coverage, labels, or training configuration before deployment."
+
+
+def _result_sentence(validation_metrics: dict, test_metrics: dict | None = None) -> str:
+    evidence_label, evidence = _primary_evidence(validation_metrics, test_metrics)
+    map50 = _metric(evidence.get("map50"))
+    map95 = _metric(evidence.get("map50_95"))
+    precision = _metric(evidence.get("precision"))
+    recall = _metric(evidence.get("recall"))
+    f1_label = _f1_label(evidence)
+    f1 = _metric(_f1_value(evidence))
+    recommendation = _recommendation(validation_metrics, test_metrics)
+    return (
+        f"On the {evidence_label}, the model achieved mAP50 {map50}, "
+        f"mAP50-95 {map95}, precision {precision}, recall {recall}, and "
+        f"{f1_label} {f1}; {recommendation[0].lower() + recommendation[1:]}"
+    )
+
+
+def _dataset_summary_text(context: dict) -> str:
+    summary = context.get("dataset_summary") or {}
+    total_images = summary.get("total_images", "N/A")
+    class_count = summary.get("class_count", len(summary.get("classes") or []))
+    split_ratios = summary.get("split_ratios") or {}
+    split_text = ", ".join(
+        f"{split} {split_ratios.get(split)}%"
+        for split in ("train", "val", "test")
+        if split in split_ratios
+    )
+    if split_text:
+        return f"The exported dataset contains {total_images} images across {class_count} classes with split ratios of {split_text}."
+    return f"The exported dataset contains {total_images} images across {class_count} classes."
+
+
+def _imbalance_summary(summary: dict) -> tuple[str, list[dict]]:
+    distribution = summary.get("class_distribution") or []
+    populated = [row for row in distribution if _to_int(row.get("images")) or _to_int(row.get("instances"))]
+    if not populated:
+        return "Class distribution could not be assessed from the available dataset summary.", []
+    max_images = max((_to_int(row.get("images")) or 0) for row in populated)
+    min_images = min((_to_int(row.get("images")) or 0) for row in populated)
+    underrepresented = [
+        row for row in populated
+        if (_to_int(row.get("images")) or 0) < max(10, max_images * 0.25)
+    ]
+    if min_images == 0:
+        text = "At least one class has no labeled images, so class-level evaluation is high risk."
+    elif max_images >= min_images * 3:
+        text = f"The largest class has {max_images} images versus {min_images} in the smallest class, indicating material class imbalance."
+    else:
+        text = f"Class image counts range from {min_images} to {max_images}, with no severe image-count imbalance detected."
+    return text, underrepresented
+
+
+def _label_quality_rows(summary: dict) -> list[list]:
+    rows = [["Check", "Finding"]]
+    rows.append(["Missing label files", summary.get("missing_labels", 0)])
+    warnings = summary.get("warnings") or []
+    issue_warnings = [
+        warning for warning in warnings
+        if any(token in warning.lower() for token in ("missing", "malformed", "unknown class", "no labeled"))
+    ]
+    rows.append(["Label/data warnings", _join_limited(issue_warnings, 3)])
+    return rows
+
+
+def _short_config_rows(context: dict, run_dir: Path) -> list[list]:
+    hyperparameters = context.get("hyperparameters") or _load_yaml(run_dir / "args.yaml")
+    rows = [["Setting", "Value"]]
+    settings = (
+        ("Epochs", "epochs"),
+        ("Image size", "imgsz"),
+        ("Batch size", "batch"),
+        ("Optimizer", "optimizer"),
+        ("Initial LR", "lr0"),
+        ("Final LR factor", "lrf"),
+        ("Cosine LR", "cos_lr"),
+        ("Early-stopping patience", "patience"),
+        ("Transfer-learning checkpoint", "model"),
+        ("Random seed", "seed"),
+        ("Deterministic mode", "deterministic"),
+    )
+    for label, key in settings:
+        value = _first_present(hyperparameters.get(key), context.get(key))
+        if _nonempty(value):
+            rows.append([label, value])
+    augmentation_keys = ("mosaic", "mixup", "copy_paste", "degrees", "translate", "scale", "fliplr", "flipud", "hsv_h", "hsv_s", "hsv_v")
+    augmentation = [
+        f"{key}={hyperparameters[key]}"
+        for key in augmentation_keys
+        if key in hyperparameters and _nonempty(hyperparameters.get(key))
+    ]
+    if augmentation:
+        rows.append(["Runtime augmentation", ", ".join(augmentation)])
+    return rows
+
+
+def _training_behaviour_text(metrics: dict) -> str:
+    history = metrics.get("history") or []
+    if len(history) < 2:
+        return "Training behaviour could not be interpreted because epoch history is unavailable or incomplete."
+    first = history[0]
+    last = history[-1]
+    best = _best_epoch(metrics)
+    best_epoch = best.get("epoch", "N/A")
+    first_map = _to_float(first.get("map50_95"))
+    last_map = _to_float(last.get("map50_95"))
+    train_loss = _to_float(last.get("training_loss"))
+    val_loss = _to_float(last.get("testing_loss"))
+    trend = "improved" if first_map is not None and last_map is not None and last_map >= first_map else "did not clearly improve"
+    if train_loss is not None and val_loss is not None and val_loss > train_loss * 1.5:
+        fit = "validation loss is materially higher than training loss, so possible overfitting should be reviewed"
+    elif first_map is not None and last_map is not None and last_map < 0.30:
+        fit = "mAP50-95 remains low, so possible underfitting or dataset issues should be reviewed"
+    else:
+        fit = "no obvious overfitting or underfitting signal is visible from the final loss relationship"
+    return f"Across {len(history)} completed epochs, mAP50-95 {trend}; the best tracked epoch is {best_epoch}, and {fit}."
+
+
+def _validation_test_text(validation: dict, test: dict) -> str:
+    deltas = []
+    for key, label in (("map50", "mAP50"), ("map50_95", "mAP50-95"), ("recall", "recall")):
+        val_value = _to_float(validation.get(key))
+        test_value = _to_float(test.get(key))
+        if val_value is not None and test_value is not None:
+            deltas.append((label, test_value - val_value))
+    if not deltas:
+        return "Validation and test results could not be compared because one or more metrics are unavailable."
+    largest = max(deltas, key=lambda item: abs(item[1]))
+    direction = "higher" if largest[1] >= 0 else "lower"
+    return f"The largest validation-to-test shift is {largest[0]}, which is {abs(largest[1]):.4f} {direction} on the test set."
+
+
 def _dataset_root(yaml_path: Path, config: dict) -> Path:
     value = Path(str(config.get("path") or yaml_path.parent)).expanduser()
     if not value.is_absolute():
@@ -387,55 +660,104 @@ def _add_dataset(builder: _ReportBuilder, run_dir: Path, context: dict):
         builder.story.append(sample_table)
 
 
-def _add_training(builder: _ReportBuilder, run_dir: Path, context: dict, metrics: dict):
-    builder.paragraph("YOLOv8 Model Training Report", "ReportTitle")
-    builder.paragraph(
-        f"Generated {_human_datetime_myt(datetime.now(MYT))}",
-        "Small",
-    )
-    builder.heading("Run Overview")
-    started_at, completed_at, duration = _run_timing(run_dir, context)
+def _add_executive_summary(
+    builder: _ReportBuilder,
+    run_dir: Path,
+    context: dict,
+    metrics: dict,
+    test_metrics: dict | None = None,
+):
+    summary = context.get("dataset_summary") or {}
+    evidence_label, evidence = _primary_evidence(metrics, test_metrics)
+    best = _best_epoch(metrics)
+    builder.heading("Executive Summary")
     builder.table([
-        ["Run directory", run_dir],
-        ["Started", started_at],
-        ["Completed", completed_at],
-        ["Duration", duration],
-        ["Model", context.get("model")],
-        ["Pretrained weights", context.get("pretrained", True)],
-        ["Device", context.get("device")],
-        ["Completed epoch", metrics.get("epoch")],
-    ], widths=[45 * builder.mm, 130 * builder.mm])
-    environment = context.get("environment") or {}
-    if environment:
-        gpu_names = ", ".join(str(item.get("name")) for item in environment.get("gpus", []) if item.get("name")) or "Unavailable"
-        builder.heading("Runtime Environment", 3)
-        builder.table([
-            ["Python", environment.get("python")],
-            ["Ultralytics", environment.get("ultralytics")],
-            ["PyTorch", environment.get("torch")],
-            ["GPU", gpu_names],
-            ["Platform", environment.get("platform")],
-        ], widths=[45 * builder.mm, 130 * builder.mm], header=False)
-    _add_dataset(builder, run_dir, context)
+        ["Item", "Summary"],
+        ["Dataset", f"{summary.get('total_images', 'N/A')} images, {summary.get('class_count', len(summary.get('classes') or []))} classes"],
+        ["Best checkpoint", _checkpoint_label(run_dir)],
+        ["Best tracked epoch", best.get("epoch", "N/A")],
+        ["Primary evidence", evidence_label.title()],
+        ["Precision", _metric(evidence.get("precision"))],
+        ["Recall", _metric(evidence.get("recall"))],
+        ["mAP50", _metric(evidence.get("map50"))],
+        ["mAP50-95", _metric(evidence.get("map50_95"))],
+        [_f1_label(evidence), _metric(_f1_value(evidence))],
+    ], widths=[55 * builder.mm, 120 * builder.mm])
+    builder.paragraph(_text(_result_sentence(metrics, test_metrics)))
 
-    builder.heading("Hyperparameters")
-    hyperparameters = context.get("hyperparameters") or _load_yaml(run_dir / "args.yaml")
-    ignored = {"dataset_yaml", "project", "name"}
-    rows = [["Parameter", "Value"]] + [[key, value] for key, value in sorted(hyperparameters.items()) if key not in ignored]
+
+def _add_model_dataset_overview(builder: _ReportBuilder, context: dict):
+    summary = context.get("dataset_summary") or {}
+    pre_augmentation = summary.get("pre_augmentation") or {}
+    ratios = summary.get("split_ratios") or {}
+    splits = summary.get("splits") or {}
+    builder.heading("Model and Dataset Overview")
+    builder.paragraph(_text(_dataset_summary_text(context)))
+    rows = [
+        ["Item", "Value"],
+        ["YOLOv8 model variant", context.get("model", "N/A")],
+        ["Original images", pre_augmentation.get("total_images", "Unavailable")],
+        ["Exported images used by YOLOv8", summary.get("total_images", "N/A")],
+        ["Augmentation multiplier", pre_augmentation.get("augmentation_multiplier", "N/A")],
+        ["Dataset source", context.get("dataset_source", "Prepared dataset")],
+        ["Dataset version", context.get("dataset_version", "N/A")],
+        ["Preparation date", _format_myt(context.get("created_at"))],
+    ]
+    builder.table(rows, widths=[64 * builder.mm, 111 * builder.mm])
+
+    split_rows = [["Split", "Images", "Percent"]]
+    for split in ("train", "val", "test"):
+        entry = splits.get(split) or {}
+        split_rows.append([split.title(), entry.get("images", 0), f"{ratios.get(split, 0)}%"])
+    builder.table(split_rows, widths=[58 * builder.mm, 58 * builder.mm, 59 * builder.mm])
+
+    classes = summary.get("classes") or []
+    if classes:
+        builder.paragraph(_text(f"Classes: {', '.join(str(item) for item in classes)}."), "Small")
+
+
+def _add_dataset_quality(builder: _ReportBuilder, context: dict):
+    summary = context.get("dataset_summary") or {}
+    if not summary:
+        builder.heading("Dataset Quality and Risks")
+        builder.paragraph("Dataset quality could not be assessed because no dataset summary was available.")
+        return
+
+    builder.heading("Dataset Quality and Risks")
+    imbalance_text, underrepresented = _imbalance_summary(summary)
+    builder.paragraph(_text(imbalance_text))
+    builder.table(_label_quality_rows(summary), widths=[62 * builder.mm, 113 * builder.mm])
+
+    distribution = summary.get("class_distribution") or []
+    if distribution:
+        builder.table(
+            [["Class", "Images", "Instances"]]
+            + [[row.get("class_name"), row.get("images", 0), row.get("instances", 0)] for row in distribution],
+            widths=[85 * builder.mm, 45 * builder.mm, 45 * builder.mm],
+        )
+    if underrepresented:
+        names = _join_limited([row.get("class_name") for row in underrepresented], 5)
+        builder.paragraph(
+            _text(
+                "Underrepresented classes may have unstable per-class metrics and higher "
+                f"field risk: {names}."
+            ),
+            "Small",
+        )
+
+
+def _add_training_configuration(builder: _ReportBuilder, run_dir: Path, context: dict):
+    builder.heading("Training Configuration")
+    rows = _short_config_rows(context, run_dir)
+    if len(rows) == 1:
+        builder.paragraph("Training configuration was unavailable.")
+        return
     builder.table(rows, widths=[70 * builder.mm, 105 * builder.mm])
 
-    builder.heading("Training and Validation Results")
-    builder.table([
-        ["Metric", "Final value"],
-        ["Training loss", _metric(metrics.get("training_loss"))],
-        ["Validation loss", _metric(metrics.get("testing_loss"))],
-        ["Validation precision", _metric(metrics.get("precision"))],
-        ["Validation recall", _metric(metrics.get("recall"))],
-        ["Validation mAP50", _metric(metrics.get("map50"))],
-        ["Validation mAP50-95", _metric(metrics.get("map50_95"))],
-        ["Validation macro F1", _metric(metrics.get("macro_f1"))],
-        ["Validation weighted F1", _metric(metrics.get("weighted_f1"))],
-    ], widths=[90 * builder.mm, 85 * builder.mm])
+
+def _add_training_behaviour(builder: _ReportBuilder, run_dir: Path, metrics: dict):
+    builder.heading("Training Behaviour")
+    builder.paragraph(_text(_training_behaviour_text(metrics)))
     best = metrics.get("best") or {}
     best_rows = [["Criterion", "Epoch", "Value"]]
     for key, label, value_key in (
@@ -448,17 +770,57 @@ def _add_training(builder: _ReportBuilder, run_dir: Path, context: dict, metrics
         if row:
             best_rows.append([label, row.get("epoch"), _metric(row.get(value_key))])
     if len(best_rows) > 1:
-        builder.heading("Best Epochs", 3)
         builder.table(best_rows, widths=[85 * builder.mm, 35 * builder.mm, 55 * builder.mm])
 
+    for filename, caption in (
+        ("loss_by_epoch.png", "Training and validation loss by epoch"),
+        ("accuracy_by_epoch.png", "mAP progression by epoch"),
+    ):
+        path = run_dir / filename
+        if path.is_file():
+            builder.heading(caption, 3)
+            builder.image(path)
+
+
+def _add_validation_performance(builder: _ReportBuilder, run_dir: Path, metrics: dict):
+    builder.heading("Validation Performance")
+    builder.table([
+        ["Metric", "Final validation value"],
+        ["Precision", _metric(metrics.get("precision"))],
+        ["Recall", _metric(metrics.get("recall"))],
+        ["mAP50", _metric(metrics.get("map50"))],
+        ["mAP50-95", _metric(metrics.get("map50_95"))],
+        ["Macro F1", _metric(metrics.get("macro_f1"))],
+        ["Weighted F1", _metric(metrics.get("weighted_f1"))],
+    ], widths=[90 * builder.mm, 85 * builder.mm])
+
     classes = metrics.get("per_class") or []
+    weak = _weak_classes(metrics, limit=5)
+    if weak:
+        builder.paragraph(
+            _text(
+                "Weak classes requiring review: "
+                + _join_limited([f"{row['class_name']} ({row['reasons']})" for row in weak], 5)
+                + "."
+            ),
+            "Small",
+        )
     if classes:
-        builder.heading("Per-Class Validation Metrics", 3)
         builder.table(
             [["Class", "Instances", "Precision", "Recall", "F1", "AP50", "AP50-95"]]
             + [[row.get("class_name"), row.get("instances", 0), _metric(row.get("precision")), _metric(row.get("recall")), _metric(row.get("f1")), _metric(row.get("map50")), _metric(row.get("map50_95"))] for row in classes],
             widths=[40 * builder.mm, 22 * builder.mm, 23 * builder.mm, 22 * builder.mm, 21 * builder.mm, 23 * builder.mm, 25 * builder.mm],
         )
+
+    for filename, caption in (
+        ("confusion_matrix_normalized.png", "Normalized validation confusion matrix"),
+        ("confusion_matrix.png", "Validation confusion matrix (raw counts)"),
+    ):
+        path = run_dir / filename
+        if path.is_file():
+            builder.heading(caption, 3)
+            builder.image(path)
+
     auc_classes = (metrics.get("roc_auc") or {}).get("classes") or []
     if auc_classes:
         builder.heading("Per-Class Validation ROC-AUC", 3)
@@ -467,8 +829,131 @@ def _add_training(builder: _ReportBuilder, run_dir: Path, context: dict, metrics
             + [[row.get("class_name"), row.get("positive_images", 0), row.get("negative_images", 0), _metric(row.get("auc"))] for row in auc_classes],
             widths=[70 * builder.mm, 38 * builder.mm, 38 * builder.mm, 29 * builder.mm],
         )
+        roc_path = run_dir / "roc_auc_curve.png"
+        if roc_path.is_file():
+            builder.image(roc_path)
 
-    builder.heading("Training and Validation Plots")
+
+def _add_qualitative_results(builder: _ReportBuilder, run_dir: Path, test_dir: Path | None = None):
+    builder.heading("Qualitative Results")
+    candidates = []
+    for directory, label in ((run_dir, "Validation"), (test_dir, "Test")):
+        if directory is None:
+            continue
+        for pattern in ("val_batch*_pred.jpg", "val_batch*_labels.jpg", "test_batch*_pred.jpg", "test_batch*_labels.jpg"):
+            for path in sorted(directory.glob(pattern))[:2]:
+                candidates.append((path, f"{label} example: {path.name}"))
+    if not candidates:
+        builder.paragraph(
+            "No representative prediction images were available. Review confusion matrices and per-class metrics for error analysis."
+        )
+        return
+    for path, caption in candidates[:6]:
+        builder.heading(caption, 3)
+        builder.image(path)
+
+
+def _add_operational_performance(builder: _ReportBuilder, run_dir: Path, context: dict):
+    builder.heading("Operational Performance and Limitations")
+    hyperparameters = context.get("hyperparameters") or _load_yaml(run_dir / "args.yaml")
+    environment = context.get("environment") or {}
+    gpu_names = ", ".join(str(item.get("name")) for item in environment.get("gpus", []) if item.get("name")) or "Unavailable"
+    weights_path = run_dir / "weights" / "best.pt"
+    model_size = f"{weights_path.stat().st_size / (1024 * 1024):.1f} MB" if weights_path.is_file() else "Unavailable"
+    rows = [
+        ["Item", "Value"],
+        ["Model artifact size", model_size],
+        ["Target/runtime hardware", gpu_names],
+        ["Confidence threshold", hyperparameters.get("conf", "Ultralytics default")],
+        ["NMS IoU threshold", hyperparameters.get("iou", "Ultralytics default")],
+        ["Image size", hyperparameters.get("imgsz", "N/A")],
+    ]
+    builder.table(rows, widths=[70 * builder.mm, 105 * builder.mm])
+    builder.paragraph(
+        _text(
+            "Operating conditions not represented in the dataset or test split should be treated "
+            "as untested until additional labeled examples are evaluated."
+        ),
+        "Small",
+    )
+
+
+def _add_conclusion_and_recommendation(
+    builder: _ReportBuilder,
+    context: dict,
+    metrics: dict,
+    test_metrics: dict | None = None,
+):
+    builder.heading("Conclusion and Recommendation")
+    evidence_label, evidence = _primary_evidence(metrics, test_metrics)
+    weak = _weak_classes(evidence, limit=4)
+    strengths = []
+    if _metric_value(evidence, "map50") is not None:
+        strengths.append(f"mAP50 {_metric(evidence.get('map50'))}")
+    if _metric_value(evidence, "recall") is not None:
+        strengths.append(f"recall {_metric(evidence.get('recall'))}")
+    if _f1_value(evidence) is not None:
+        strengths.append(f"{_f1_label(evidence)} {_metric(_f1_value(evidence))}")
+    builder.paragraph(_text(f"Overall performance is based primarily on the {evidence_label}."))
+    builder.paragraph(_text(f"Key strengths: {_join_limited(strengths, 4)}."))
+    if weak:
+        builder.paragraph(
+            _text(
+                "Classes or scenarios requiring additional attention: "
+                + _join_limited([item["class_name"] for item in weak], 4)
+                + "."
+            )
+        )
+    else:
+        builder.paragraph("No weak classes were automatically flagged by the report thresholds.")
+    builder.paragraph(_text(_training_behaviour_text(metrics)))
+    builder.paragraph(_text(_recommendation(metrics, test_metrics)))
+
+
+def _add_technical_appendix(
+    builder: _ReportBuilder,
+    run_dir: Path,
+    context: dict,
+    metrics: dict,
+    test_dir: Path | None = None,
+    test_context: dict | None = None,
+    test_metrics: dict | None = None,
+):
+    builder.page_break()
+    builder.paragraph("Technical Appendix", "ReportTitle")
+    builder.heading("Internal Run Metadata")
+    started_at, completed_at, duration = _run_timing(run_dir, context)
+    builder.table([
+        ["Run directory", run_dir],
+        ["Started", started_at],
+        ["Completed", completed_at],
+        ["Duration", duration],
+        ["Dataset YAML", context.get("dataset_yaml")],
+        ["Device", context.get("device")],
+        ["Completed epoch", metrics.get("epoch")],
+    ], widths=[45 * builder.mm, 130 * builder.mm])
+
+    environment = context.get("environment") or {}
+    if environment:
+        gpu_names = ", ".join(str(item.get("name")) for item in environment.get("gpus", []) if item.get("name")) or "Unavailable"
+        builder.heading("Runtime Environment", 3)
+        builder.table([
+            ["Python", environment.get("python")],
+            ["Ultralytics", environment.get("ultralytics")],
+            ["PyTorch", environment.get("torch")],
+            ["GPU", gpu_names],
+            ["Platform", environment.get("platform")],
+        ], widths=[45 * builder.mm, 130 * builder.mm], header=False)
+
+    builder.heading("Complete Hyperparameters")
+    hyperparameters = context.get("hyperparameters") or _load_yaml(run_dir / "args.yaml")
+    ignored = {"dataset_yaml"}
+    rows = [["Parameter", "Value"]] + [[key, value] for key, value in sorted(hyperparameters.items()) if key not in ignored]
+    builder.table(rows, widths=[70 * builder.mm, 105 * builder.mm])
+
+    _add_dataset(builder, run_dir, context)
+
+    builder.heading("Additional Training Plots")
     for filename, caption in (
         ("accuracy_by_epoch.png", "Detection performance by epoch"),
         ("loss_by_epoch.png", "Training and validation loss by epoch"),
@@ -481,10 +966,64 @@ def _add_training(builder: _ReportBuilder, run_dir: Path, context: dict, metrics
             builder.heading(caption, 3)
             builder.image(path)
 
+    if test_dir and test_metrics:
+        builder.heading("Test Run Metadata")
+        parameters = (test_context or {}).get("parameters") or {}
+        builder.table([
+            ["Test run directory", test_dir],
+            ["Test started", _format_myt((test_context or {}).get("created_at"))],
+            ["Dataset YAML", test_metrics.get("dataset_yaml", (test_context or {}).get("dataset_yaml"))],
+            ["Weights", test_metrics.get("weights", (test_context or {}).get("weights_label"))],
+            ["Image size", parameters.get("imgsz")],
+            ["Batch size", parameters.get("batch")],
+            ["Workers", parameters.get("workers")],
+            ["Device", parameters.get("device")],
+        ], widths=[45 * builder.mm, 130 * builder.mm])
+
+
+def _add_training(
+    builder: _ReportBuilder,
+    run_dir: Path,
+    context: dict,
+    metrics: dict,
+    test_metrics: dict | None = None,
+    include_conclusion: bool = True,
+    include_appendix: bool = True,
+):
+    builder.paragraph("YOLOv8 Model Training Report", "ReportTitle")
+    builder.paragraph(
+        f"Generated {_human_datetime_myt(datetime.now(MYT))}",
+        "Small",
+    )
+    _add_executive_summary(builder, run_dir, context, metrics, test_metrics)
+    _add_model_dataset_overview(builder, context)
+    _add_dataset_quality(builder, context)
+    _add_training_configuration(builder, run_dir, context)
+    _add_training_behaviour(builder, run_dir, metrics)
+    _add_validation_performance(builder, run_dir, metrics)
+    _add_qualitative_results(builder, run_dir)
+    _add_operational_performance(builder, run_dir, context)
+    if include_conclusion:
+        _add_conclusion_and_recommendation(builder, context, metrics, test_metrics)
+    if include_appendix:
+        _add_technical_appendix(builder, run_dir, context, metrics)
+
 
 def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: dict, validation: dict):
     builder.page_break()
     builder.paragraph("Independent Test Evaluation", "ReportTitle")
+    builder.heading("Final Test-Set Performance")
+    builder.paragraph(_text(_result_sentence(validation, metrics)))
+    builder.table([
+        ["Metric", "Final test value"],
+        ["Precision", _metric(metrics.get("precision"))],
+        ["Recall", _metric(metrics.get("recall"))],
+        ["mAP50", _metric(metrics.get("map50"))],
+        ["mAP50-95", _metric(metrics.get("map50_95"))],
+        ["Macro F1", _metric(metrics.get("macro_f1"))],
+        ["Weighted F1", _metric(metrics.get("weighted_f1"))],
+    ], widths=[90 * builder.mm, 85 * builder.mm])
+
     builder.heading("Test Run Overview")
     parameters = context.get("parameters") or {}
     builder.table([
@@ -516,6 +1055,7 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
                 widths=[85 * builder.mm, 45 * builder.mm, 45 * builder.mm],
             )
     builder.heading("Validation vs Test Comparison")
+    builder.paragraph(_text(_validation_test_text(validation, metrics)))
     builder.table([
         ["Metric", "Validation", "Test"],
         ["Precision", _metric(validation.get("precision")), _metric(metrics.get("precision"))],
@@ -528,6 +1068,16 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
     classes = metrics.get("per_class") or []
     if classes:
         builder.heading("Per-Class Test Metrics")
+        weak = _weak_classes(metrics, limit=5)
+        if weak:
+            builder.paragraph(
+                _text(
+                    "Weak test classes requiring review: "
+                    + _join_limited([f"{row['class_name']} ({row['reasons']})" for row in weak], 5)
+                    + "."
+                ),
+                "Small",
+            )
         builder.table(
             [["Class", "Instances", "Precision", "Recall", "F1", "AP50", "AP50-95"]]
             + [[row.get("class_name"), row.get("instances", 0), _metric(row.get("precision")), _metric(row.get("recall")), _metric(row.get("f1")), _metric(row.get("map50")), _metric(row.get("map50_95"))] for row in classes],
@@ -575,7 +1125,25 @@ def generate_combined_report(
 ) -> Path:
     output_path = test_dir / "training_and_test_report.pdf"
     builder = _ReportBuilder(output_path, "YOLOv8 Training and Test Report")
-    _add_training(builder, training_dir, training_context, training_metrics)
+    _add_training(
+        builder,
+        training_dir,
+        training_context,
+        training_metrics,
+        test_metrics,
+        include_conclusion=False,
+        include_appendix=False,
+    )
     _add_test(builder, test_dir, test_context, test_metrics, training_metrics)
+    _add_conclusion_and_recommendation(builder, training_context, training_metrics, test_metrics)
+    _add_technical_appendix(
+        builder,
+        training_dir,
+        training_context,
+        training_metrics,
+        test_dir,
+        test_context,
+        test_metrics,
+    )
     builder.build()
     return output_path

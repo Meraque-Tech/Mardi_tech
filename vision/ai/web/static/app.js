@@ -39,6 +39,8 @@ const state = {
   testOutcome: "",
   testLogsMode: "recent",
   testDownloads: new Set(),
+  inferenceWeights: [],
+  inferenceRunning: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -984,6 +986,7 @@ function updateFileSelection() {
     $("test-dataset-folder-selection").textContent = `${folderLabel}: ${testFolderFiles.length} files (${formatBytes(totalFolderBytes)}).`;
   }
   syncTestSourceControls();
+  updateInferenceFileSelection();
 }
 
 function selectedTestWeightSource() {
@@ -1708,6 +1711,191 @@ async function apiJson(url, options = {}) {
     throw new Error(payload.detail || payload.message || `Request failed: ${response.status}`);
   }
   return payload;
+}
+
+function setAppTab(tab) {
+  document.querySelectorAll("[data-app-tab]").forEach((button) => {
+    const active = button.dataset.appTab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll(".app-view").forEach((view) => {
+    const active = view.id === `${tab}-view`;
+    view.classList.toggle("active", active);
+    view.hidden = !active;
+  });
+  if (tab === "inference") {
+    loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true));
+  } else {
+    redrawChartsSoon();
+  }
+}
+
+function setInferenceMessage(text, isError = false) {
+  const message = $("inference-message");
+  message.textContent = text;
+  message.classList.toggle("error", isError);
+}
+
+function selectedInferenceWeightSource() {
+  return document.querySelector('input[name="inference-weight-source"]:checked')?.value || "selected";
+}
+
+function syncInferenceControls() {
+  const source = selectedInferenceWeightSource();
+  $("inference-selected-weight-wrap").hidden = source !== "selected";
+  $("inference-upload-weight-wrap").hidden = source !== "upload";
+  const hasSelectedWeight = $("inference-weight-select").value !== "";
+  const hasUploadedWeight = Boolean($("inference-weight-file").files[0]);
+  const hasMedia = Boolean($("inference-media-file").files[0]);
+  $("run-inference").disabled = state.inferenceRunning
+    || !hasMedia
+    || (source === "selected" ? !hasSelectedWeight : !hasUploadedWeight);
+}
+
+function renderInferenceWeights(weights) {
+  const select = $("inference-weight-select");
+  select.innerHTML = "";
+  if (!weights.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No weights found";
+    select.appendChild(option);
+    $("inference-weights-status").textContent = "No .pt weights were found under runs/detect.";
+    syncInferenceControls();
+    return;
+  }
+  weights.forEach((weight) => {
+    const option = document.createElement("option");
+    option.value = weight.path;
+    option.textContent = `${weight.label} (${formatBytes(weight.size)})`;
+    select.appendChild(option);
+  });
+  $("inference-weights-status").textContent = `${weights.length} weight file${weights.length === 1 ? "" : "s"} available from runs/detect.`;
+  syncInferenceControls();
+}
+
+async function loadInferenceWeights() {
+  $("inference-weights-status").textContent = "Loading weights from runs/detect...";
+  const payload = await apiJson("/api/inference/weights");
+  state.inferenceWeights = Array.isArray(payload.weights) ? payload.weights : [];
+  renderInferenceWeights(state.inferenceWeights);
+}
+
+function updateInferenceFileSelection() {
+  const weight = $("inference-weight-file").files[0];
+  $("inference-weight-selection").textContent = weight
+    ? `${weight.name} (${formatBytes(weight.size)})`
+    : "No weights file selected.";
+
+  const media = $("inference-media-file").files[0];
+  $("inference-media-selection").textContent = media
+    ? `${media.name} (${formatBytes(media.size)})`
+    : "No image or video selected.";
+  syncInferenceControls();
+}
+
+function renderInferenceDetections(detections) {
+  const container = $("inference-detections");
+  const rows = Array.isArray(detections) ? detections : [];
+  if (!rows.length) {
+    container.innerHTML = "<p>No image detections passed the selected confidence threshold.</p>";
+    return;
+  }
+  container.innerHTML = `
+    <h4>Image Detections</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Class</th>
+          <th>Confidence</th>
+          <th>Box</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.class_name || `class_${row.class_id}`)}</td>
+            <td>${metricText(row.confidence)}</td>
+            <td>${(row.box || []).map((value) => Math.round(Number(value) || 0)).join(", ")}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>`;
+}
+
+function renderInferenceResult(result) {
+  const cacheBust = `t=${Date.now()}`;
+  const resultUrl = `${result.result_url}?${cacheBust}`;
+  $("inference-results").hidden = false;
+  $("download-inference-result").href = result.download_url || result.result_url;
+  const summary = `${result.engine || "YOLO inference"} processed ${result.frames || 0} frame${result.frames === 1 ? "" : "s"} with ${result.detections || 0} detection${result.detections === 1 ? "" : "s"} in ${metricText(result.elapsed_ms)} ms.`;
+  $("inference-result-summary").textContent = summary;
+
+  const image = $("inference-result-image");
+  const video = $("inference-result-video");
+  if (result.media_type === "video") {
+    image.hidden = true;
+    image.removeAttribute("src");
+    video.hidden = false;
+    video.src = resultUrl;
+    video.load();
+  } else {
+    video.hidden = true;
+    video.removeAttribute("src");
+    image.hidden = false;
+    image.src = resultUrl;
+  }
+  renderInferenceDetections(result.image_detections);
+}
+
+async function runInference() {
+  const button = $("run-inference");
+  const source = selectedInferenceWeightSource();
+  const media = $("inference-media-file").files[0];
+  if (!media) {
+    setInferenceMessage("Choose an image or video file for inference.", true);
+    return;
+  }
+  if (source === "selected" && !$("inference-weight-select").value) {
+    setInferenceMessage("Choose weights from runs/detect or upload a .pt file.", true);
+    return;
+  }
+  if (source === "upload" && !$("inference-weight-file").files[0]) {
+    setInferenceMessage("Choose a .pt weights file to upload.", true);
+    return;
+  }
+
+  const form = new FormData();
+  form.append("weight_source", source);
+  form.append("weight_path", $("inference-weight-select").value);
+  form.append("imgsz", $("inference-imgsz").value || "640");
+  form.append("conf", $("inference-conf").value || "0.25");
+  form.append("iou", $("inference-iou").value || "0.45");
+  form.append("media_file", media);
+  if (source === "upload") {
+    form.append("weight_file", $("inference-weight-file").files[0]);
+  }
+
+  state.inferenceRunning = true;
+  syncInferenceControls();
+  button.textContent = "Running...";
+  setInferenceMessage("Running YOLO inference on the uploaded media.");
+  try {
+    const response = await fetch("/api/inference/run", { method: "POST", body: form });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `Inference failed: ${response.status}`);
+    }
+    renderInferenceResult(payload);
+    setInferenceMessage("Inference complete.");
+  } catch (error) {
+    setInferenceMessage(error.message, true);
+  } finally {
+    state.inferenceRunning = false;
+    button.textContent = "Run Inference";
+    syncInferenceControls();
+  }
 }
 
 async function loadConfig() {
@@ -2600,6 +2788,9 @@ document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => setSource(button.dataset.source));
   button.addEventListener("keydown", handleTabKeydown);
 });
+document.querySelectorAll("[data-app-tab]").forEach((button) => {
+  button.addEventListener("click", () => setAppTab(button.dataset.appTab));
+});
 
 $("prepare-dataset").addEventListener("click", prepareDataset);
 $("download-dataset").addEventListener("click", downloadPreparedDataset);
@@ -2623,6 +2814,8 @@ $("download-test-log").addEventListener("click", downloadTestLog);
 $("download-test-metrics-json").addEventListener("click", () => downloadTestArtifact("metrics_json", "test_metrics.json"));
 $("download-test-roc-auc-graph").addEventListener("click", () => downloadTestArtifact("roc_auc_curve", "test_roc_auc_curve.png"));
 $("download-combined-report").addEventListener("click", downloadCombinedReport);
+$("refresh-inference-weights").addEventListener("click", () => loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true)));
+$("run-inference").addEventListener("click", runInference);
 $("project").addEventListener("input", scheduleTargetRefresh);
 $("run-name").addEventListener("input", scheduleTargetRefresh);
 $("upload-file").addEventListener("change", updateFileSelection);
@@ -2630,6 +2823,9 @@ $("folder-files").addEventListener("change", updateFileSelection);
 $("test-weight-file").addEventListener("change", updateFileSelection);
 $("test-dataset-zip").addEventListener("change", updateFileSelection);
 $("test-dataset-folder").addEventListener("change", updateFileSelection);
+$("inference-weight-file").addEventListener("change", updateFileSelection);
+$("inference-media-file").addEventListener("change", updateFileSelection);
+$("inference-weight-select").addEventListener("change", syncInferenceControls);
 ["upload-force-split", "folder-force-split", "roboflow-force-split"].forEach((id) => {
   $(id).addEventListener("change", syncDatasetSourceControls);
 });
@@ -2638,6 +2834,9 @@ document.querySelectorAll('input[name="test-weight-source"]').forEach((input) =>
 });
 document.querySelectorAll('input[name="test-dataset-source"]').forEach((input) => {
   input.addEventListener("change", syncTestSourceControls);
+});
+document.querySelectorAll('input[name="inference-weight-source"]').forEach((input) => {
+  input.addEventListener("change", syncInferenceControls);
 });
 $("dataset-name").addEventListener("input", () => {
   state.datasetNameEdited = true;
@@ -2692,9 +2891,11 @@ initializeCollapsiblePanels();
 updateFileSelection();
 updateSplitTotal();
 syncDatasetSourceControls();
+syncInferenceControls();
 setActivePreset(null);
 updateCurrentRunDisplay();
 renderEpochProgress();
 syncActionStates();
+loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true));
 state.pollTimer = window.setInterval(pollStatus, 2500);
 pollStatus();

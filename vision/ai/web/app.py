@@ -4,6 +4,7 @@
 import csv
 import json
 import math
+import mimetypes
 import os
 import platform
 import re
@@ -40,15 +41,21 @@ LOG_DIR = WEB_DIR / "logs"
 LOG_FILE = LOG_DIR / "current.log"
 TEST_LOG_FILE = LOG_DIR / "test-current.log"
 RUNS_ROOT = REPO_ROOT / "runs"
+DETECT_RUNS_ROOT = RUNS_ROOT / "detect"
 TEST_RUNS_ROOT = RUNS_ROOT / "test"
+INFERENCE_SCRIPT = WEB_DIR / "infer_yolo.py"
 MYT = timezone(timedelta(hours=8), name="MYT")
 
 load_dotenv(WEB_DIR / ".env")
 
 DATA_ROOT = Path(os.getenv("WEB_DATA_ROOT") or WEB_DIR / "datasets").expanduser()
+INFERENCE_ROOT = DATA_ROOT / "inference"
+INFERENCE_UPLOAD_ROOT = INFERENCE_ROOT / "uploads"
+INFERENCE_JOB_ROOT = INFERENCE_ROOT / "jobs"
 TRAINING_PYTHON = os.getenv("TRAINING_PYTHON", "python3")
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 SPLIT_ALIASES = {"train": "train", "val": "val", "valid": "val", "test": "test"}
 MODEL_MAP = {
     "nano": "yolov8n.pt",
@@ -158,10 +165,16 @@ class TestArtifactRequest(BaseModel):
     artifact: str
 
 
+class InferenceWeightsRequest(BaseModel):
+    weight_path: str
+
+
 def ensure_dirs():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     TEST_RUNS_ROOT.mkdir(parents=True, exist_ok=True)
+    INFERENCE_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+    INFERENCE_JOB_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def form_bool(value) -> bool:
@@ -289,6 +302,85 @@ def ensure_runs_path(path: Path):
             status_code=400,
             detail="Training outputs can only be read from the runs directory.",
         ) from exc
+
+
+def ensure_detect_runs_path(path: Path):
+    detect_root = DETECT_RUNS_ROOT.resolve()
+    try:
+        path.resolve().relative_to(detect_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Inference weights can only be selected from runs/detect.",
+        ) from exc
+
+
+def ensure_inference_path(path: Path):
+    inference_root = INFERENCE_ROOT.resolve()
+    try:
+        path.resolve().relative_to(inference_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Inference files can only be read from the inference workspace.",
+        ) from exc
+
+
+def relative_to_repo(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def resolve_inference_weight_path(weight_path: str) -> Path:
+    value = Path(str(weight_path or "")).expanduser()
+    if value.is_absolute():
+        candidate = value.resolve()
+    else:
+        candidate = (REPO_ROOT / value).resolve()
+    ensure_detect_runs_path(candidate)
+    if candidate.suffix.lower() != ".pt" or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Selected inference weights were not found.")
+    return candidate
+
+
+def available_detection_weights() -> list[dict]:
+    if not DETECT_RUNS_ROOT.is_dir():
+        return []
+    weights = []
+    for path in sorted(DETECT_RUNS_ROOT.rglob("weights/*.pt")):
+        try:
+            ensure_detect_runs_path(path)
+        except HTTPException:
+            continue
+        run_dir = path.parent.parent
+        stat = path.stat()
+        weights.append({
+            "label": f"{run_dir.name}/{path.name}",
+            "path": relative_to_repo(path),
+            "run": run_dir.name,
+            "weight": path.stem,
+            "size": stat.st_size,
+            "modified_at": stat.st_mtime,
+        })
+    weights.sort(key=lambda item: item["modified_at"], reverse=True)
+    return weights
+
+
+def ensure_inference_script() -> Path:
+    if not INFERENCE_SCRIPT.is_file():
+        raise HTTPException(status_code=500, detail="Python inference script is missing.")
+    return INFERENCE_SCRIPT
+
+
+def inference_media_type(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in IMAGE_EXTENSIONS:
+        return "image"
+    if suffix in VIDEO_EXTENSIONS:
+        return "video"
+    raise HTTPException(status_code=400, detail="Upload an image or video file for inference.")
 
 
 def is_run_dir(path: Path) -> bool:
@@ -2124,6 +2216,114 @@ def config():
         },
         "default_device": os.getenv("TRAINING_DEVICE", ""),
     }
+
+
+@app.get("/api/inference/weights")
+def inference_weights():
+    return {"weights": available_detection_weights()}
+
+
+@app.post("/api/inference/run")
+def run_inference(
+    weight_source: str = Form("selected"),
+    weight_path: str = Form(""),
+    imgsz: int = Form(640),
+    conf: float = Form(0.25),
+    iou: float = Form(0.45),
+    weight_file: Optional[UploadFile] = File(None),
+    media_file: UploadFile = File(...),
+):
+    ensure_dirs()
+    if current_status()["running"]:
+        raise HTTPException(status_code=409, detail="Training is running. Stop training before inference.")
+    if imgsz < 32:
+        raise HTTPException(status_code=400, detail="Image size must be at least 32.")
+    if not 0 <= conf <= 1 or not 0 <= iou <= 1:
+        raise HTTPException(status_code=400, detail="Confidence and IoU thresholds must be between 0 and 1.")
+
+    job_id = datetime.now(MYT).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    job_dir = (INFERENCE_JOB_ROOT / job_id).resolve()
+    ensure_inference_path(job_dir)
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    if weight_source == "selected":
+        weights_path = resolve_inference_weight_path(weight_path)
+        weights_label = relative_to_repo(weights_path)
+    elif weight_source == "upload":
+        if weight_file is None or not weight_file.filename:
+            raise HTTPException(status_code=400, detail="Choose a .pt weights file to upload.")
+        if Path(weight_file.filename).suffix.lower() != ".pt":
+            raise HTTPException(status_code=400, detail="Uploaded weights must be a .pt file.")
+        weights_path = (INFERENCE_UPLOAD_ROOT / job_id / Path(weight_file.filename).name).resolve()
+        ensure_inference_path(weights_path)
+        save_upload(weight_file, weights_path, lambda *_args: None, "saving", "Saving inference weights")
+        weights_label = f"uploaded {weights_path.name}"
+    else:
+        raise HTTPException(status_code=400, detail="Unknown inference weights source.")
+
+    if not media_file.filename:
+        raise HTTPException(status_code=400, detail="Choose an image or video file for inference.")
+    media_name = safe_upload_path(media_file.filename).name
+    input_path = (job_dir / media_name).resolve()
+    ensure_inference_path(input_path)
+    save_upload(media_file, input_path, lambda *_args: None, "saving", "Saving inference media")
+    media_kind = inference_media_type(input_path)
+    output_path = job_dir / ("annotated.jpg" if media_kind == "image" else "annotated.mp4")
+    result_path = job_dir / "result.json"
+    script_path = ensure_inference_script()
+    command = [
+        TRAINING_PYTHON,
+        str(script_path),
+        "--weights",
+        str(weights_path),
+        "--input",
+        str(input_path),
+        "--output",
+        str(output_path),
+        "--json",
+        str(result_path),
+        "--imgsz",
+        str(imgsz),
+        "--conf",
+        str(conf),
+        "--iou",
+        str(iou),
+    ]
+    try:
+        completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60 * 30)
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="Inference timed out.") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+        raise HTTPException(status_code=500, detail=f"Inference failed: {detail}") from exc
+
+    payload = read_json_object(result_path)
+    if not output_path.is_file():
+        raise HTTPException(status_code=500, detail="Inference completed without producing an output file.")
+    payload.update({
+        "job_id": job_id,
+        "media_type": media_kind,
+        "weights": weights_label,
+        "stdout": completed.stdout.strip(),
+        "result_url": f"/api/inference/result/{job_id}",
+        "download_url": f"/api/inference/result/{job_id}?download=1",
+    })
+    return payload
+
+
+@app.get("/api/inference/result/{job_id}")
+def inference_result(job_id: str, download: bool = False):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Inference result not found.")
+    job_dir = (INFERENCE_JOB_ROOT / job_id).resolve()
+    ensure_inference_path(job_dir)
+    candidates = [job_dir / "annotated.jpg", job_dir / "annotated.mp4"]
+    path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Inference result not found.")
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    filename = f"inference_{job_id}{path.suffix}" if download else path.name
+    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 @app.get("/api/dataset/preparation/status")

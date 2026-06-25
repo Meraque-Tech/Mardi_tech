@@ -110,6 +110,42 @@ p {
   color: var(--danger);
 }
 
+.app-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.app-tab {
+  min-width: 124px;
+  border-color: transparent;
+  border-bottom: 3px solid transparent;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.app-tab:hover {
+  background: #eef3f1;
+  color: var(--accent-strong);
+}
+
+.app-tab.active {
+  border-color: var(--line);
+  border-bottom-color: var(--accent);
+  background: #fff;
+  color: var(--accent-strong);
+}
+
+.app-view {
+  display: none;
+}
+
+.app-view.active {
+  display: block;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(360px, 0.82fr);
@@ -485,14 +521,16 @@ button.danger:disabled:hover {
 }
 
 button.secondary,
-button.tab {
+button.tab,
+.button-link.secondary {
   background: #fff;
   color: var(--text);
   border-color: var(--line);
 }
 
 button.secondary:hover,
-button.tab:hover {
+button.tab:hover,
+.button-link.secondary:hover {
   border-color: var(--accent);
   color: var(--accent-strong);
 }
@@ -525,6 +563,21 @@ button[aria-pressed="true"] {
   background: #e7f3ef;
   border-color: var(--accent);
   color: var(--accent-strong);
+}
+
+.button-link {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: #fff;
+  background: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .source-tabs {
@@ -1250,6 +1303,46 @@ button.report-download-button:disabled:hover {
 .testing-panel:not(.has-results) .roc-auc-panel,
 .testing-panel:not(.has-results) .class-metrics {
   display: none;
+}
+
+.inference-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.inference-grid {
+  align-items: start;
+}
+
+.inference-settings {
+  margin-top: 12px;
+}
+
+.inference-message {
+  margin-top: 0;
+}
+
+.inference-results {
+  display: grid;
+  gap: 14px;
+}
+
+.inference-preview {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafb;
+  overflow: hidden;
+}
+
+.inference-preview img,
+.inference-preview video {
+  display: block;
+  width: 100%;
+  max-height: 680px;
+  object-fit: contain;
 }
 
 .test-source-grid,
