@@ -159,6 +159,14 @@ p {
   min-width: 0;
 }
 
+.session-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
 .gpu-status {
   color: var(--muted);
   font-size: 12px;
@@ -1322,9 +1330,27 @@ button.report-download-button:disabled:hover {
   margin-top: 0;
 }
 
+.inference-upload-status {
+  margin-top: 12px;
+}
+
 .inference-results {
   display: grid;
   gap: 14px;
+}
+
+.inference-result-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.inference-preview-shell {
+  display: grid;
+  gap: 10px;
+}
+
+.inference-preview-shell[hidden] {
+  display: none !important;
 }
 
 .inference-preview {
@@ -1343,6 +1369,16 @@ button.report-download-button:disabled:hover {
   width: 100%;
   max-height: 680px;
   object-fit: contain;
+}
+
+.inference-preview img[hidden],
+.inference-preview video[hidden],
+.inference-upload-status[hidden] {
+  display: none !important;
+}
+
+.inference-preview video {
+  background: #000;
 }
 
 .test-source-grid,

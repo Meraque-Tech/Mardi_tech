@@ -444,6 +444,20 @@
             </div>
           </div>
 
+          <div class="session-picker">
+            <label>
+              Previous training session
+              <select id="training-session-select">
+                <option value="">Choose a run from runs/detect</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button id="refresh-training-sessions" class="secondary compact" type="button">Refresh runs</button>
+              <button id="load-training-session" class="secondary compact" type="button">Load session</button>
+            </div>
+          </div>
+          <p class="field-note" id="training-session-status">Pick a previous run to load its weights, metrics, reports, and graphs.</p>
+
           <div class="weights-toolbar">
             <div>
               <h3>Model Weights</h3>
@@ -774,6 +788,37 @@
                 <input id="inference-media-file" type="file" accept="image/*,video/*,video/quicktime,.mov,.MOV">
               </label>
               <p id="inference-media-selection" class="file-selection">No image or video selected.</p>
+              <div class="inference-upload-status" id="inference-upload-status" hidden>
+                <div class="field-header">
+                  <strong>Upload Progress</strong>
+                  <span id="inference-upload-percent">0%</span>
+                </div>
+                <div
+                  class="epoch-progress-track"
+                  id="inference-upload-track"
+                  role="progressbar"
+                  aria-label="Inference media upload progress"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                  aria-valuetext="Upload progress 0%"
+                >
+                  <span id="inference-upload-fill"></span>
+                </div>
+                <p id="inference-upload-detail">Waiting to upload.</p>
+              </div>
+              <div class="inference-preview-shell" id="inference-input-preview-shell" hidden>
+                <div class="field-header">
+                  <div>
+                    <h4>Uploaded Media</h4>
+                    <p id="inference-input-summary">No uploaded media selected yet.</p>
+                  </div>
+                </div>
+                <div class="inference-preview">
+                  <img id="inference-input-image" alt="Uploaded inference media preview" hidden>
+                  <video id="inference-input-video" controls hidden></video>
+                </div>
+              </div>
               <div class="grid three inference-settings">
                 <label>
                   Image size
@@ -801,9 +846,27 @@
               </div>
               <a id="download-inference-result" class="button-link secondary" href="#" download>Download result</a>
             </div>
-            <div class="inference-preview">
-              <img id="inference-result-image" alt="Annotated inference result" hidden>
-              <video id="inference-result-video" controls hidden></video>
+            <div class="inference-result-grid">
+              <div class="inference-preview-shell" id="inference-result-image-shell" hidden>
+                <div class="field-header">
+                  <div>
+                    <h4>Annotated Image</h4>
+                  </div>
+                </div>
+                <div class="inference-preview">
+                  <img id="inference-result-image" alt="Annotated inference result" hidden>
+                </div>
+              </div>
+              <div class="inference-preview-shell" id="inference-result-video-shell" hidden>
+                <div class="field-header">
+                  <div>
+                    <h4>Annotated Video</h4>
+                  </div>
+                </div>
+                <div class="inference-preview">
+                  <video id="inference-result-video" controls hidden></video>
+                </div>
+              </div>
             </div>
             <div class="class-metrics" id="inference-detections"></div>
           </section>

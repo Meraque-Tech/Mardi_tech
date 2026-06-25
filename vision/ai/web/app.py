@@ -368,6 +368,36 @@ def available_detection_weights() -> list[dict]:
     return weights
 
 
+def available_training_sessions() -> list[dict]:
+    if not DETECT_RUNS_ROOT.is_dir():
+        return []
+
+    sessions = []
+    for path in DETECT_RUNS_ROOT.rglob("*"):
+        if not path.is_dir() or not is_run_dir(path):
+            continue
+        try:
+            ensure_runs_path(path)
+        except HTTPException:
+            continue
+        file_times = [item.stat().st_mtime for item in path.rglob("*") if item.is_file()]
+        modified_at = max(file_times, default=path.stat().st_mtime)
+        project_path = path.parent
+        sessions.append({
+            "label": relative_to_repo(path),
+            "name": path.name,
+            "project": relative_to_repo(project_path),
+            "run_dir": relative_to_repo(path),
+            "modified_at": modified_at,
+            "has_results": (path / "results.csv").is_file(),
+            "has_best": (path / "weights" / "best.pt").is_file(),
+            "has_last": (path / "weights" / "last.pt").is_file(),
+        })
+
+    sessions.sort(key=lambda item: item["modified_at"], reverse=True)
+    return sessions
+
+
 def ensure_inference_script() -> Path:
     if not INFERENCE_SCRIPT.is_file():
         raise HTTPException(status_code=500, detail="Python inference script is missing.")
@@ -2221,6 +2251,11 @@ def config():
 @app.get("/api/inference/weights")
 def inference_weights():
     return {"weights": available_detection_weights()}
+
+
+@app.get("/api/train/sessions")
+def train_sessions():
+    return {"sessions": available_training_sessions()}
 
 
 @app.post("/api/inference/run")

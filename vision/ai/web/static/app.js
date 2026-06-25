@@ -41,6 +41,8 @@ const state = {
   testDownloads: new Set(),
   inferenceWeights: [],
   inferenceRunning: false,
+  inferenceInputObjectUrl: "",
+  trainingSessions: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1713,6 +1715,82 @@ async function apiJson(url, options = {}) {
   return payload;
 }
 
+function setTrainingSessionStatus(text, isError = false) {
+  const message = $("training-session-status");
+  message.textContent = text;
+  message.classList.toggle("error", isError);
+}
+
+function renderTrainingSessions(sessions) {
+  const select = $("training-session-select");
+  const currentValue = select.value;
+  const currentTargetValue = JSON.stringify({
+    project: $("project").value.trim() || "runs/detect",
+    name: $("run-name").value.trim() || "train",
+  });
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Choose a run from runs/detect";
+  select.appendChild(placeholder);
+
+  sessions.forEach((session) => {
+    const option = document.createElement("option");
+    option.value = JSON.stringify({ project: session.project, name: session.name });
+    option.textContent = session.label;
+    select.appendChild(option);
+  });
+
+  if (currentValue && Array.from(select.options).some((option) => option.value === currentValue)) {
+    select.value = currentValue;
+  } else if (Array.from(select.options).some((option) => option.value === currentTargetValue)) {
+    select.value = currentTargetValue;
+  }
+  setTrainingSessionStatus(
+    sessions.length
+      ? `${sessions.length} previous training session${sessions.length === 1 ? "" : "s"} found in runs/detect.`
+      : "No completed training sessions were found in runs/detect.",
+    false,
+  );
+}
+
+async function loadTrainingSessions() {
+  setTrainingSessionStatus("Loading runs from runs/detect...");
+  const payload = await apiJson("/api/train/sessions");
+  state.trainingSessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+  renderTrainingSessions(state.trainingSessions);
+}
+
+function trainingSessionErrorMessage(error) {
+  const message = error?.message || "Previous training sessions could not be loaded.";
+  if (message.includes("404")) {
+    return "Previous training sessions endpoint is unavailable. Restart the web app so /api/train/sessions is registered.";
+  }
+  return message;
+}
+
+function loadSelectedTrainingSession() {
+  const raw = $("training-session-select").value;
+  if (!raw) {
+    setTrainingSessionStatus("Choose a previous training session first.", true);
+    return;
+  }
+  let session;
+  try {
+    session = JSON.parse(raw);
+  } catch (error) {
+    setTrainingSessionStatus("The selected training session could not be read.", true);
+    return;
+  }
+  $("project").value = session.project || "runs/detect";
+  $("run-name").value = session.name || "train";
+  updateCurrentRunDisplay();
+  setPanelExpanded("results", true);
+  scheduleTargetRefresh();
+  setTrainingSessionStatus(`Loaded ${session.project}/${session.name}.`, false);
+  setMessage(`Loaded previous training session ${session.project}/${session.name}.`);
+}
+
 function setAppTab(tab) {
   document.querySelectorAll("[data-app-tab]").forEach((button) => {
     const active = button.dataset.appTab === tab;
@@ -1735,6 +1813,17 @@ function setInferenceMessage(text, isError = false) {
   const message = $("inference-message");
   message.textContent = text;
   message.classList.toggle("error", isError);
+}
+
+function setInferenceUploadProgress(active, percent = 0, detail = "Waiting to upload.") {
+  const shell = $("inference-upload-status");
+  const safePercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  shell.hidden = !active;
+  $("inference-upload-percent").textContent = `${safePercent}%`;
+  $("inference-upload-detail").textContent = detail;
+  $("inference-upload-track").setAttribute("aria-valuenow", String(safePercent));
+  $("inference-upload-track").setAttribute("aria-valuetext", `Upload progress ${safePercent}%`);
+  $("inference-upload-fill").style.width = `${safePercent}%`;
 }
 
 function selectedInferenceWeightSource() {
@@ -1792,7 +1881,49 @@ function updateInferenceFileSelection() {
   $("inference-media-selection").textContent = media
     ? `${media.name} (${formatBytes(media.size)})`
     : "No image or video selected.";
+  renderInferenceInputPreview(media);
+  if (!media) {
+    setInferenceUploadProgress(false);
+  }
   syncInferenceControls();
+}
+
+function renderInferenceInputPreview(media) {
+  const shell = $("inference-input-preview-shell");
+  const image = $("inference-input-image");
+  const video = $("inference-input-video");
+  if (state.inferenceInputObjectUrl) {
+    URL.revokeObjectURL(state.inferenceInputObjectUrl);
+    state.inferenceInputObjectUrl = "";
+  }
+  if (!media) {
+    shell.hidden = true;
+    image.hidden = true;
+    image.removeAttribute("src");
+    video.hidden = true;
+    video.pause();
+    video.removeAttribute("src");
+    $("inference-input-summary").textContent = "No uploaded media selected yet.";
+    return;
+  }
+
+  const objectUrl = URL.createObjectURL(media);
+  state.inferenceInputObjectUrl = objectUrl;
+  shell.hidden = false;
+  $("inference-input-summary").textContent = `${media.name} (${formatBytes(media.size)})`;
+  if ((media.type || "").startsWith("video/") || /\.(mov|mp4|avi|mkv|webm)$/i.test(media.name)) {
+    image.hidden = true;
+    image.removeAttribute("src");
+    video.hidden = false;
+    video.src = objectUrl;
+    video.load();
+  } else {
+    video.hidden = true;
+    video.pause();
+    video.removeAttribute("src");
+    image.hidden = false;
+    image.src = objectUrl;
+  }
 }
 
 function renderInferenceDetections(detections) {
@@ -1834,19 +1965,54 @@ function renderInferenceResult(result) {
 
   const image = $("inference-result-image");
   const video = $("inference-result-video");
+  const imageShell = $("inference-result-image-shell");
+  const videoShell = $("inference-result-video-shell");
   if (result.media_type === "video") {
+    imageShell.hidden = true;
     image.hidden = true;
     image.removeAttribute("src");
+    videoShell.hidden = false;
     video.hidden = false;
     video.src = resultUrl;
     video.load();
   } else {
+    videoShell.hidden = true;
     video.hidden = true;
+    video.pause();
     video.removeAttribute("src");
+    imageShell.hidden = false;
     image.hidden = false;
     image.src = resultUrl;
   }
   renderInferenceDetections(result.image_detections);
+}
+
+function uploadInferenceRequest(form) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/inference/run");
+    xhr.responseType = "json";
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) {
+        return;
+      }
+      const percent = (event.loaded / event.total) * 100;
+      setInferenceUploadProgress(true, percent, `Uploading media: ${formatBytes(event.loaded)} of ${formatBytes(event.total)}.`);
+    });
+    xhr.addEventListener("load", () => {
+      const payload = xhr.response && typeof xhr.response === "object"
+        ? xhr.response
+        : JSON.parse(xhr.responseText || "{}");
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload);
+      } else {
+        reject(new Error(payload.detail || `Inference failed: ${xhr.status}`));
+      }
+    });
+    xhr.addEventListener("error", () => reject(new Error("Inference upload failed.")));
+    xhr.addEventListener("abort", () => reject(new Error("Inference upload was aborted.")));
+    xhr.send(form);
+  });
 }
 
 async function runInference() {
@@ -1881,12 +2047,10 @@ async function runInference() {
   syncInferenceControls();
   button.textContent = "Running...";
   setInferenceMessage("Running YOLO inference on the uploaded media.");
+  setInferenceUploadProgress(true, 0, `Preparing upload for ${media.name}.`);
   try {
-    const response = await fetch("/api/inference/run", { method: "POST", body: form });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload.detail || `Inference failed: ${response.status}`);
-    }
+    const payload = await uploadInferenceRequest(form);
+    setInferenceUploadProgress(true, 100, "Upload complete. Processing inference result.");
     renderInferenceResult(payload);
     setInferenceMessage("Inference complete.");
   } catch (error) {
@@ -1894,6 +2058,9 @@ async function runInference() {
   } finally {
     state.inferenceRunning = false;
     button.textContent = "Run Inference";
+    if (!$("inference-media-file").files[0]) {
+      setInferenceUploadProgress(false);
+    }
     syncInferenceControls();
   }
 }
@@ -2814,6 +2981,15 @@ $("download-test-log").addEventListener("click", downloadTestLog);
 $("download-test-metrics-json").addEventListener("click", () => downloadTestArtifact("metrics_json", "test_metrics.json"));
 $("download-test-roc-auc-graph").addEventListener("click", () => downloadTestArtifact("roc_auc_curve", "test_roc_auc_curve.png"));
 $("download-combined-report").addEventListener("click", downloadCombinedReport);
+$("refresh-training-sessions").addEventListener("click", () => (
+  loadTrainingSessions().catch((error) => setTrainingSessionStatus(trainingSessionErrorMessage(error), true))
+));
+$("load-training-session").addEventListener("click", loadSelectedTrainingSession);
+$("training-session-select").addEventListener("change", () => {
+  if ($("training-session-select").value) {
+    loadSelectedTrainingSession();
+  }
+});
 $("refresh-inference-weights").addEventListener("click", () => loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true)));
 $("run-inference").addEventListener("click", runInference);
 $("project").addEventListener("input", scheduleTargetRefresh);
@@ -2896,6 +3072,7 @@ setActivePreset(null);
 updateCurrentRunDisplay();
 renderEpochProgress();
 syncActionStates();
+loadTrainingSessions().catch((error) => setTrainingSessionStatus(trainingSessionErrorMessage(error), true));
 loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true));
 state.pollTimer = window.setInterval(pollStatus, 2500);
 pollStatus();
