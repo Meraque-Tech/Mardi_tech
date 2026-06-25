@@ -747,6 +747,7 @@
             <div class="button-row">
               <button id="refresh-inference-weights" class="secondary compact" type="button">Refresh weights</button>
               <button id="run-inference" type="button">Run Inference</button>
+              <button id="stop-inference" class="danger" type="button" disabled>Stop</button>
             </div>
           </div>
 
@@ -755,14 +756,6 @@
               <div class="field-header">
                 <h3>Weights</h3>
               </div>
-              <label>
-                Inference backend
-                <select id="inference-backend">
-                  <option value="pytorch">PyTorch / Ultralytics</option>
-                  <option value="tensorrt">TensorRT engine</option>
-                </select>
-              </label>
-              <p class="field-note" id="inference-backend-note">TensorRT exports an engine on first use, then reuses it for faster NVIDIA GPU inference.</p>
               <div class="button-row toggle-row" role="radiogroup" aria-label="Inference weights source">
                 <label class="choice-chip">
                   <input type="radio" name="inference-weight-source" value="selected" checked>

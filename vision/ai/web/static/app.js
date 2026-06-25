@@ -41,6 +41,8 @@ const state = {
   testDownloads: new Set(),
   inferenceWeights: [],
   inferenceRunning: false,
+  inferenceStopping: false,
+  inferenceStoppable: false,
   inferenceInputObjectUrl: "",
   inferencePollTimer: null,
   inferencePollRevision: 0,
@@ -1843,6 +1845,12 @@ function syncInferenceControls() {
   $("run-inference").disabled = state.inferenceRunning
     || !hasMedia
     || (source === "selected" ? !hasSelectedWeight : !hasUploadedWeight);
+  $("stop-inference").disabled = !state.inferenceRunning
+    || state.inferenceStopping
+    || !state.inferenceJobId
+    || !state.inferenceStoppable;
+  $("stop-inference").textContent = state.inferenceStopping ? "Stopping..." : "Stop";
+  $("stop-inference").setAttribute("aria-busy", String(state.inferenceStopping));
 }
 
 function renderInferenceWeights(weights) {
@@ -1974,10 +1982,10 @@ function inferenceStageLabel(stage) {
     queued: "Queued",
     starting: "Starting",
     loading_model: "Loading model",
-    exporting_engine: "Preparing engine",
     processing: "Processing frames",
     encoding: "Encoding video",
     complete: "Complete",
+    stopped: "Stopped",
     failed: "Failed",
   };
   return labels[stage] || String(stage || "Processing");
@@ -2048,8 +2056,12 @@ function pollInferenceJob(jobId, revision) {
         return;
       }
       updateInferenceJobProgress(job);
+      state.inferenceStoppable = Boolean(job.stoppable);
+      syncInferenceControls();
       if (job.status === "complete") {
         state.inferenceRunning = false;
+        state.inferenceStopping = false;
+        state.inferenceStoppable = false;
         $("run-inference").textContent = "Run Inference";
         setInferenceMessage("Inference complete.");
         renderInferenceResult(job.result || {});
@@ -2058,14 +2070,33 @@ function pollInferenceJob(jobId, revision) {
       }
       if (job.status === "failed") {
         state.inferenceRunning = false;
+        state.inferenceStopping = false;
+        state.inferenceStoppable = false;
         $("run-inference").textContent = "Run Inference";
         setInferenceMessage(job.error || job.detail || "Inference failed.", true);
+        syncInferenceControls();
+        return;
+      }
+      if (job.status === "stopped") {
+        state.inferenceRunning = false;
+        state.inferenceStopping = false;
+        state.inferenceStoppable = false;
+        $("run-inference").textContent = "Run Inference";
+        setInferenceMessage(job.detail || "Inference stopped.");
+        updateInferenceJobProgress(job);
         syncInferenceControls();
         return;
       }
       state.inferencePollTimer = window.setTimeout(poll, 750);
     } catch (error) {
       if (revision !== state.inferencePollRevision) {
+        return;
+      }
+      if ((error.message || "").includes("404")) {
+        state.inferenceRunning = false;
+        $("run-inference").textContent = "Run Inference";
+        setInferenceMessage("Inference job was not found. Restart the web app and run inference again.", true);
+        syncInferenceControls();
         return;
       }
       state.inferencePollTimer = window.setTimeout(poll, 1200);
@@ -2086,10 +2117,7 @@ function renderInferenceResult(result) {
   const videoDetails = result.media_type === "video"
     ? ` Video stride ${result.video_stride || 1}; browser MP4 ${result.browser_video ? "ready" : "fallback"}.`
     : "";
-  const backendDetails = result.backend === "tensorrt"
-    ? ` TensorRT engine ${result.engine_cached ? "reused" : "exported"}${result.engine_export_ms ? ` in ${metricText(result.engine_export_ms)} ms` : ""}.`
-    : "";
-  const summary = `${result.engine || "YOLO inference"} (${result.backend || "pytorch"}) processed ${result.frames || 0} frame${result.frames === 1 ? "" : "s"} with ${result.detections || 0} detection${result.detections === 1 ? "" : "s"} in ${metricText(result.elapsed_ms)} ms.${backendDetails}${videoDetails}`;
+  const summary = `${result.engine || "YOLO inference"} processed ${result.frames || 0} frame${result.frames === 1 ? "" : "s"} with ${result.detections || 0} detection${result.detections === 1 ? "" : "s"} in ${metricText(result.elapsed_ms)} ms.${videoDetails}`;
   $("inference-result-summary").textContent = summary;
 
   const image = $("inference-result-image");
@@ -2169,7 +2197,6 @@ async function runInference() {
   const form = new FormData();
   form.append("weight_source", source);
   form.append("weight_path", $("inference-weight-select").value);
-  form.append("backend", $("inference-backend").value || "pytorch");
   form.append("imgsz", $("inference-imgsz").value || "640");
   form.append("conf", $("inference-conf").value || "0.25");
   form.append("iou", $("inference-iou").value || "0.45");
@@ -2182,6 +2209,7 @@ async function runInference() {
   stopInferencePolling();
   resetInferenceResultForRun();
   state.inferenceRunning = true;
+  state.inferenceStoppable = false;
   syncInferenceControls();
   button.textContent = "Running...";
   setInferenceMessage("Uploading media and starting inference job.");
@@ -2198,8 +2226,37 @@ async function runInference() {
     pollInferenceJob(state.inferenceJobId, revision);
   } catch (error) {
     state.inferenceRunning = false;
+    state.inferenceStoppable = false;
     button.textContent = "Run Inference";
     setInferenceMessage(error.message, true);
+    syncInferenceControls();
+  }
+}
+
+async function stopInference() {
+  if (!state.inferenceRunning || state.inferenceStopping || !state.inferenceJobId) {
+    return;
+  }
+  state.inferenceStopping = true;
+  syncInferenceControls();
+  setInferenceMessage("Stopping inference...");
+  try {
+    const job = await apiJson(`/api/inference/stop/${encodeURIComponent(state.inferenceJobId)}`, {
+      method: "POST",
+      body: "{}",
+    });
+    updateInferenceJobProgress(job);
+    if (job.status === "stopped") {
+      state.inferenceRunning = false;
+      state.inferenceStoppable = false;
+      stopInferencePolling();
+      setInferenceMessage(job.detail || "Inference stopped.");
+    }
+  } catch (error) {
+    setInferenceMessage(error.message, true);
+  } finally {
+    state.inferenceStopping = false;
+    $("run-inference").textContent = "Run Inference";
     syncInferenceControls();
   }
 }
@@ -3137,6 +3194,7 @@ $("training-session-select").addEventListener("change", () => {
 });
 $("refresh-inference-weights").addEventListener("click", () => loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true)));
 $("run-inference").addEventListener("click", runInference);
+$("stop-inference").addEventListener("click", stopInference);
 $("project").addEventListener("input", scheduleTargetRefresh);
 $("run-name").addEventListener("input", scheduleTargetRefresh);
 $("upload-file").addEventListener("change", updateFileSelection);

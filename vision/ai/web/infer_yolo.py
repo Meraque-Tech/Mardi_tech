@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import shutil
@@ -32,9 +31,9 @@ def parse_args():
     parser.add_argument("--iou", type=float, default=0.45)
     parser.add_argument("--device", default="")
     parser.add_argument("--vid-stride", type=int, default=1)
-    parser.add_argument("--backend", choices=["pytorch", "tensorrt"], default="pytorch")
-    parser.add_argument("--engine-cache-dir", default="")
-    parser.add_argument("--half", action="store_true")
+    parser.add_argument("--backend", default="pytorch", help=argparse.SUPPRESS)
+    parser.add_argument("--engine-cache-dir", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--half", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -50,8 +49,6 @@ def write_json_atomic(path: Path | None, payload: dict):
 def progress_percent(stage: str, frames: int, total_frames: int) -> float:
     if stage == "loading_model":
         return 2.0
-    if stage == "exporting_engine":
-        return 8.0
     if stage == "encoding":
         return 96.0
     if stage == "complete":
@@ -161,81 +158,6 @@ def browser_transcode_video(input_path: Path, output_path: Path) -> bool:
     return completed.returncode == 0 and output_path.is_file() and output_path.stat().st_size > 0
 
 
-def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        while True:
-            chunk = file.read(1024 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def engine_cache_key(weights_path: Path, imgsz: int, device: str, half: bool) -> str:
-    payload = {
-        "sha256": file_sha256(weights_path),
-        "imgsz": imgsz,
-        "device": device or "0",
-        "half": bool(half),
-    }
-    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:20]
-
-
-def cached_tensorrt_engine(weights_path: Path, cache_root: Path, imgsz: int, device: str, half: bool):
-    from ultralytics import YOLO
-
-    export_device = device or "0"
-    cache_key = engine_cache_key(weights_path, imgsz, export_device, half)
-    export_dir = cache_root / cache_key
-    engine_path = export_dir / "model.engine"
-    metadata_path = export_dir / "metadata.json"
-    if engine_path.is_file():
-        return engine_path, True, 0.0
-
-    export_dir.mkdir(parents=True, exist_ok=True)
-    source_path = export_dir / "source.pt"
-    if not source_path.is_file():
-        shutil.copy2(weights_path, source_path)
-
-    started = time.perf_counter()
-    try:
-        exported = YOLO(str(source_path)).export(
-            format="engine",
-            imgsz=imgsz,
-            half=half,
-            device=export_device,
-            dynamic=False,
-            verbose=False,
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            "TensorRT export failed. Confirm the container has NVIDIA GPU access, "
-            "TensorRT support, and a CUDA-compatible Ultralytics environment."
-        ) from exc
-
-    exported_path = Path(str(exported)).expanduser().resolve()
-    if not exported_path.is_file():
-        fallback = source_path.with_suffix(".engine")
-        exported_path = fallback if fallback.is_file() else exported_path
-    if not exported_path.is_file():
-        raise RuntimeError("TensorRT export completed without producing a .engine file.")
-    if exported_path != engine_path:
-        shutil.move(str(exported_path), str(engine_path))
-
-    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
-    metadata_path.write_text(json.dumps({
-        "source_weights": str(weights_path),
-        "imgsz": imgsz,
-        "device": export_device,
-        "half": half,
-        "export_ms": elapsed_ms,
-        "created_at": time.time(),
-    }, indent=2), encoding="utf-8")
-    return engine_path, False, elapsed_ms
-
-
 def main():
     args = parse_args()
     input_path = Path(args.input).expanduser().resolve()
@@ -255,34 +177,13 @@ def main():
     from ultralytics import YOLO
 
     started = time.perf_counter()
-    weights_path = Path(args.weights).expanduser().resolve()
-    model_path = weights_path
-    engine_cached = False
-    export_ms = 0.0
     write_progress(
         progress_path,
         "loading_model",
         total_frames=total_frames,
-        detail=f"Loading {args.backend} model.",
+        detail="Loading PyTorch model.",
     )
-    if args.backend == "tensorrt":
-        cache_root = Path(args.engine_cache_dir or output_dir / "engines").expanduser().resolve()
-        cache_root.mkdir(parents=True, exist_ok=True)
-        write_progress(
-            progress_path,
-            "exporting_engine",
-            total_frames=total_frames,
-            detail="Preparing TensorRT engine. First run can take several minutes.",
-        )
-        model_path, engine_cached, export_ms = cached_tensorrt_engine(
-            weights_path,
-            cache_root,
-            args.imgsz,
-            args.device or "0",
-            args.half,
-        )
-
-    model = YOLO(str(model_path))
+    model = YOLO(str(Path(args.weights).expanduser().resolve()))
     results = model.predict(
         source=str(input_path),
         imgsz=args.imgsz,
@@ -367,9 +268,6 @@ def main():
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     payload = {
         "engine": "python-ultralytics",
-        "backend": args.backend,
-        "engine_cached": engine_cached,
-        "engine_export_ms": export_ms,
         "media_type": media_kind,
         "frames": frames,
         "detections": detections,

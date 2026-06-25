@@ -52,7 +52,6 @@ DATA_ROOT = Path(os.getenv("WEB_DATA_ROOT") or WEB_DIR / "datasets").expanduser(
 INFERENCE_ROOT = DATA_ROOT / "inference"
 INFERENCE_UPLOAD_ROOT = INFERENCE_ROOT / "uploads"
 INFERENCE_JOB_ROOT = INFERENCE_ROOT / "jobs"
-INFERENCE_ENGINE_ROOT = INFERENCE_ROOT / "engines"
 TRAINING_PYTHON = os.getenv("TRAINING_PYTHON", "python3")
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -178,7 +177,6 @@ def ensure_dirs():
     TEST_RUNS_ROOT.mkdir(parents=True, exist_ok=True)
     INFERENCE_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     INFERENCE_JOB_ROOT.mkdir(parents=True, exist_ok=True)
-    INFERENCE_ENGINE_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def form_bool(value) -> bool:
@@ -433,6 +431,7 @@ def inference_job_payload(job: dict) -> dict:
         "preview_available",
         "result",
         "error",
+        "stoppable",
     }
     return {key: value for key, value in job.items() if key in public_keys}
 
@@ -450,6 +449,83 @@ def read_inference_progress(progress_path: Path) -> dict:
     if not progress_path.is_file():
         return {}
     return read_json_object(progress_path)
+
+
+def inference_result_payload_from_disk(job_id: str, job_dir: Path) -> dict | None:
+    result_path = job_dir / "result.json"
+    if not result_path.is_file():
+        return None
+    payload = read_json_object(result_path)
+    if not payload:
+        return None
+    return {
+        **payload,
+        "job_id": job_id,
+        "result_url": f"/api/inference/result/{job_id}",
+        "download_url": f"/api/inference/result/{job_id}?download=1",
+    }
+
+
+def inference_job_from_disk(job_id: str) -> dict | None:
+    job_dir = (INFERENCE_JOB_ROOT / job_id).resolve()
+    try:
+        ensure_inference_path(job_dir)
+    except HTTPException:
+        return None
+    if not job_dir.is_dir():
+        return None
+
+    preview_path = job_dir / "preview.jpg"
+    output_candidates = [job_dir / "annotated.jpg", job_dir / "annotated.mp4"]
+    output_path = next((candidate for candidate in output_candidates if candidate.is_file()), None)
+    result = inference_result_payload_from_disk(job_id, job_dir)
+    if result and output_path:
+        return {
+            "job_id": job_id,
+            "status": "complete",
+            "stage": "complete",
+            "percent": 100,
+            "detail": "Inference complete.",
+            "frames": result.get("frames", 0),
+            "total_frames": result.get("frames", 0),
+            "detections": result.get("detections", 0),
+            "elapsed_ms": result.get("elapsed_ms", 0),
+            "media_type": result.get("media_type", "video" if output_path.suffix == ".mp4" else "image"),
+            "preview_available": preview_path.is_file(),
+            "result": result,
+        }
+
+    progress = read_inference_progress(job_dir / "progress.json")
+    if progress:
+        return {
+            "job_id": job_id,
+            "status": "running",
+            "stage": progress.get("stage", "processing"),
+            "percent": progress.get("percent", 0),
+            "detail": progress.get("detail", "Processing inference."),
+            "frames": progress.get("frames", 0),
+            "total_frames": progress.get("total_frames", 0),
+            "detections": progress.get("detections", 0),
+            "elapsed_ms": 0,
+            "media_type": "video" if (job_dir / "annotated.mp4").exists() else "image",
+            "preview_available": preview_path.is_file(),
+        }
+
+    log_path = job_dir / "inference.log"
+    if log_path.is_file():
+        return {
+            "job_id": job_id,
+            "status": "running",
+            "stage": "starting",
+            "percent": 0,
+            "detail": "Inference process has started.",
+            "frames": 0,
+            "total_frames": 0,
+            "detections": 0,
+            "elapsed_ms": 0,
+            "preview_available": preview_path.is_file(),
+        }
+    return None
 
 
 def run_inference_job(
@@ -477,6 +553,7 @@ def run_inference_job(
                 stderr=subprocess.STDOUT,
                 text=True,
             )
+            update_inference_job(job_id, process=process, stoppable=True)
         except OSError as exc:
             update_inference_job(
                 job_id,
@@ -503,18 +580,35 @@ def run_inference_job(
                     detections=progress.get("detections", 0),
                     elapsed_ms=round((time.time() - started) * 1000, 2),
                     preview_available=preview_path.is_file(),
+                    stoppable=True,
                 )
             else:
                 update_inference_job(
                     job_id,
                     elapsed_ms=round((time.time() - started) * 1000, 2),
                     preview_available=preview_path.is_file(),
+                    stoppable=True,
                 )
             time.sleep(0.35)
 
         returncode = process.wait()
 
     stdout = read_log_file(log_path)
+    with inference_jobs_lock:
+        was_stop_requested = bool((inference_jobs.get(job_id) or {}).get("stop_requested"))
+    if was_stop_requested:
+        update_inference_job(
+            job_id,
+            status="stopped",
+            stage="stopped",
+            percent=100,
+            detail="Inference stopped by user.",
+            elapsed_ms=round((time.time() - started) * 1000, 2),
+            preview_available=preview_path.is_file(),
+            stoppable=False,
+            process=None,
+        )
+        return
     if returncode != 0:
         detail = stdout.strip() or f"Inference failed with exit code {returncode}."
         update_inference_job(
@@ -526,6 +620,8 @@ def run_inference_job(
             error=detail,
             elapsed_ms=round((time.time() - started) * 1000, 2),
             preview_available=preview_path.is_file(),
+            stoppable=False,
+            process=None,
         )
         return
 
@@ -541,6 +637,8 @@ def run_inference_job(
             error=detail,
             elapsed_ms=round((time.time() - started) * 1000, 2),
             preview_available=preview_path.is_file(),
+            stoppable=False,
+            process=None,
         )
         return
 
@@ -567,7 +665,48 @@ def run_inference_job(
         elapsed_ms=payload.get("elapsed_ms", round((time.time() - started) * 1000, 2)),
         preview_available=preview_path.is_file(),
         result=result_payload,
+        stoppable=False,
+        process=None,
     )
+
+
+def stop_inference_process(job_id: str) -> dict:
+    with inference_jobs_lock:
+        job = inference_jobs.get(job_id)
+        if job is None:
+            disk_job = inference_job_from_disk(job_id)
+            if disk_job is None:
+                raise HTTPException(status_code=404, detail="Inference job not found.")
+            return disk_job
+        process = job.get("process")
+        status = job.get("status")
+        if status in {"complete", "failed", "stopped"}:
+            return inference_job_payload(dict(job))
+        job["stop_requested"] = True
+        job["status"] = "stopping"
+        job["stage"] = "stopping"
+        job["detail"] = "Stopping inference process."
+        job["stoppable"] = False
+        job["updated_at"] = time.time()
+
+    if process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+    update_inference_job(
+        job_id,
+        status="stopped",
+        stage="stopped",
+        percent=100,
+        detail="Inference stopped by user.",
+        stoppable=False,
+        process=None,
+    )
+    with inference_jobs_lock:
+        return inference_job_payload(dict(inference_jobs[job_id]))
 
 
 def is_run_dir(path: Path) -> bool:
@@ -2419,7 +2558,6 @@ def train_sessions():
 def run_inference(
     weight_source: str = Form("selected"),
     weight_path: str = Form(""),
-    backend: str = Form("pytorch"),
     imgsz: int = Form(640),
     conf: float = Form(0.25),
     iou: float = Form(0.45),
@@ -2430,8 +2568,6 @@ def run_inference(
     ensure_dirs()
     if current_status()["running"]:
         raise HTTPException(status_code=409, detail="Training is running. Stop training before inference.")
-    if backend not in {"pytorch", "tensorrt"}:
-        raise HTTPException(status_code=400, detail="Unknown inference backend.")
     if imgsz < 32:
         raise HTTPException(status_code=400, detail="Image size must be at least 32.")
     if not 0 <= conf <= 1 or not 0 <= iou <= 1:
@@ -2486,8 +2622,6 @@ def run_inference(
         str(progress_path),
         "--preview",
         str(preview_path),
-        "--backend",
-        backend,
         "--imgsz",
         str(imgsz),
         "--conf",
@@ -2498,10 +2632,6 @@ def run_inference(
         str(vid_stride),
     ]
     inference_device = os.getenv("INFERENCE_DEVICE") or os.getenv("TRAINING_DEVICE") or ""
-    if backend == "tensorrt":
-        command.extend(["--engine-cache-dir", str(INFERENCE_ENGINE_ROOT), "--half"])
-        if not inference_device:
-            inference_device = "0"
     if inference_device:
         command.extend(["--device", inference_device])
 
@@ -2518,6 +2648,7 @@ def run_inference(
         "media_type": media_kind,
         "weights": weights_label,
         "preview_available": False,
+        "stoppable": False,
         "created_at": time.time(),
         "updated_at": time.time(),
     }
@@ -2539,9 +2670,21 @@ def inference_status(job_id: str):
         raise HTTPException(status_code=404, detail="Inference job not found.")
     with inference_jobs_lock:
         job = inference_jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Inference job not found.")
-        return inference_job_payload(dict(job))
+        if job is not None:
+            return inference_job_payload(dict(job))
+    job = inference_job_from_disk(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Inference job not found.")
+    with inference_jobs_lock:
+        inference_jobs[job_id] = dict(job)
+    return inference_job_payload(job)
+
+
+@app.post("/api/inference/stop/{job_id}")
+def stop_inference(job_id: str):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Inference job not found.")
+    return stop_inference_process(job_id)
 
 
 @app.get("/api/inference/preview/{job_id}")
