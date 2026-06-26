@@ -24,11 +24,12 @@ from typing import Callable, Optional
 import yaml
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .dataset_provenance import roboflow_pre_augmentation_summary
+from .infer_yolo import InferenceStopped, run_yolo_inference
 from .stratified_split import SPLIT_NAMES, stratified_split
 
 
@@ -437,12 +438,74 @@ def inference_job_payload(job: dict) -> dict:
 
 
 def update_inference_job(job_id: str, **updates):
+    condition = None
     with inference_jobs_lock:
         job = inference_jobs.get(job_id)
         if job is None:
             return
         job.update(updates)
         job["updated_at"] = time.time()
+        condition = job.get("preview_condition")
+    if isinstance(condition, threading.Condition):
+        with condition:
+            condition.notify_all()
+
+
+def inference_has_live_preview(job_id: str, preview_path: Path) -> bool:
+    with inference_jobs_lock:
+        job = inference_jobs.get(job_id) or {}
+        if job.get("preview_frame"):
+            return True
+    return preview_path.is_file()
+
+
+def update_inference_preview_frame(job_id: str, frame: bytes):
+    condition = None
+    with inference_jobs_lock:
+        job = inference_jobs.get(job_id)
+        if job is None:
+            return
+        job["preview_frame"] = frame
+        job["preview_available"] = True
+        job["preview_updated_at"] = time.time()
+        job["updated_at"] = time.time()
+        condition = job.get("preview_condition")
+    if isinstance(condition, threading.Condition):
+        with condition:
+            condition.notify_all()
+
+
+def inference_mjpeg_stream(job_id: str):
+    last_updated_at = 0.0
+    while True:
+        with inference_jobs_lock:
+            job = inference_jobs.get(job_id)
+            if job is None:
+                break
+            frame = job.get("preview_frame")
+            updated_at = float(job.get("preview_updated_at") or 0)
+            status = job.get("status", "")
+            condition = job.get("preview_condition")
+
+        if frame and updated_at != last_updated_at:
+            last_updated_at = updated_at
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Cache-Control: no-store\r\n"
+                + f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii")
+                + frame
+                + b"\r\n"
+            )
+
+        if status in {"complete", "failed", "stopped"}:
+            break
+
+        if isinstance(condition, threading.Condition):
+            with condition:
+                condition.wait(timeout=1.0)
+        else:
+            time.sleep(0.2)
 
 
 def read_inference_progress(progress_path: Path) -> dict:
@@ -530,13 +593,34 @@ def inference_job_from_disk(job_id: str) -> dict | None:
 
 def run_inference_job(
     job_id: str,
-    command: list[str],
+    inference_request: dict,
     result_path: Path,
     output_path: Path,
     preview_path: Path,
+    stop_event: threading.Event,
 ):
     log_path = result_path.with_name("inference.log")
     started = time.time()
+    log_path.write_text("Starting in-process Python Ultralytics inference.\n", encoding="utf-8")
+
+    def handle_progress(progress: dict):
+        update_inference_job(
+            job_id,
+            status="running",
+            stage=progress.get("stage", "processing"),
+            percent=progress.get("percent", 0),
+            detail=progress.get("detail", "Processing inference."),
+            frames=progress.get("frames", 0),
+            total_frames=progress.get("total_frames", 0),
+            detections=progress.get("detections", 0),
+            elapsed_ms=round((time.time() - started) * 1000, 2),
+            preview_available=inference_has_live_preview(job_id, preview_path),
+            stoppable=True,
+        )
+
+    def handle_preview(frame: bytes):
+        update_inference_preview_frame(job_id, frame)
+
     update_inference_job(
         job_id,
         status="running",
@@ -544,59 +628,17 @@ def run_inference_job(
         percent=0,
         detail="Starting inference process.",
         elapsed_ms=0,
+        stoppable=True,
     )
-    with log_path.open("w", encoding="utf-8") as log_file:
-        try:
-            process = subprocess.Popen(
-                command,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            update_inference_job(job_id, process=process, stoppable=True)
-        except OSError as exc:
-            update_inference_job(
-                job_id,
-                status="failed",
-                stage="failed",
-                percent=0,
-                detail=str(exc),
-                error=str(exc),
-            )
-            return
-
-        progress_path = result_path.with_name("progress.json")
-        while process.poll() is None:
-            progress = read_inference_progress(progress_path)
-            if progress:
-                update_inference_job(
-                    job_id,
-                    status="running",
-                    stage=progress.get("stage", "processing"),
-                    percent=progress.get("percent", 0),
-                    detail=progress.get("detail", "Processing inference."),
-                    frames=progress.get("frames", 0),
-                    total_frames=progress.get("total_frames", 0),
-                    detections=progress.get("detections", 0),
-                    elapsed_ms=round((time.time() - started) * 1000, 2),
-                    preview_available=preview_path.is_file(),
-                    stoppable=True,
-                )
-            else:
-                update_inference_job(
-                    job_id,
-                    elapsed_ms=round((time.time() - started) * 1000, 2),
-                    preview_available=preview_path.is_file(),
-                    stoppable=True,
-                )
-            time.sleep(0.35)
-
-        returncode = process.wait()
-
-    stdout = read_log_file(log_path)
-    with inference_jobs_lock:
-        was_stop_requested = bool((inference_jobs.get(job_id) or {}).get("stop_requested"))
-    if was_stop_requested:
+    try:
+        payload = run_yolo_inference(
+            **inference_request,
+            progress_callback=handle_progress,
+            preview_callback=handle_preview,
+            stop_event=stop_event,
+            use_model_cache=True,
+        )
+    except InferenceStopped:
         update_inference_job(
             job_id,
             status="stopped",
@@ -604,13 +646,15 @@ def run_inference_job(
             percent=100,
             detail="Inference stopped by user.",
             elapsed_ms=round((time.time() - started) * 1000, 2),
-            preview_available=preview_path.is_file(),
+            preview_available=inference_has_live_preview(job_id, preview_path),
             stoppable=False,
-            process=None,
+            stop_event=None,
         )
         return
-    if returncode != 0:
-        detail = stdout.strip() or f"Inference failed with exit code {returncode}."
+    except Exception as exc:
+        detail = f"Inference failed: {exc}"
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"{detail}\n")
         update_inference_job(
             job_id,
             status="failed",
@@ -619,13 +663,12 @@ def run_inference_job(
             detail=detail,
             error=detail,
             elapsed_ms=round((time.time() - started) * 1000, 2),
-            preview_available=preview_path.is_file(),
+            preview_available=inference_has_live_preview(job_id, preview_path),
             stoppable=False,
-            process=None,
+            stop_event=None,
         )
         return
 
-    payload = read_json_object(result_path)
     if not output_path.is_file():
         detail = "Inference completed without producing an output file."
         update_inference_job(
@@ -636,9 +679,9 @@ def run_inference_job(
             detail=detail,
             error=detail,
             elapsed_ms=round((time.time() - started) * 1000, 2),
-            preview_available=preview_path.is_file(),
+            preview_available=inference_has_live_preview(job_id, preview_path),
             stoppable=False,
-            process=None,
+            stop_event=None,
         )
         return
 
@@ -649,7 +692,7 @@ def run_inference_job(
         "job_id": job_id,
         "media_type": existing_job.get("media_type", payload.get("media_type")),
         "weights": existing_job.get("weights", ""),
-        "stdout": stdout.strip(),
+        "stdout": read_log_file(log_path).strip(),
         "result_url": f"/api/inference/result/{job_id}",
         "download_url": f"/api/inference/result/{job_id}?download=1",
     }
@@ -663,10 +706,10 @@ def run_inference_job(
         total_frames=payload.get("frames", 0),
         detections=payload.get("detections", 0),
         elapsed_ms=payload.get("elapsed_ms", round((time.time() - started) * 1000, 2)),
-        preview_available=preview_path.is_file(),
+        preview_available=inference_has_live_preview(job_id, preview_path),
         result=result_payload,
         stoppable=False,
-        process=None,
+        stop_event=None,
     )
 
 
@@ -679,6 +722,7 @@ def stop_inference_process(job_id: str) -> dict:
                 raise HTTPException(status_code=404, detail="Inference job not found.")
             return disk_job
         process = job.get("process")
+        stop_event = job.get("stop_event")
         status = job.get("status")
         if status in {"complete", "failed", "stopped"}:
             return inference_job_payload(dict(job))
@@ -689,6 +733,9 @@ def stop_inference_process(job_id: str) -> dict:
         job["stoppable"] = False
         job["updated_at"] = time.time()
 
+    if isinstance(stop_event, threading.Event):
+        stop_event.set()
+
     if process is not None and process.poll() is None:
         process.terminate()
         try:
@@ -696,15 +743,6 @@ def stop_inference_process(job_id: str) -> dict:
         except subprocess.TimeoutExpired:
             process.kill()
 
-    update_inference_job(
-        job_id,
-        status="stopped",
-        stage="stopped",
-        percent=100,
-        detail="Inference stopped by user.",
-        stoppable=False,
-        process=None,
-    )
     with inference_jobs_lock:
         return inference_job_payload(dict(inference_jobs[job_id]))
 
@@ -2606,34 +2644,22 @@ def run_inference(
     result_path = job_dir / "result.json"
     progress_path = job_dir / "progress.json"
     preview_path = job_dir / "preview.jpg"
-    script_path = ensure_inference_script()
-    command = [
-        TRAINING_PYTHON,
-        str(script_path),
-        "--weights",
-        str(weights_path),
-        "--input",
-        str(input_path),
-        "--output",
-        str(output_path),
-        "--json",
-        str(result_path),
-        "--progress-json",
-        str(progress_path),
-        "--preview",
-        str(preview_path),
-        "--imgsz",
-        str(imgsz),
-        "--conf",
-        str(conf),
-        "--iou",
-        str(iou),
-        "--vid-stride",
-        str(vid_stride),
-    ]
     inference_device = os.getenv("INFERENCE_DEVICE") or os.getenv("TRAINING_DEVICE") or ""
-    if inference_device:
-        command.extend(["--device", inference_device])
+    inference_request = {
+        "weights_path": weights_path,
+        "input_path": input_path,
+        "output_path": output_path,
+        "json_path": result_path,
+        "progress_path": progress_path,
+        "preview_path": preview_path,
+        "imgsz": imgsz,
+        "conf": conf,
+        "iou": iou,
+        "device": inference_device,
+        "vid_stride": vid_stride,
+    }
+    stop_event = threading.Event()
+    preview_condition = threading.Condition()
 
     job_payload = {
         "job_id": job_id,
@@ -2649,6 +2675,10 @@ def run_inference(
         "weights": weights_label,
         "preview_available": False,
         "stoppable": False,
+        "stop_event": stop_event,
+        "preview_condition": preview_condition,
+        "preview_frame": None,
+        "preview_updated_at": 0,
         "created_at": time.time(),
         "updated_at": time.time(),
     }
@@ -2657,7 +2687,7 @@ def run_inference(
 
     thread = threading.Thread(
         target=run_inference_job,
-        args=(job_id, command, result_path, output_path, preview_path),
+        args=(job_id, inference_request, result_path, output_path, preview_path, stop_event),
         daemon=True,
     )
     thread.start()
@@ -2697,6 +2727,20 @@ def inference_preview(job_id: str):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Inference preview not available yet.")
     return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/api/inference/stream/{job_id}")
+def inference_stream(job_id: str):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Inference stream not found.")
+    with inference_jobs_lock:
+        if job_id not in inference_jobs:
+            raise HTTPException(status_code=404, detail="Inference stream not available.")
+    return StreamingResponse(
+        inference_mjpeg_stream(job_id),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/inference/result/{job_id}")

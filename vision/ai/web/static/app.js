@@ -47,6 +47,7 @@ const state = {
   inferencePollTimer: null,
   inferencePollRevision: 0,
   inferenceJobId: "",
+  inferencePreviewStreamJobId: "",
   trainingSessions: [],
 };
 
@@ -2005,6 +2006,7 @@ function resetInferenceResultForRun() {
   $("inference-detections").innerHTML = "";
   $("inference-live-preview-shell").hidden = true;
   $("inference-live-preview-image").removeAttribute("src");
+  state.inferencePreviewStreamJobId = "";
   $("inference-live-preview-summary").textContent = "Waiting for annotated frames.";
 }
 
@@ -2017,13 +2019,21 @@ function stopInferencePolling() {
 function renderInferenceLivePreview(job) {
   if (!$("inference-live-preview-enabled").checked) {
     $("inference-live-preview-shell").hidden = true;
+    $("inference-live-preview-image").removeAttribute("src");
+    state.inferencePreviewStreamJobId = "";
+    return;
+  }
+  if (["complete", "failed", "stopped"].includes(job.status)) {
     return;
   }
   if (!job.preview_available || !job.job_id) {
     return;
   }
   $("inference-live-preview-shell").hidden = false;
-  $("inference-live-preview-image").src = `/api/inference/preview/${encodeURIComponent(job.job_id)}?t=${Date.now()}`;
+  if (state.inferencePreviewStreamJobId !== job.job_id) {
+    $("inference-live-preview-image").src = `/api/inference/stream/${encodeURIComponent(job.job_id)}?t=${Date.now()}`;
+    state.inferencePreviewStreamJobId = job.job_id;
+  }
   const total = Number(job.total_frames) || 0;
   const frames = Number(job.frames) || 0;
   $("inference-live-preview-summary").textContent = total
