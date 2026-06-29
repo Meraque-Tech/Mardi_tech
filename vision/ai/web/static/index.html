@@ -85,6 +85,7 @@
             </div>
             <div class="button-row">
               <button id="download-dataset" class="secondary" type="button" disabled>Download ZIP</button>
+              <button id="download-annotated-dataset" class="secondary" type="button" disabled>Download Annotated ZIP</button>
               <button id="prepare-dataset" type="button">Prepare Dataset</button>
             </div>
           </div>
@@ -763,7 +764,7 @@
                 </label>
                 <label class="choice-chip">
                   <input type="radio" name="inference-weight-source" value="upload">
-                  <span>Upload .pt</span>
+                  <span>Upload .pt/.onnx</span>
                 </label>
               </div>
               <div id="inference-selected-weight-wrap">
@@ -776,9 +777,13 @@
               <div id="inference-upload-weight-wrap" hidden>
                 <label>
                   Weights file
-                  <input id="inference-weight-file" type="file" accept=".pt">
+                  <input id="inference-weight-file" type="file" accept=".pt,.onnx">
                 </label>
                 <p id="inference-weight-selection" class="file-selection">No weights file selected.</p>
+                <label class="checkbox-row" id="inference-convert-onnx-row" hidden>
+                  <input id="inference-convert-onnx" type="checkbox">
+                  Convert uploaded .pt to ONNX before inference
+                </label>
               </div>
             </div>
 

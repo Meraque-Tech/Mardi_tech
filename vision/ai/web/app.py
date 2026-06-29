@@ -57,6 +57,7 @@ TRAINING_PYTHON = os.getenv("TRAINING_PYTHON", "python3")
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+INFERENCE_WEIGHT_EXTENSIONS = {".pt", ".onnx"}
 SPLIT_ALIASES = {"train": "train", "val": "val", "valid": "val", "test": "test"}
 MODEL_MAP = {
     "nano": "yolov8n.pt",
@@ -343,7 +344,7 @@ def resolve_inference_weight_path(weight_path: str) -> Path:
     else:
         candidate = (REPO_ROOT / value).resolve()
     ensure_detect_runs_path(candidate)
-    if candidate.suffix.lower() != ".pt" or not candidate.is_file():
+    if candidate.suffix.lower() not in INFERENCE_WEIGHT_EXTENSIONS or not candidate.is_file():
         raise HTTPException(status_code=404, detail="Selected inference weights were not found.")
     return candidate
 
@@ -352,7 +353,12 @@ def available_detection_weights() -> list[dict]:
     if not DETECT_RUNS_ROOT.is_dir():
         return []
     weights = []
-    for path in sorted(DETECT_RUNS_ROOT.rglob("weights/*.pt")):
+    candidates = [
+        path
+        for path in DETECT_RUNS_ROOT.rglob("weights/*")
+        if path.suffix.lower() in INFERENCE_WEIGHT_EXTENSIONS
+    ]
+    for path in sorted(candidates):
         try:
             ensure_detect_runs_path(path)
         except HTTPException:
@@ -364,11 +370,57 @@ def available_detection_weights() -> list[dict]:
             "path": relative_to_repo(path),
             "run": run_dir.name,
             "weight": path.stem,
+            "format": path.suffix.lower().lstrip("."),
             "size": stat.st_size,
             "modified_at": stat.st_mtime,
         })
     weights.sort(key=lambda item: item["modified_at"], reverse=True)
     return weights
+
+
+def normalize_exported_model_path(exported, fallback: Path) -> Path:
+    if isinstance(exported, (list, tuple)):
+        exported = exported[0] if exported else fallback
+    value = Path(str(exported or fallback)).expanduser()
+    if not value.is_absolute():
+        value = (fallback.parent / value).resolve()
+    return value.resolve()
+
+
+def export_inference_pt_to_onnx(weights_path: Path, imgsz: int) -> Path:
+    if weights_path.suffix.lower() != ".pt":
+        return weights_path
+
+    try:
+        from ultralytics import YOLO
+    except Exception as exc:
+        raise RuntimeError("ONNX export requires ultralytics in the web container.") from exc
+
+    fallback_path = weights_path.with_suffix(".onnx")
+    try:
+        exported = YOLO(str(weights_path)).export(
+            format="onnx",
+            imgsz=int(imgsz),
+            opset=12,
+            simplify=False,
+            dynamic=False,
+        )
+    except ModuleNotFoundError as exc:
+        missing = exc.name or "a required package"
+        raise RuntimeError(
+            f"ONNX export requires {missing}. Rebuild the container after updating requirements.txt."
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(f"ONNX export failed: {exc}") from exc
+
+    exported_path = normalize_exported_model_path(exported, fallback_path)
+    if not exported_path.is_file() and fallback_path.is_file():
+        exported_path = fallback_path.resolve()
+    if not exported_path.is_file():
+        raise RuntimeError("ONNX export did not produce an .onnx file.")
+    if exported_path.suffix.lower() != ".onnx":
+        raise RuntimeError(f"ONNX export produced an unexpected file: {exported_path.name}")
+    return exported_path
 
 
 def available_training_sessions() -> list[dict]:
@@ -430,6 +482,7 @@ def inference_job_payload(job: dict) -> dict:
         "media_type",
         "weights",
         "preview_available",
+        "preview_fps",
         "result",
         "error",
         "stoppable",
@@ -461,14 +514,23 @@ def inference_has_live_preview(job_id: str, preview_path: Path) -> bool:
 
 def update_inference_preview_frame(job_id: str, frame: bytes):
     condition = None
+    now = time.time()
     with inference_jobs_lock:
         job = inference_jobs.get(job_id)
         if job is None:
             return
+        timestamps = [
+            timestamp for timestamp in job.get("preview_frame_times", [])
+            if now - float(timestamp) <= 2.0
+        ]
+        timestamps.append(now)
+        elapsed = timestamps[-1] - timestamps[0] if len(timestamps) > 1 else 0
         job["preview_frame"] = frame
         job["preview_available"] = True
-        job["preview_updated_at"] = time.time()
-        job["updated_at"] = time.time()
+        job["preview_updated_at"] = now
+        job["preview_frame_times"] = timestamps
+        job["preview_fps"] = round((len(timestamps) - 1) / elapsed, 1) if elapsed > 0 else 0.0
+        job["updated_at"] = now
         condition = job.get("preview_condition")
     if isinstance(condition, threading.Condition):
         with condition:
@@ -555,6 +617,7 @@ def inference_job_from_disk(job_id: str) -> dict | None:
             "elapsed_ms": result.get("elapsed_ms", 0),
             "media_type": result.get("media_type", "video" if output_path.suffix == ".mp4" else "image"),
             "preview_available": preview_path.is_file(),
+            "preview_fps": 0,
             "result": result,
         }
 
@@ -572,6 +635,7 @@ def inference_job_from_disk(job_id: str) -> dict | None:
             "elapsed_ms": 0,
             "media_type": "video" if (job_dir / "annotated.mp4").exists() else "image",
             "preview_available": preview_path.is_file(),
+            "preview_fps": 0,
         }
 
     log_path = job_dir / "inference.log"
@@ -587,6 +651,7 @@ def inference_job_from_disk(job_id: str) -> dict | None:
             "detections": 0,
             "elapsed_ms": 0,
             "preview_available": preview_path.is_file(),
+            "preview_fps": 0,
         }
     return None
 
@@ -631,6 +696,30 @@ def run_inference_job(
         stoppable=True,
     )
     try:
+        if inference_request.pop("convert_to_onnx", False):
+            original_weights = Path(inference_request["weights_path"])
+            update_inference_job(
+                job_id,
+                status="running",
+                stage="converting",
+                percent=3,
+                detail="Converting uploaded .pt weights to ONNX.",
+                elapsed_ms=round((time.time() - started) * 1000, 2),
+                stoppable=True,
+            )
+            onnx_path = export_inference_pt_to_onnx(
+                original_weights,
+                int(inference_request.get("imgsz") or 640),
+            )
+            inference_request["weights_path"] = onnx_path
+            if onnx_path != original_weights:
+                update_inference_job(
+                    job_id,
+                    weights=f"{original_weights.name} -> {onnx_path.name}",
+                    detail="ONNX conversion complete.",
+                    elapsed_ms=round((time.time() - started) * 1000, 2),
+                )
+
         payload = run_yolo_inference(
             **inference_request,
             progress_callback=handle_progress,
@@ -1025,6 +1114,61 @@ def build_dataset_archive(dataset_yaml: str) -> tuple[Path, str]:
     except Exception:
         archive_path.unlink(missing_ok=True)
         raise
+
+    return archive_path, archive_name
+
+
+def build_annotated_dataset_archive(dataset_yaml: str) -> tuple[Path, str]:
+    _yaml_path, dataset_root, portable_payload = prepared_dataset_yaml(dataset_yaml)
+    try:
+        from vision.image_annotation import annotate_dataset
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Annotated dataset export requires Pillow and the image_annotation module.",
+        ) from exc
+
+    output_root = Path(tempfile.mkdtemp(prefix="annotated-dataset-"))
+    descriptor, archive_value = tempfile.mkstemp(prefix="annotated-yolov8-dataset-", suffix=".zip")
+    os.close(descriptor)
+    archive_path = Path(archive_value)
+    archive_name = f"{clean_name(dataset_root.name, 'prepared_dataset')}_annotated.zip"
+
+    try:
+        annotated, missing_labels = annotate_dataset(dataset_root, output_root, max_images=0, line_width=0)
+        if annotated == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No annotated images were created. "
+                    f"Images without matching labels: {missing_labels}."
+                ),
+            )
+
+        with zipfile.ZipFile(archive_path, "w", allowZip64=True) as archive:
+            archive.writestr(
+                "data.yaml",
+                yaml.safe_dump(portable_payload, sort_keys=False),
+                compress_type=zipfile.ZIP_DEFLATED,
+            )
+            for item in sorted(output_root.rglob("*"), key=lambda path: path.relative_to(output_root).as_posix()):
+                if not item.is_file() or item.is_symlink():
+                    continue
+                relative_path = item.relative_to(output_root)
+                compression = (
+                    zipfile.ZIP_STORED
+                    if item.suffix.lower() in IMAGE_EXTENSIONS
+                    else zipfile.ZIP_DEFLATED
+                )
+                archive.write(item, relative_path.as_posix(), compress_type=compression)
+    except HTTPException:
+        archive_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        archive_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Annotated dataset export failed: {exc}") from exc
+    finally:
+        shutil.rmtree(output_root, ignore_errors=True)
 
     return archive_path, archive_name
 
@@ -2596,6 +2740,7 @@ def train_sessions():
 def run_inference(
     weight_source: str = Form("selected"),
     weight_path: str = Form(""),
+    convert_to_onnx: bool = Form(False),
     imgsz: int = Form(640),
     conf: float = Form(0.25),
     iou: float = Form(0.45),
@@ -2621,15 +2766,19 @@ def run_inference(
     if weight_source == "selected":
         weights_path = resolve_inference_weight_path(weight_path)
         weights_label = relative_to_repo(weights_path)
+        convert_to_onnx = False
     elif weight_source == "upload":
         if weight_file is None or not weight_file.filename:
-            raise HTTPException(status_code=400, detail="Choose a .pt weights file to upload.")
-        if Path(weight_file.filename).suffix.lower() != ".pt":
-            raise HTTPException(status_code=400, detail="Uploaded weights must be a .pt file.")
+            raise HTTPException(status_code=400, detail="Choose a .pt or .onnx weights file to upload.")
+        weight_suffix = Path(weight_file.filename).suffix.lower()
+        if weight_suffix not in INFERENCE_WEIGHT_EXTENSIONS:
+            raise HTTPException(status_code=400, detail="Uploaded weights must be a .pt or .onnx file.")
+        if convert_to_onnx and weight_suffix != ".pt":
+            convert_to_onnx = False
         weights_path = (INFERENCE_UPLOAD_ROOT / job_id / Path(weight_file.filename).name).resolve()
         ensure_inference_path(weights_path)
         save_upload(weight_file, weights_path, lambda *_args: None, "saving", "Saving inference weights")
-        weights_label = f"uploaded {weights_path.name}"
+        weights_label = f"uploaded {weights_path.name}{' -> ONNX' if convert_to_onnx else ''}"
     else:
         raise HTTPException(status_code=400, detail="Unknown inference weights source.")
 
@@ -2657,6 +2806,7 @@ def run_inference(
         "iou": iou,
         "device": inference_device,
         "vid_stride": vid_stride,
+        "convert_to_onnx": convert_to_onnx,
     }
     stop_event = threading.Event()
     preview_condition = threading.Condition()
@@ -2674,10 +2824,12 @@ def run_inference(
         "media_type": media_kind,
         "weights": weights_label,
         "preview_available": False,
+        "preview_fps": 0,
         "stoppable": False,
         "stop_event": stop_event,
         "preview_condition": preview_condition,
         "preview_frame": None,
+        "preview_frame_times": [],
         "preview_updated_at": 0,
         "created_at": time.time(),
         "updated_at": time.time(),
@@ -2771,6 +2923,24 @@ def dataset_preparation_status(job_id: str):
 def prepare_dataset_download(request: DatasetDownloadRequest):
     cleanup_expired_dataset_downloads()
     archive_path, filename = build_dataset_archive(request.dataset_yaml)
+    download_id = uuid.uuid4().hex
+    with dataset_download_lock:
+        dataset_downloads[download_id] = {
+            "path": str(archive_path),
+            "filename": filename,
+            "created_at": time.time(),
+        }
+    return {
+        "download_url": f"/api/dataset/download/{download_id}",
+        "filename": filename,
+        "size": archive_path.stat().st_size,
+    }
+
+
+@app.post("/api/dataset/download/annotated/prepare")
+def prepare_annotated_dataset_download(request: DatasetDownloadRequest):
+    cleanup_expired_dataset_downloads()
+    archive_path, filename = build_annotated_dataset_archive(request.dataset_yaml)
     download_id = uuid.uuid4().hex
     with dataset_download_lock:
         dataset_downloads[download_id] = {

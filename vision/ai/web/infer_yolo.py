@@ -56,7 +56,7 @@ def write_json_atomic(path: Path | None, payload: dict):
 
 def progress_percent(stage: str, frames: int, total_frames: int) -> float:
     if stage == "loading_model":
-        return 2.0
+        return 5.0
     if stage == "encoding":
         return 96.0
     if stage == "complete":
@@ -146,7 +146,7 @@ def video_frame_count(path: Path) -> int:
     return max(0, frames)
 
 
-def encode_preview_jpeg(image, max_width: int = 960) -> bytes | None:
+def encode_preview_jpeg(image, max_width: int = 640) -> bytes | None:
     height, width = image.shape[:2]
     preview = image
     if width > max_width:
@@ -156,7 +156,7 @@ def encode_preview_jpeg(image, max_width: int = 960) -> bytes | None:
     return encoded.tobytes() if ok else None
 
 
-def write_preview(preview_path: Path | None, image, max_width: int = 960) -> bytes | None:
+def write_preview(preview_path: Path | None, image, max_width: int = 640) -> bytes | None:
     jpeg = encode_preview_jpeg(image, max_width=max_width)
     if preview_path is None or jpeg is None:
         return jpeg
@@ -271,7 +271,8 @@ def run_yolo_inference(
     vid_stride: int = 1,
     progress_callback: Callable[[dict], None] | None = None,
     preview_callback: Callable[[bytes], None] | None = None,
-    preview_fps: float = 5.0,
+    preview_fps: float = 30.0,
+    preview_max_width: int = 640,
     stop_event: threading.Event | None = None,
     use_model_cache: bool = False,
 ) -> dict:
@@ -290,6 +291,8 @@ def run_yolo_inference(
     raw_video_output = output_path.with_name(f"{output_path.stem}.raw{output_path.suffix}")
     writer_output_path = raw_video_output if media_kind == "video" else output_path
     selected_device = resolve_device(device)
+    model_format = weights_path.suffix.lower().lstrip(".") or "pt"
+    model_label = "ONNX" if model_format == "onnx" else "PyTorch"
 
     def stopped():
         return stop_event is not None and stop_event.is_set()
@@ -316,7 +319,7 @@ def run_yolo_inference(
     started = time.perf_counter()
     emit_progress(
         "loading_model",
-        detail=f"Loading PyTorch model on {device_label(selected_device)}.",
+        detail=f"Loading {model_label} model on {device_label(selected_device)}.",
     )
     if stopped():
         raise InferenceStopped()
@@ -339,12 +342,22 @@ def run_yolo_inference(
     transcoded = False
     last_progress_at = 0.0
     last_preview_at = 0.0
-    preview_interval = 1.0 / max(1.0, float(preview_fps or 5.0))
+    last_preview_disk_at = 0.0
+    preview_interval = 1.0 / max(1.0, float(preview_fps or 30.0))
+    preview_disk_interval = 2.0
 
-    def emit_preview(image):
-        jpeg = write_preview(preview_path, image)
+    def emit_preview(image, force_disk: bool = False):
+        nonlocal last_preview_disk_at
+        jpeg = encode_preview_jpeg(image, max_width=preview_max_width)
+        if jpeg is None:
+            return
         if jpeg is not None and preview_callback is not None:
             preview_callback(jpeg)
+        now = time.perf_counter()
+        if preview_path is not None and (force_disk or now - last_preview_disk_at >= preview_disk_interval):
+            preview_path.parent.mkdir(parents=True, exist_ok=True)
+            preview_path.write_bytes(jpeg)
+            last_preview_disk_at = now
 
     try:
         with model_lock:
@@ -369,13 +382,13 @@ def run_yolo_inference(
                 plotted = draw_result_fast(result)
                 now = time.perf_counter()
                 if now - last_preview_at >= preview_interval or frames == 1:
-                    emit_preview(plotted)
+                    emit_preview(plotted, force_disk=frames == 1)
                     last_preview_at = now
                 if frames == 1 and media_kind == "image":
                     image_detections = collect_image_detections(result)
                     if not cv2.imwrite(str(output_path), plotted):
                         raise RuntimeError("Could not write annotated image output.")
-                    emit_preview(plotted)
+                    emit_preview(plotted, force_disk=True)
                 elif media_kind == "video":
                     if video_writer is None:
                         height, width = plotted.shape[:2]
@@ -420,7 +433,7 @@ def run_yolo_inference(
 
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     payload = {
-        "engine": "python-ultralytics",
+        "engine": f"python-ultralytics-{model_format}",
         "device": device_label(selected_device),
         "model_cached": cache_hit,
         "media_type": media_kind,
@@ -429,6 +442,7 @@ def run_yolo_inference(
         "elapsed_ms": elapsed_ms,
         "output": str(output_path),
         "video_stride": video_stride,
+        "preview_fps_target": preview_fps,
         "browser_video": transcoded,
         "image_detections": image_detections,
     }

@@ -452,9 +452,15 @@ function syncActionStates() {
   $("detect-classes").textContent = state.isDetecting ? "Detecting..." : "Auto Fetch";
   $("detect-classes").setAttribute("aria-busy", String(state.isDetecting));
   const datasetDownloadActive = state.downloads.has("dataset");
+  const annotatedDatasetDownloadActive = state.downloads.has("annotated_dataset");
   $("download-dataset").disabled = !hasDataset || preparing || datasetDownloadActive;
   $("download-dataset").textContent = datasetDownloadActive ? "Preparing ZIP..." : "Download ZIP";
   $("download-dataset").setAttribute("aria-busy", String(datasetDownloadActive));
+  $("download-annotated-dataset").disabled = !hasDataset || preparing || annotatedDatasetDownloadActive;
+  $("download-annotated-dataset").textContent = annotatedDatasetDownloadActive
+    ? "Preparing Annotated ZIP..."
+    : "Download Annotated ZIP";
+  $("download-annotated-dataset").setAttribute("aria-busy", String(annotatedDatasetDownloadActive));
   $("start-training").disabled = locked || preparing || (!hasDataset && !canResume);
   $("start-training").textContent = state.isStarting ? "Starting..." : "Start";
   $("start-training").setAttribute("aria-busy", String(state.isStarting));
@@ -1836,12 +1842,25 @@ function selectedInferenceWeightSource() {
   return document.querySelector('input[name="inference-weight-source"]:checked')?.value || "selected";
 }
 
+function inferenceWeightSuffix(file) {
+  const name = file?.name || "";
+  const index = name.lastIndexOf(".");
+  return index >= 0 ? name.slice(index).toLowerCase() : "";
+}
+
 function syncInferenceControls() {
   const source = selectedInferenceWeightSource();
   $("inference-selected-weight-wrap").hidden = source !== "selected";
   $("inference-upload-weight-wrap").hidden = source !== "upload";
   const hasSelectedWeight = $("inference-weight-select").value !== "";
-  const hasUploadedWeight = Boolean($("inference-weight-file").files[0]);
+  const uploadedWeight = $("inference-weight-file").files[0];
+  const uploadedSuffix = inferenceWeightSuffix(uploadedWeight);
+  const hasUploadedWeight = uploadedSuffix === ".pt" || uploadedSuffix === ".onnx";
+  $("inference-convert-onnx-row").hidden = source !== "upload" || uploadedSuffix !== ".pt";
+  $("inference-convert-onnx").disabled = source !== "upload" || uploadedSuffix !== ".pt";
+  if (uploadedSuffix !== ".pt") {
+    $("inference-convert-onnx").checked = false;
+  }
   const hasMedia = Boolean($("inference-media-file").files[0]);
   $("run-inference").disabled = state.inferenceRunning
     || !hasMedia
@@ -1862,17 +1881,18 @@ function renderInferenceWeights(weights) {
     option.value = "";
     option.textContent = "No weights found";
     select.appendChild(option);
-    $("inference-weights-status").textContent = "No .pt weights were found under runs/detect.";
+    $("inference-weights-status").textContent = "No .pt or .onnx weights were found under runs/detect.";
     syncInferenceControls();
     return;
   }
   weights.forEach((weight) => {
     const option = document.createElement("option");
     option.value = weight.path;
-    option.textContent = `${weight.label} (${formatBytes(weight.size)})`;
+    const format = weight.format ? weight.format.toUpperCase() : "PT";
+    option.textContent = `${weight.label} [${format}] (${formatBytes(weight.size)})`;
     select.appendChild(option);
   });
-  $("inference-weights-status").textContent = `${weights.length} weight file${weights.length === 1 ? "" : "s"} available from runs/detect.`;
+  $("inference-weights-status").textContent = `${weights.length} .pt/.onnx weight file${weights.length === 1 ? "" : "s"} available from runs/detect.`;
   syncInferenceControls();
 }
 
@@ -1885,8 +1905,9 @@ async function loadInferenceWeights() {
 
 function updateInferenceFileSelection() {
   const weight = $("inference-weight-file").files[0];
+  const weightSuffix = inferenceWeightSuffix(weight);
   $("inference-weight-selection").textContent = weight
-    ? `${weight.name} (${formatBytes(weight.size)})`
+    ? `${weight.name} (${formatBytes(weight.size)})${[".pt", ".onnx"].includes(weightSuffix) ? "" : " - unsupported"}`
     : "No weights file selected.";
 
   const media = $("inference-media-file").files[0];
@@ -1982,6 +2003,7 @@ function inferenceStageLabel(stage) {
   const labels = {
     queued: "Queued",
     starting: "Starting",
+    converting: "Converting weights",
     loading_model: "Loading model",
     processing: "Processing frames",
     encoding: "Encoding video",
@@ -2036,9 +2058,11 @@ function renderInferenceLivePreview(job) {
   }
   const total = Number(job.total_frames) || 0;
   const frames = Number(job.frames) || 0;
+  const fps = Number(job.preview_fps) || 0;
+  const fpsText = fps > 0 ? ` Live preview: ${fps.toFixed(1)} FPS.` : " Live preview: measuring FPS.";
   $("inference-live-preview-summary").textContent = total
-    ? `Latest annotated frame while processing ${frames} of ${total}.`
-    : `Latest annotated frame while processing ${frames} frames.`;
+    ? `Latest annotated frame while processing ${frames} of ${total}.${fpsText}`
+    : `Latest annotated frame while processing ${frames} frames.${fpsText}`;
 }
 
 function updateInferenceJobProgress(job) {
@@ -2196,17 +2220,29 @@ async function runInference() {
     return;
   }
   if (source === "selected" && !$("inference-weight-select").value) {
-    setInferenceMessage("Choose weights from runs/detect or upload a .pt file.", true);
+    setInferenceMessage("Choose weights from runs/detect or upload a .pt/.onnx file.", true);
     return;
   }
   if (source === "upload" && !$("inference-weight-file").files[0]) {
-    setInferenceMessage("Choose a .pt weights file to upload.", true);
+    setInferenceMessage("Choose a .pt or .onnx weights file to upload.", true);
     return;
   }
+  if (source === "upload") {
+    const suffix = inferenceWeightSuffix($("inference-weight-file").files[0]);
+    if (![".pt", ".onnx"].includes(suffix)) {
+      setInferenceMessage("Uploaded weights must be a .pt or .onnx file.", true);
+      return;
+    }
+  }
+
+  const convertToOnnx = source === "upload"
+    && inferenceWeightSuffix($("inference-weight-file").files[0]) === ".pt"
+    && $("inference-convert-onnx").checked;
 
   const form = new FormData();
   form.append("weight_source", source);
   form.append("weight_path", $("inference-weight-select").value);
+  form.append("convert_to_onnx", convertToOnnx ? "true" : "false");
   form.append("imgsz", $("inference-imgsz").value || "640");
   form.append("conf", $("inference-conf").value || "0.25");
   form.append("iou", $("inference-iou").value || "0.45");
@@ -2436,6 +2472,34 @@ async function downloadPreparedDataset() {
     setMessage(error.message, true);
   } finally {
     state.downloads.delete("dataset");
+    syncActionStates();
+  }
+}
+
+async function downloadAnnotatedDataset() {
+  if (!state.datasetYaml || state.downloads.has("annotated_dataset")) {
+    return;
+  }
+
+  state.downloads.add("annotated_dataset");
+  syncActionStates();
+  setMessage("Preparing annotated dataset ZIP. Large datasets may take several minutes...");
+  try {
+    const result = await apiJson("/api/dataset/download/annotated/prepare", {
+      method: "POST",
+      body: JSON.stringify({ dataset_yaml: state.datasetYaml }),
+    });
+    const link = document.createElement("a");
+    link.href = result.download_url;
+    link.download = result.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setMessage(`Downloading ${result.filename} (${formatBytes(result.size)}).`);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.downloads.delete("annotated_dataset");
     syncActionStates();
   }
 }
@@ -3173,6 +3237,7 @@ document.querySelectorAll("[data-app-tab]").forEach((button) => {
 
 $("prepare-dataset").addEventListener("click", prepareDataset);
 $("download-dataset").addEventListener("click", downloadPreparedDataset);
+$("download-annotated-dataset").addEventListener("click", downloadAnnotatedDataset);
 $("detect-classes").addEventListener("click", detectClasses);
 $("start-training").addEventListener("click", startTraining);
 $("stop-training").addEventListener("click", stopTraining);
@@ -3215,6 +3280,7 @@ $("test-dataset-folder").addEventListener("change", updateFileSelection);
 $("inference-weight-file").addEventListener("change", updateFileSelection);
 $("inference-media-file").addEventListener("change", updateFileSelection);
 $("inference-weight-select").addEventListener("change", syncInferenceControls);
+$("inference-convert-onnx").addEventListener("change", syncInferenceControls);
 ["upload-force-split", "folder-force-split", "roboflow-force-split"].forEach((id) => {
   $(id).addEventListener("change", syncDatasetSourceControls);
 });

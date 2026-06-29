@@ -5,5 +5,7 @@ python-multipart
 PyYAML
 roboflow
 ultralytics
+onnx
+onnxruntime-gpu
 scikit-learn
 reportlab
