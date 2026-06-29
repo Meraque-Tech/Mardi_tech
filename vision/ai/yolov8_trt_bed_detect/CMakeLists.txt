@@ -47,8 +47,6 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
   message("embed_platform on")
   include_directories(/usr/local/cuda/targets/aarch64-linux/include)
   link_directories(/usr/local/cuda/targets/aarch64-linux/lib)
-  # Tegra BSP libs (libnvmedia, libnvdla_compiler) required indirectly by libnvinfer on L4T
-  link_directories(/usr/lib/aarch64-linux-gnu/tegra)
 else()
   message("embed_platform off")
   include_directories(/usr/local/cuda/include)
@@ -61,10 +59,6 @@ file(GLOB_RECURSE SRCS ${PROJECT_SOURCE_DIR}/src/*.cpp ${PROJECT_SOURCE_DIR}/src
 add_executable(yolov8_trt_bed_detect ${PROJECT_SOURCE_DIR}/main.cpp ${SRCS})
 ament_target_dependencies(yolov8_trt_bed_detect ${dependencies})
 target_link_libraries(yolov8_trt_bed_detect nvinfer cudart myplugins ${OpenCV_LIBS} pthread)
-if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-  target_link_options(yolov8_trt_bed_detect PRIVATE -Wl,--allow-shlib-undefined)
-  target_link_options(myplugins PRIVATE -Wl,--allow-shlib-undefined)
-endif()
 
 install(TARGETS
   yolov8_trt_bed_detect
