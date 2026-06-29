@@ -182,7 +182,7 @@ From `vision/ai/` (with `yolov8_trt_bed_detect/` folder present):
 ```bash
 docker build \
   -f Dockerfile.yolov8_trt_bed_detect_jetson_nano \
-  -t meraquetech/race_nav:yolov8-trt-bed-detect-nano.v1 \
+  -t meraquetech/race_nav:yolov8-trt-bed-detect-nano.v7 \
   .
 ```
 
