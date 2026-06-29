@@ -1,4 +1,4 @@
-version: "3.8"
+version: "3.3"
 
 services:
   yolov8-trt-bed-detect:
@@ -16,13 +16,7 @@ services:
     network_mode: host
     ipc: host
     privileged: true
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    runtime: nvidia
     command: >
       bash -c "source /opt/ros/humble/install/setup.bash &&
                source /ros2_ws/install/setup.bash &&
@@ -30,9 +24,9 @@ services:
     restart: unless-stopped
 
 # Usage:
-#   docker-compose -f docker-compose.yolov8-trt-bed-detect-nano.yml up -d
-#   docker-compose -f docker-compose.yolov8-trt-bed-detect-nano.yml logs -f
-#   docker-compose -f docker-compose.yolov8-trt-bed-detect-nano.yml down
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml up -d
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml logs -f
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml down
 #
 # Dashboard:    http://<host-ip>:8090/
 # MJPEG stream: http://<host-ip>:8080/
