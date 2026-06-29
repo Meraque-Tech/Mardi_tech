@@ -4,7 +4,7 @@ services:
     container_name: yolov8-trt-bed-detect-nano
     build:
       context: .
-      dockerfile: Dockerfile.yolov8_trt_bed_detect_jetson_nano
+      dockerfile: Dockerfile.yolov8_trt_bed_detect_jetson_nano.v7
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     devices:

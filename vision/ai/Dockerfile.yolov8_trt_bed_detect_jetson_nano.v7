@@ -1,0 +1,24 @@
+# Jetson Nano — built on top of v6 (all system deps already installed)
+FROM meraquetech/race_nav:yolov8-trt-bed-detect-nano.v6
+
+SHELL ["/bin/bash", "-c"]
+
+WORKDIR /ros2_ws/src
+COPY yolov8_trt_bed_detect/ yolov8_trt_bed_detect/
+
+RUN pip3 install --no-cache-dir --ignore-installed flask flask-sock
+
+WORKDIR /ros2_ws
+RUN ROS_SETUP=$(find /opt/ros /root -name "setup.bash" 2>/dev/null | head -1) && \
+    echo "Using: $ROS_SETUP" && \
+    source "$ROS_SETUP" && \
+    colcon build --packages-select yolov8_trt_bed_detect \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+ENV ROS_SETUP_CMD="source \$(find /opt/ros /root -name setup.bash 2>/dev/null | head -1)"
+
+# Usage:
+#   docker run ... ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect -d weights/best.engine ./ g -conf 0.85
+CMD ["/bin/bash", "-c", \
+    "source $(find /opt/ros /root -name setup.bash 2>/dev/null | head -1) && \
+     source /ros2_ws/install/setup.bash && bash"]
