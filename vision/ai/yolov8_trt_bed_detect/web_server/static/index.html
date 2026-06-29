@@ -53,12 +53,31 @@
     .legend { display:flex;gap:12px;flex-wrap:wrap;min-height:18px;margin-top:7px;font-size:11px;color:var(--muted) }
     .legend i { width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:4px }
     .history-card { grid-column:1/-1 }
-    .table-wrap { overflow:auto;max-height:430px;border:1px solid var(--line);border-radius:9px }
-    table { width:100%;border-collapse:collapse;white-space:nowrap }
-    th,td { padding:9px 11px;text-align:left;border-bottom:1px solid #252b3b;font-size:12px }
-    th { color:var(--muted);font-weight:650;position:sticky;top:0;background:#1b202c }
-    td.code { font-family:ui-monospace,monospace;color:#c6cafa }
-    .pager { justify-content:flex-end;margin-top:11px }.pager button { padding:6px 10px }
+    .table-wrap { overflow:auto;max-height:520px;border:1px solid var(--line);border-radius:12px }
+    table { width:100%;border-collapse:collapse }
+    thead tr { background:#13172099 }
+    th { padding:11px 14px;text-align:left;border-bottom:2px solid var(--line);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);position:sticky;top:0;background:#13172099;backdrop-filter:blur(6px);white-space:nowrap }
+    td { padding:10px 14px;border-bottom:1px solid #1e2436;font-size:12.5px;vertical-align:middle;white-space:nowrap }
+    tbody tr:last-child td { border-bottom:none }
+    tbody tr:hover { background:#1e2436 }
+    td.ts { font-family:ui-monospace,monospace;font-size:11.5px;color:var(--muted) }
+    td.gnss { font-family:ui-monospace,monospace;font-size:11px;color:#7ec8e3 }
+    td.classes-cell { white-space:normal;min-width:200px;line-height:1.6 }
+    .cls-pill { display:inline-flex;align-items:center;gap:5px;background:#232a3e;border:1px solid #2e3750;border-radius:6px;padding:2px 8px;margin:2px 3px 2px 0;font-size:11px }
+    .cls-pill .dot { width:7px;height:7px;border-radius:50%;flex-shrink:0 }
+    .cls-pill .cnt { font-weight:700;color:var(--text) }
+    td.total-cell { font-size:15px;font-weight:700;color:var(--text) }
+    .obj-badge { display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700 }
+    .obj-badge.found { background:#1f1018;color:#ff8fa3;border:1px solid #5e1a28 }
+    .obj-badge.clear { background:#0d2218;color:#6ee7b7;border:1px solid #134d33 }
+    .conf-bar-wrap { display:flex;align-items:center;gap:8px }
+    .conf-bar { flex:1;height:5px;border-radius:4px;background:#1e2436;min-width:60px }
+    .conf-bar span { display:block;height:100%;border-radius:4px }
+    .frame-link { display:inline-flex;align-items:center;gap:4px;color:#818cf8;font-size:11.5px;text-decoration:none;padding:3px 9px;border:1px solid #2e3750;border-radius:6px }
+    .frame-link:hover { background:#232a3e }
+    .pager { justify-content:space-between;align-items:center;margin-top:13px }
+    .pager-info { font-size:12px;color:var(--muted) }
+    .pager button { padding:7px 14px }
     .gallery { display:grid;grid-template-columns:repeat(4,1fr);gap:9px }.thumb { position:relative;min-width:0 }
     .thumb img { width:100%;height:92px;object-fit:cover;border-radius:8px;cursor:pointer }
     .thumb button { position:absolute;right:4px;top:4px;padding:2px 6px;background:#000b }
@@ -153,11 +172,33 @@
     </aside>
 
     <section class="card history-card">
-      <div class="card-head"><div><h2>All counted class history</h2><span id="history-summary" class="muted">Loading…</span></div><button class="link" onclick="loadHistory(historyOffset)">Refresh</button></div>
-      <div class="table-wrap">
-        <table><thead><tr><th>Time</th><th>Classes</th><th>Total</th><th>Obj</th><th>Confidence</th><th>Mode</th><th>Frame</th></tr></thead><tbody id="history-body"></tbody></table>
+      <div class="card-head">
+        <div><h2>Detection History</h2><span id="history-summary" class="muted">Loading…</span></div>
+        <button class="link" onclick="loadHistory(historyOffset)">↻ Refresh</button>
       </div>
-      <div class="pager"><button id="newer-btn" class="gray" onclick="changeHistory(-1)">Newer</button><button id="older-btn" class="gray" onclick="changeHistory(1)">Older</button></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>GNSS Coordinates</th>
+              <th>Detected Classes</th>
+              <th style="text-align:center">Total</th>
+              <th style="text-align:center">Object Status</th>
+              <th>Confidence</th>
+              <th>Frame</th>
+            </tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span class="pager-info" id="pager-info"></span>
+        <div style="display:flex;gap:8px">
+          <button id="newer-btn" class="gray" onclick="changeHistory(-1)">← Newer</button>
+          <button id="older-btn" class="gray" onclick="changeHistory(1)">Older →</button>
+        </div>
+      </div>
     </section>
   </div>
 </main>
@@ -273,13 +314,50 @@
 
   function scheduleHistoryRefresh() { if(historyOffset!==0||refreshTimer)return;refreshTimer=setTimeout(()=>{refreshTimer=0;loadHistory(0);},1200); }
 
+  function renderClassPills(counts) {
+    const entries=Object.entries(counts||{});
+    if(!entries.length)return '<span style="color:var(--muted);font-size:11px">No detections</span>';
+    return entries.map(([id,cnt],i)=>{
+      const color=COLORS[i%COLORS.length];
+      const label=escapeHtml(classLabels[String(id)]||`Class ${id}`);
+      return `<span class="cls-pill"><span class="dot" style="background:${color}"></span><span style="color:${color}">${label}</span><span class="cnt">${cnt}</span></span>`;
+    }).join('');
+  }
+
+  function renderConfBar(conf) {
+    const pct=Math.round(conf*100), color=pct>=80?'var(--green)':pct>=50?'var(--amber)':'var(--red)';
+    return `<div class="conf-bar-wrap"><div class="conf-bar"><span style="width:${pct}%;background:${color}"></span></div><span style="font-size:11.5px;font-family:ui-monospace,monospace;color:${color}">${conf.toFixed(3)}</span></div>`;
+  }
+
+  function formatTimestamp(value) {
+    if(!value)return '—';
+    const d=new Date(value);if(Number.isNaN(d.getTime()))return value;
+    const date=d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'2-digit'});
+    const time=d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    return `<div>${escapeHtml(date)}</div><div style="color:var(--muted);font-size:10.5px">${escapeHtml(time)}</div>`;
+  }
+
   async function loadHistory(offset=0) {
     try {
       const data=await api(`/api/history?limit=${HISTORY_PAGE}&offset=${offset}`);historyOffset=data.offset;historyTotal=data.total;
       const start=historyTotal?historyOffset+1:0,end=Math.min(historyOffset+data.items.length,historyTotal);
-      document.getElementById('history-summary').textContent=`Showing ${start}–${end} of ${historyTotal} stored samples`;
+      document.getElementById('history-summary').textContent=`${historyTotal} records`;
+      document.getElementById('pager-info').textContent=historyTotal?`Showing ${start}–${end} of ${historyTotal}`:'';
       document.getElementById('newer-btn').disabled=historyOffset===0;document.getElementById('older-btn').disabled=end>=historyTotal;
-      document.getElementById('history-body').innerHTML=data.items.length?data.items.map(item=>`<tr><td>${escapeHtml(formatTime(item.time))}</td><td class="code">${escapeHtml(countText(item.counts))}</td><td>${item.total}</td><td>${item.bed?'Found':'Clear'}</td><td>${Number(item.conf).toFixed(3)}</td><td>${item.tracking?'Unique':'Per frame'}</td><td>${item.frame?`<a href="/saved/${encodeURIComponent(item.frame)}" target="_blank" style="color:#9da1ff">View</a>`:'—'}</td></tr>`).join(''):'<tr><td colspan="7" class="muted">No saved count history yet. Save a current count or enable automatic saving.</td></tr>';
+      document.getElementById('history-body').innerHTML=data.items.length?data.items.map(item=>{
+        const conf=Number(item.conf||0);
+        const frameCell=item.frame?`<a class="frame-link" href="/saved/${encodeURIComponent(item.frame)}" target="_blank">▣ View</a>`:'<span style="color:var(--muted)">—</span>';
+        const objBadge=item.bed?'<span class="obj-badge found">● Detected</span>':'<span class="obj-badge clear">✓ Clear</span>';
+        return `<tr>
+          <td class="ts">${formatTimestamp(item.time)}</td>
+          <td class="gnss">—</td>
+          <td class="classes-cell">${renderClassPills(item.counts)}</td>
+          <td class="total-cell" style="text-align:center">${item.total}</td>
+          <td style="text-align:center">${objBadge}</td>
+          <td>${renderConfBar(conf)}</td>
+          <td>${frameCell}</td>
+        </tr>`;
+      }).join(''):'<tr><td colspan="7" style="text-align:center;padding:28px;color:var(--muted)">No detection records yet. Save a count or enable automatic saving.</td></tr>';
       if(offset===0){chartItems=data.items.slice().reverse();drawChart(chartItems);}
     } catch(error){document.getElementById('history-summary').textContent=error.message;}
   }
