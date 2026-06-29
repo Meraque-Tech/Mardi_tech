@@ -56,7 +56,10 @@ docker info | grep -i runtime
 
 Or edit `/etc/docker/daemon.json` manually:
 
+
 ```json
+sudo nano /etc/docker/daemon.json
+
 {
   “default-runtime”: “nvidia”,
   “runtimes”: {

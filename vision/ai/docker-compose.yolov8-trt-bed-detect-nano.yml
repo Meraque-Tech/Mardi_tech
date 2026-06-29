@@ -1,5 +1,3 @@
-version: "3.3"
-
 services:
   yolov8-trt-bed-detect:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-nano.v6
@@ -14,16 +12,15 @@ services:
       - ./yolov8_trt_bed_detect/launch:/ros2_ws/install/yolov8_trt_bed_detect/share/yolov8_trt_bed_detect/launch
       - ./saved_frames:/saved_frames
     network_mode: host
-    ipc: host
     privileged: true
     runtime: nvidia
     command: >
       bash -c "source /opt/ros/humble/install/setup.bash &&
                source /ros2_ws/install/setup.bash &&
                ros2 launch yolov8_trt_bed_detect bed_detect.launch.py"
-    restart: unless-stopped
 
 # Usage:
+#   mkdir -p saved_frames
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml up -d
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml logs -f
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml down
