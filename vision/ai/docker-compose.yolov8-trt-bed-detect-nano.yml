@@ -24,6 +24,7 @@ services:
 
 # Usage:
 #   mkdir -p saved_frames
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml build
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml up -d
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml logs -f
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-nano.yml down
