@@ -184,6 +184,15 @@ docker build \
   -f Dockerfile.yolov8_trt_bed_detect_jetson_nano \
   -t meraquetech/race_nav:yolov8-trt-bed-detect-nano.v7 \
   .
+
+
+# Created Dockerfile.yolov8_trt_bed_detect_jetson_nano.v7. Build with:
+
+docker build \
+  -f Dockerfile.yolov8_trt_bed_detect_jetson_nano.v7 \
+  -t meraquetech/race_nav:yolov8-trt-bed-detect-nano.v7 \
+  .
+
 ```
 
 ## Run
