@@ -1,7 +1,10 @@
 services:
   yolov8-trt-bed-detect:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-nano.v6
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-nano.v7
     container_name: yolov8-trt-bed-detect-nano
+    build:
+      context: .
+      dockerfile: Dockerfile.yolov8_trt_bed_detect_jetson_nano
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     devices:

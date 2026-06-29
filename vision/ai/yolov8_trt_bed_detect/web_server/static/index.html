@@ -63,6 +63,15 @@
     .thumb img { width:100%;height:92px;object-fit:cover;border-radius:8px;cursor:pointer }
     .thumb button { position:absolute;right:4px;top:4px;padding:2px 6px;background:#000b }
     .thumb small { display:block;color:var(--muted);overflow:hidden;text-overflow:ellipsis }
+    .label-list { display:grid;gap:6px;margin-top:10px;max-height:180px;overflow-y:auto }
+    .label-row { display:flex;align-items:center;gap:8px;font-size:12px }
+    .label-row .id-chip { background:#2a3042;border-radius:6px;padding:2px 8px;font-family:ui-monospace,monospace;min-width:28px;text-align:center }
+    .label-row .name-val { flex:1;color:var(--text) }
+    .label-row button { padding:2px 7px;background:#3b2020;font-size:11px }
+    .label-input-row { display:flex;gap:6px;margin-top:8px }
+    .label-input-row input { flex:1;background:#1b202c;border:1px solid var(--line);border-radius:7px;padding:6px 9px;color:var(--text) }
+    .label-input-row input:focus { outline:none;border-color:var(--blue) }
+    .label-input-row input[type=number] { max-width:68px }
     #toast { position:fixed;right:22px;bottom:22px;max-width:360px;background:#242a39;border:1px solid var(--blue);padding:12px 16px;border-radius:9px;transform:translateY(90px);opacity:0;transition:.25s;z-index:20 }
     #toast.show { transform:none;opacity:1 } #toast.error { border-color:var(--red) }
     #lightbox { display:none;position:fixed;inset:0;background:#000d;z-index:30;padding:25px;place-items:center }
@@ -129,6 +138,15 @@
         </div>
       </section>
       <section class="card">
+        <h2>Class labels</h2>
+        <div class="label-input-row">
+          <input id="lbl-id" type="number" min="0" placeholder="ID" title="Class ID">
+          <input id="lbl-name" type="text" placeholder="Name (e.g. human)" title="Human-readable name">
+          <button onclick="addLabel()">Add</button>
+        </div>
+        <div id="label-list" class="label-list"></div>
+      </section>
+      <section class="card">
         <div class="card-head"><h2>Recent count chart</h2><span class="muted">Persistent samples</span></div>
         <canvas id="chart"></canvas><div id="legend" class="legend"></div>
       </section>
@@ -153,9 +171,34 @@
   let historyOffset=0, historyTotal=0, chartItems=[], refreshTimer=0, wsRetries=0;
   let streamPort=8080, streamRetries=0, streamRetryTimer=0;
 
+  // Class label mapping — stored in localStorage
+  let classLabels = {};
+  function loadLabels() {
+    try { classLabels = JSON.parse(localStorage.getItem('classLabels') || '{}'); } catch(_e) { classLabels = {}; }
+    renderLabelList();
+  }
+  function saveLabels() { localStorage.setItem('classLabels', JSON.stringify(classLabels)); }
+  function labelFor(id) { const n = classLabels[String(id)]; return n ? `${n} (${id})` : `Class ${id}`; }
+  function addLabel() {
+    const idEl=document.getElementById('lbl-id'), nameEl=document.getElementById('lbl-name');
+    const id=idEl.value.trim(), name=nameEl.value.trim();
+    if(id===''||name===''){toast('Enter both a class ID and a name.',true);return;}
+    classLabels[id]=name; saveLabels(); renderLabelList(); idEl.value=''; nameEl.value='';
+    toast(`Class ${id} → "${name}" saved.`);
+    drawChart(chartItems);
+  }
+  function removeLabel(id) { delete classLabels[id]; saveLabels(); renderLabelList(); drawChart(chartItems); }
+  function renderLabelList() {
+    const el=document.getElementById('label-list');
+    const entries=Object.entries(classLabels).sort((a,b)=>Number(a[0])-Number(b[0]));
+    el.innerHTML=entries.length
+      ? entries.map(([id,name])=>`<div class="label-row"><span class="id-chip">${escapeHtml(id)}</span><span class="name-val">${escapeHtml(name)}</span><button onclick="removeLabel('${escapeHtml(id)}')">×</button></div>`).join('')
+      : '<span class="muted" style="font-size:12px">No labels defined yet.</span>';
+  }
+
   function escapeHtml(value) { const el=document.createElement('span');el.textContent=String(value);return el.innerHTML; }
   function formatTime(value) { if(!value)return '—';const d=new Date(value);return Number.isNaN(d.getTime())?value:d.toLocaleString(); }
-  function countText(counts) { const entries=Object.entries(counts||{});return entries.length?entries.map(([k,v])=>`Class ${k}: ${v}`).join(', '):'No detections'; }
+  function countText(counts) { const entries=Object.entries(counts||{});return entries.length?entries.map(([k,v])=>`${labelFor(k)}: ${v}`).join(', '):'No detections'; }
   function toast(message,error=false) { const el=document.getElementById('toast');el.textContent=message;el.className=error?'show error':'show';clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.className='',3200); }
 
   async function api(url,options) {
@@ -183,7 +226,7 @@
     document.getElementById('count-metric').textContent=total;document.getElementById('current-total').textContent=total;
     const el=document.getElementById('counts');
     if(!entries.length){el.innerHTML='<span class="muted">No detections in the latest live update.</span>';return;}
-    el.innerHTML=entries.map(([name,value],index)=>{const width=total?Math.round(value/total*100):0,color=COLORS[index%COLORS.length];return `<div class="count-row"><strong style="color:${color}">Class ${escapeHtml(name)}</strong><div class="bar"><span style="width:${width}%;background:${color}"></span></div><span>${Number(value)}</span></div>`}).join('');
+    el.innerHTML=entries.map(([name,value],index)=>{const width=total?Math.round(value/total*100):0,color=COLORS[index%COLORS.length];return `<div class="count-row"><strong style="color:${color}">${escapeHtml(labelFor(name))}</strong><div class="bar"><span style="width:${width}%;background:${color}"></span></div><span>${Number(value)}</span></div>`}).join('');
   }
 
   function applyTracking(enabled) {
@@ -252,7 +295,7 @@
     ctx.strokeStyle='#293044';ctx.fillStyle='#778197';ctx.font='10px system-ui';ctx.textAlign='right';
     for(let i=0;i<=4;i++){const y=pad.t+plotH*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(width-pad.r,y);ctx.stroke();ctx.fillText(String(Math.round(max*(4-i)/4)),pad.l-6,y+3);}
     classes.forEach((name,index)=>{ctx.strokeStyle=COLORS[index%COLORS.length];ctx.lineWidth=2;ctx.beginPath();items.forEach((item,i)=>{const x=pad.l+(items.length<=1?0:plotW*i/(items.length-1)),value=Number(item.counts[name]||0),y=pad.t+plotH*(1-value/max);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();});
-    document.getElementById('legend').innerHTML=classes.map((name,index)=>`<span><i style="background:${COLORS[index%COLORS.length]}"></i>Class ${escapeHtml(name)}</span>`).join('')||'<span>No class data yet</span>';
+    document.getElementById('legend').innerHTML=classes.map((name,index)=>`<span><i style="background:${COLORS[index%COLORS.length]}"></i>${escapeHtml(labelFor(name))}</span>`).join('')||'<span>No class data yet</span>';
   }
 
   function connectStream(immediate=false) {
@@ -279,7 +322,7 @@
   async function deleteImage(name) { try{await api(`/api/images/${encodeURIComponent(name)}`,{method:'DELETE'});loadImages();}catch(error){toast(error.message,true);} }
   function openImage(url) { document.getElementById('lightbox-image').src=url;document.getElementById('lightbox').classList.add('open'); }
 
-  connectWebSocket();initStream();loadHistory(0);loadImages();
+  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();
   setInterval(()=>loadStatus().catch(()=>{}),3000);
   window.addEventListener('resize',()=>drawChart(chartItems));
 </script>
