@@ -27,3 +27,13 @@ sudo systemctl status docker
 sudo systemctl start docker
 
 sudo docker run hello-world
+
+sudo groupadd docker
+sudo usermod -aG docker $USER
+newgrp docker
+
+# sudo usermod -aG docker
+sudo systemctl restart docker
+docker ps
+
+sudo reboot
