@@ -27,7 +27,7 @@ yolov8_trt:
     cuda_post_process: "g"
 
     # ── Detection thresholds ──────────────────────────────────────────────────
-    conf_thresh: 0.5
+    conf_thresh: 0.2
     nms_thresh:  0.45
 
     # ── Confidence gate (published on /conf, triggers /bed_detection) ─────────
