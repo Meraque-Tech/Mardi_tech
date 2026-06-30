@@ -114,8 +114,18 @@ class CollapsibleSectionTests(unittest.TestCase):
 
         script = APP_JS.read_text(encoding="utf-8")
         self.assertIn("function taskForModelSize", script)
+        self.assertIn("function modelSizeForTask", script)
         self.assertIn("function syncProjectWithModelTask", script)
         self.assertIn('"model-size").addEventListener("change", syncProjectWithModelTask)', script)
+
+    def test_previous_training_sessions_preserve_task_specific_project(self):
+        script = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn("function isDefaultTrainingTarget", script)
+        self.assertIn("task: session.task", script)
+        self.assertIn("task: latest.task", script)
+        self.assertIn("modelSizeForTask(session.task", script)
+        self.assertIn("defaultProjectForModelSize($(\"model-size\").value)", script)
 
     def test_segmentation_metrics_use_mask_columns_and_labels(self):
         app_source = APP_PY.read_text(encoding="utf-8")

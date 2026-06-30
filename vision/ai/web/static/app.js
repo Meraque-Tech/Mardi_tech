@@ -203,6 +203,18 @@ function defaultProjectForModelSize(modelSize) {
   return TASK_PROJECT_DEFAULTS[taskForModelSize(modelSize)] || TASK_PROJECT_DEFAULTS.detect;
 }
 
+function modelSizeForTask(task, currentModelSize) {
+  const base = String(currentModelSize || CONTROL_DEFAULTS["model-size"])
+    .replace(/-(seg|cls)$/i, "");
+  if (task === "segment") {
+    return `${base}-seg`;
+  }
+  if (task === "classify") {
+    return `${base}-cls`;
+  }
+  return base;
+}
+
 function normalizedProjectValue(value) {
   return normalizedPath(value || "").replace(/^\.\//, "");
 }
@@ -825,6 +837,13 @@ function weightTarget() {
     project: $("project").value || "runs/detect",
     name: $("run-name").value || "train",
   };
+}
+
+function isDefaultTrainingTarget() {
+  const target = weightTarget();
+  return normalizedProjectValue(target.project) === normalizedProjectValue(CONTROL_DEFAULTS.project)
+    && target.name === CONTROL_DEFAULTS["run-name"]
+    && $("model-size").value === CONTROL_DEFAULTS["model-size"];
 }
 
 function normalizedPath(value) {
@@ -1844,10 +1863,10 @@ function setTrainingSessionStatus(text, isError = false) {
 function renderTrainingSessions(sessions) {
   const select = $("training-session-select");
   const currentValue = select.value;
-  const currentTargetValue = JSON.stringify({
+  const currentTarget = {
     project: $("project").value.trim() || "runs/detect",
     name: $("run-name").value.trim() || "train",
-  });
+  };
   select.innerHTML = "";
   const placeholder = document.createElement("option");
   placeholder.value = "";
@@ -1856,15 +1875,28 @@ function renderTrainingSessions(sessions) {
 
   sessions.forEach((session) => {
     const option = document.createElement("option");
-    option.value = JSON.stringify({ project: session.project, name: session.name });
+    option.value = JSON.stringify({ project: session.project, name: session.name, task: session.task });
     option.textContent = session.label;
     select.appendChild(option);
   });
 
   if (currentValue && Array.from(select.options).some((option) => option.value === currentValue)) {
     select.value = currentValue;
-  } else if (Array.from(select.options).some((option) => option.value === currentTargetValue)) {
-    select.value = currentTargetValue;
+  } else {
+    const currentOption = Array.from(select.options).find((option) => {
+      if (!option.value) {
+        return false;
+      }
+      try {
+        const value = JSON.parse(option.value);
+        return value.project === currentTarget.project && value.name === currentTarget.name;
+      } catch (error) {
+        return false;
+      }
+    });
+    if (currentOption) {
+      select.value = currentOption.value;
+    }
   }
   setTrainingSessionStatus(
     sessions.length
@@ -1879,6 +1911,15 @@ async function loadTrainingSessions() {
   const payload = await apiJson("/api/train/sessions");
   state.trainingSessions = Array.isArray(payload.sessions) ? payload.sessions : [];
   renderTrainingSessions(state.trainingSessions);
+  if (isDefaultTrainingTarget() && state.trainingSessions.length) {
+    const latest = state.trainingSessions[0];
+    $("training-session-select").value = JSON.stringify({
+      project: latest.project,
+      name: latest.name,
+      task: latest.task,
+    });
+    loadSelectedTrainingSession();
+  }
 }
 
 function trainingSessionErrorMessage(error) {
@@ -1902,7 +1943,10 @@ function loadSelectedTrainingSession() {
     setTrainingSessionStatus("The selected training session could not be read.", true);
     return;
   }
-  $("project").value = session.project || "runs/detect";
+  if (session.task) {
+    $("model-size").value = modelSizeForTask(session.task, $("model-size").value);
+  }
+  $("project").value = session.project || defaultProjectForModelSize($("model-size").value);
   $("run-name").value = session.name || "train";
   updateCurrentRunDisplay();
   setPanelExpanded("results", true);
