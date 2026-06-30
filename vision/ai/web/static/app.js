@@ -44,6 +44,7 @@ const state = {
   inferenceWeights: [],
   inferenceRunning: false,
   inferenceStopping: false,
+  inferenceClearing: false,
   inferenceStoppable: false,
   inferenceInputObjectUrl: "",
   inferencePollTimer: null,
@@ -2023,6 +2024,9 @@ function syncInferenceControls() {
     || !state.inferenceStoppable;
   $("stop-inference").textContent = state.inferenceStopping ? "Stopping..." : "Stop";
   $("stop-inference").setAttribute("aria-busy", String(state.inferenceStopping));
+  $("clear-inference-output").disabled = state.inferenceRunning || state.inferenceClearing;
+  $("clear-inference-output").textContent = state.inferenceClearing ? "Clearing..." : "Clear Inference Output";
+  $("clear-inference-output").setAttribute("aria-busy", String(state.inferenceClearing));
 }
 
 function renderInferenceWeights(weights) {
@@ -2560,6 +2564,44 @@ async function stopInference() {
   } finally {
     state.inferenceStopping = false;
     $("run-inference").textContent = "Run Inference";
+    syncInferenceControls();
+  }
+}
+
+async function clearInferenceOutput() {
+  if (state.inferenceRunning || state.inferenceClearing) {
+    return;
+  }
+  state.inferenceClearing = true;
+  syncInferenceControls();
+  try {
+    const storage = await apiJson("/api/inference/storage");
+    const jobCount = Number(storage.job_count) || 0;
+    const jobsSize = Number(storage.jobs_size) || 0;
+    if (!jobCount || jobsSize <= 0) {
+      setInferenceMessage("No inference output jobs to clear.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ${formatBytes(jobsSize)} from ${jobCount} inference job${jobCount === 1 ? "" : "s"}? This removes old generated results and cannot be undone.`,
+    );
+    if (!confirmed) {
+      setInferenceMessage("Inference output cleanup cancelled.");
+      return;
+    }
+    const result = await apiJson("/api/inference/outputs", { method: "DELETE" });
+    resetInferenceResultForRun();
+    stopInferencePolling();
+    state.inferenceJobId = "";
+    state.inferenceStoppable = false;
+    setInferenceUploadProgress(false);
+    setInferenceMessage(
+      `Cleared ${formatBytes(result.freed_bytes || 0)} from ${result.removed_jobs || 0} inference job${result.removed_jobs === 1 ? "" : "s"}.`,
+    );
+  } catch (error) {
+    setInferenceMessage(error.message, true);
+  } finally {
+    state.inferenceClearing = false;
     syncInferenceControls();
   }
 }
@@ -3550,6 +3592,7 @@ $("training-session-select").addEventListener("change", () => {
   }
 });
 $("refresh-inference-weights").addEventListener("click", () => loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true)));
+$("clear-inference-output").addEventListener("click", clearInferenceOutput);
 $("run-inference").addEventListener("click", runInference);
 $("stop-inference").addEventListener("click", stopInference);
 $("project").addEventListener("input", scheduleTargetRefresh);

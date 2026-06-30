@@ -441,6 +441,72 @@ def ensure_inference_path(path: Path):
         ) from exc
 
 
+def directory_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+
+    total = 0
+    for item in path.rglob("*"):
+        try:
+            if item.is_file() or item.is_symlink():
+                total += item.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def inference_jobs_storage_payload() -> dict:
+    ensure_dirs()
+    job_dirs = [path for path in INFERENCE_JOB_ROOT.iterdir() if path.is_dir()]
+    return {
+        "jobs_path": str(INFERENCE_JOB_ROOT),
+        "job_count": len(job_dirs),
+        "jobs_size": directory_size(INFERENCE_JOB_ROOT),
+    }
+
+
+def has_active_inference_job() -> bool:
+    with inference_jobs_lock:
+        return any(
+            job.get("status") not in {"complete", "failed", "stopped"}
+            for job in inference_jobs.values()
+        )
+
+
+def clear_inference_outputs() -> dict:
+    if has_active_inference_job():
+        raise HTTPException(status_code=409, detail="Stop the active inference job before clearing outputs.")
+
+    before = inference_jobs_storage_payload()
+    removed_jobs = 0
+    job_root = INFERENCE_JOB_ROOT.resolve()
+    for child in list(INFERENCE_JOB_ROOT.iterdir()):
+        target = child.resolve()
+        try:
+            target.relative_to(job_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail="Refusing to delete outside inference jobs.") from exc
+        if child.is_dir():
+            shutil.rmtree(child)
+            removed_jobs += 1
+        elif child.is_file() or child.is_symlink():
+            child.unlink()
+
+    with inference_jobs_lock:
+        inference_jobs.clear()
+
+    after = inference_jobs_storage_payload()
+    return {
+        "jobs_path": before["jobs_path"],
+        "removed_jobs": removed_jobs,
+        "freed_bytes": max(0, before["jobs_size"] - after["jobs_size"]),
+        "before": before,
+        "after": after,
+    }
+
+
 def relative_to_repo(path: Path) -> str:
     try:
         return str(path.resolve().relative_to(REPO_ROOT.resolve()))
@@ -1626,25 +1692,37 @@ def parse_metric_row(line: str) -> Optional[dict]:
     parts = clean_log_line(line).split()
     if len(parts) < 7:
         return None
-
-    try:
-        images = int(float(parts[-6]))
-        instances = int(float(parts[-5]))
-        precision = float(parts[-4])
-        recall = float(parts[-3])
-        map50 = float(parts[-2])
-        map50_95 = float(parts[-1])
-    except ValueError:
+    if parts[0].lower() == "all":
         return None
 
-    class_name = " ".join(parts[:-6]).strip()
-    if not class_name or class_name.lower() in {"class", "epoch"}:
+    numeric_tail = []
+    for part in reversed(parts):
+        value = float_value({"value": part}, "value")
+        if value is None:
+            break
+        numeric_tail.append(value)
+    numeric_tail.reverse()
+
+    if len(numeric_tail) >= 10:
+        metric_values = numeric_tail[-10:]
+        class_parts = parts[: -10]
+        images, instances = metric_values[0], metric_values[1]
+        precision, recall, map50, map50_95 = metric_values[-4:]
+    elif len(numeric_tail) >= 6:
+        metric_values = numeric_tail[-6:]
+        class_parts = parts[: -6]
+        images, instances, precision, recall, map50, map50_95 = metric_values
+    else:
+        return None
+
+    class_name = " ".join(class_parts).strip()
+    if not class_name or class_name.lower() in {"all", "class", "epoch"}:
         return None
 
     return {
         "class_name": class_name,
-        "images": images,
-        "instances": instances,
+        "images": int(images),
+        "instances": int(instances),
         "precision": format_metric(precision),
         "recall": format_metric(recall),
         "f1": format_metric(f1_from_precision_recall(precision, recall)),
@@ -2966,6 +3044,16 @@ def config():
 @app.get("/api/inference/weights")
 def inference_weights():
     return {"weights": available_detection_weights()}
+
+
+@app.get("/api/inference/storage")
+def inference_storage():
+    return inference_jobs_storage_payload()
+
+
+@app.delete("/api/inference/outputs")
+def delete_inference_outputs():
+    return clear_inference_outputs()
 
 
 @app.get("/api/train/sessions")

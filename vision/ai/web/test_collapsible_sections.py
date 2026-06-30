@@ -2,7 +2,9 @@
 
 import ast
 from html.parser import HTMLParser
+import math
 from pathlib import Path
+from typing import Optional
 import unittest
 
 
@@ -145,6 +147,55 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('name="Section"', source)
         self.assertIn('name="Subsection"', source)
         self.assertGreaterEqual(source.count("keepWithNext=True"), 2)
+
+    def test_log_metric_parser_handles_segmentation_rows(self):
+        app_module = ast.parse(APP_PY.read_text(encoding="utf-8"))
+        parse_metric_row_node = next(
+            node
+            for node in app_module.body
+            if isinstance(node, ast.FunctionDef) and node.name == "parse_metric_row"
+        )
+        def float_value_stub(row, key):
+            try:
+                value = float(str(row.get(key)).strip())
+            except ValueError:
+                return None
+            return value if math.isfinite(value) else None
+
+        namespace = {
+            "Optional": Optional,
+            "clean_log_line": lambda value: value.strip(),
+            "float_value": float_value_stub,
+            "format_metric": lambda value: round(value, 4) if value is not None and math.isfinite(value) else None,
+            "f1_from_precision_recall": lambda precision, recall: (
+                None
+                if precision is None or recall is None or precision + recall <= 0
+                else 2 * precision * recall / (precision + recall)
+            ),
+        }
+        exec(compile(ast.Module([parse_metric_row_node], []), str(APP_PY), "exec"), namespace)
+        parse_metric_row = namespace["parse_metric_row"]
+
+        detection_row = parse_metric_row("ball 127 127 0.838 0.57 0.671 0.378")
+        self.assertEqual(detection_row["class_name"], "ball")
+        self.assertEqual(detection_row["images"], 127)
+        self.assertEqual(detection_row["instances"], 127)
+        self.assertEqual(detection_row["precision"], 0.838)
+
+        segmentation_row = parse_metric_row(
+            "palm-tree 2627 13174 0.699 0.645 0.701 0.671 0.706 0.669 0.697 0.434"
+        )
+        self.assertEqual(segmentation_row["class_name"], "palm-tree")
+        self.assertEqual(segmentation_row["images"], 2627)
+        self.assertEqual(segmentation_row["instances"], 13174)
+        self.assertEqual(segmentation_row["precision"], 0.706)
+        self.assertEqual(segmentation_row["recall"], 0.669)
+        self.assertEqual(segmentation_row["map50"], 0.697)
+        self.assertEqual(segmentation_row["map50_95"], 0.434)
+
+        self.assertIsNone(parse_metric_row(
+            "all 2943 19190 0.599 0.151 0 0.596 0.139 0.128 0.0559"
+        ))
 
     def test_segmentation_metrics_use_mask_columns_and_labels(self):
         app_source = APP_PY.read_text(encoding="utf-8")
