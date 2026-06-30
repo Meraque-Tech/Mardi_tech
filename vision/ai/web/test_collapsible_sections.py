@@ -54,7 +54,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('id="classes"', markup)
         self.assertIn("readonly", markup)
 
-    def test_model_selector_exposes_yolov8_task_families(self):
+    def test_model_selector_exposes_supported_yolo_task_families(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
 
         expected_options = {
@@ -74,10 +74,21 @@ class CollapsibleSectionTests(unittest.TestCase):
             "large-cls": "yolov8l-cls.pt",
             "xlarge-cls": "yolov8x-cls.pt",
         }
+        for family in ("yolo11", "yolo26"):
+            for size_key, size_suffix in {
+                "nano": "n",
+                "small": "s",
+                "medium": "m",
+                "large": "l",
+                "xlarge": "x",
+            }.items():
+                expected_options[f"{family}-{size_key}"] = f"{family}{size_suffix}.pt"
+                expected_options[f"{family}-{size_key}-seg"] = f"{family}{size_suffix}-seg.pt"
+                expected_options[f"{family}-{size_key}-cls"] = f"{family}{size_suffix}-cls.pt"
 
-        self.assertIn('optgroup label="Detection"', markup)
-        self.assertIn('optgroup label="Segmentation"', markup)
-        self.assertIn('optgroup label="Classification"', markup)
+        for task in ("Detection", "Segmentation", "Classification"):
+            for family in ("YOLOv8", "YOLO11", "YOLO26"):
+                self.assertIn(f'optgroup label="{task} - {family}"', markup)
         for value, checkpoint in expected_options.items():
             self.assertIn(f'<option value="{value}">', markup)
             self.assertIn(checkpoint, markup)
