@@ -71,6 +71,28 @@ const STATUS_LABELS = {
   error: "Error",
 };
 
+const AUGMENTATION_DEFAULTS = {
+  "disable-ultralytics-albumentations": true,
+  mosaic: 1.0,
+  "close-mosaic": 10,
+  "hsv-h": 0.015,
+  "hsv-s": 0.7,
+  "hsv-v": 0.4,
+  degrees: 0.0,
+  translate: 0.1,
+  scale: 0.5,
+  shear: 0.0,
+  perspective: 0.0,
+  flipud: 0.0,
+  fliplr: 0.5,
+  bgr: 0.0,
+  mixup: 0.0,
+  cutmix: 0.0,
+  "copy-paste": 0.0,
+  "auto-augment": "",
+  erasing: 0.0,
+};
+
 const CONTROL_DEFAULTS = {
   "model-size": "nano",
   epochs: 100,
@@ -91,6 +113,7 @@ const CONTROL_DEFAULTS = {
   "cos-lr": false,
   "exist-ok": false,
   resume: false,
+  ...AUGMENTATION_DEFAULTS,
 };
 
 const TASK_PROJECT_DEFAULTS = {
@@ -116,6 +139,7 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 3.0,
     "cos-lr": false,
+    ...AUGMENTATION_DEFAULTS,
   },
   low_vram: {
     "model-size": "nano",
@@ -130,6 +154,7 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 3.0,
     "cos-lr": true,
+    ...AUGMENTATION_DEFAULTS,
   },
   quick: {
     "model-size": "nano",
@@ -144,6 +169,7 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 1.0,
     "cos-lr": false,
+    ...AUGMENTATION_DEFAULTS,
   },
   accuracy: {
     "model-size": "small",
@@ -158,6 +184,7 @@ const TRAINING_PRESETS = {
     "weight-decay": 0.0005,
     "warmup-epochs": 3.0,
     "cos-lr": true,
+    ...AUGMENTATION_DEFAULTS,
   },
 };
 
@@ -623,6 +650,11 @@ function numberValue(id) {
 function optionalNumberValue(id) {
   const value = $(id).value.trim();
   return value === "" ? null : Number(value);
+}
+
+function optionalTextValue(id) {
+  const value = $(id).value.trim();
+  return value === "" ? null : value;
 }
 
 function classNames() {
@@ -2759,6 +2791,25 @@ async function startTraining() {
         project: $("project").value,
         name: $("run-name").value,
         resume,
+        disable_ultralytics_albumentations: $("disable-ultralytics-albumentations").checked,
+        mosaic: numberValue("mosaic"),
+        close_mosaic: numberValue("close-mosaic"),
+        hsv_h: numberValue("hsv-h"),
+        hsv_s: numberValue("hsv-s"),
+        hsv_v: numberValue("hsv-v"),
+        degrees: numberValue("degrees"),
+        translate: numberValue("translate"),
+        scale: numberValue("scale"),
+        shear: numberValue("shear"),
+        perspective: numberValue("perspective"),
+        flipud: numberValue("flipud"),
+        fliplr: numberValue("fliplr"),
+        bgr: numberValue("bgr"),
+        mixup: numberValue("mixup"),
+        cutmix: numberValue("cutmix"),
+        copy_paste: numberValue("copy-paste"),
+        auto_augment: optionalTextValue("auto-augment"),
+        erasing: numberValue("erasing"),
       }),
     });
     state.running = true;
@@ -3504,7 +3555,10 @@ $("reset-advanced").addEventListener("click", () => {
   setActivePreset(null);
   setMessage("Reset training controls to defaults.");
 });
-const presetControlIds = new Set(Object.values(TRAINING_PRESETS).flatMap((preset) => Object.keys(preset)));
+const presetControlIds = new Set([
+  ...Object.keys(CONTROL_DEFAULTS),
+  ...Object.values(TRAINING_PRESETS).flatMap((preset) => Object.keys(preset)),
+]);
 presetControlIds.forEach((id) => {
   const control = $(id);
   if (control) {

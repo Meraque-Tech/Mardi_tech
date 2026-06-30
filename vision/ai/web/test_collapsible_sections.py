@@ -135,6 +135,44 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('"Mask" if use_mask else "Box"', train_source)
         self.assertIn('"Segmentation Mask Metrics by Epoch"', train_source)
 
+    def test_ultralytics_augmentation_controls_are_exposed(self):
+        markup = INDEX_HTML.read_text(encoding="utf-8")
+        script = APP_JS.read_text(encoding="utf-8")
+        app_source = APP_PY.read_text(encoding="utf-8")
+        train_source = TRAIN_YOLOV8.read_text(encoding="utf-8")
+        expected_controls = {
+            "disable-ultralytics-albumentations": "disable_ultralytics_albumentations",
+            "mosaic": "mosaic",
+            "close-mosaic": "close_mosaic",
+            "hsv-h": "hsv_h",
+            "hsv-s": "hsv_s",
+            "hsv-v": "hsv_v",
+            "degrees": "degrees",
+            "translate": "translate",
+            "scale": "scale",
+            "shear": "shear",
+            "perspective": "perspective",
+            "flipud": "flipud",
+            "fliplr": "fliplr",
+            "bgr": "bgr",
+            "mixup": "mixup",
+            "cutmix": "cutmix",
+            "copy-paste": "copy_paste",
+            "auto-augment": "auto_augment",
+            "erasing": "erasing",
+        }
+
+        self.assertIn("<h3>Augmentation</h3>", markup)
+        for control_id, payload_key in expected_controls.items():
+            self.assertIn(f'id="{control_id}"', markup)
+            self.assertIn(f"{payload_key}:", script)
+            self.assertIn(payload_key, app_source)
+
+        self.assertIn("--disable-ultralytics-albumentations", app_source)
+        self.assertIn("--auto-augment", app_source)
+        self.assertIn("get_training_augmentations(config)", train_source)
+        self.assertIn("nullcontext()", train_source)
+
 
 if __name__ == "__main__":
     unittest.main()

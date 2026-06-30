@@ -1,6 +1,12 @@
 """Tests for the YOLO training augmentation configuration."""
 
-from vision.ai.train.train_yolov8 import TRAINING_AUGMENTATIONS
+from argparse import Namespace
+
+from vision.ai.train.train_yolov8 import (
+    TRAINING_AUGMENTATIONS,
+    get_training_augmentations,
+    get_training_config,
+)
 
 
 def test_requested_ultralytics_augmentations_are_enabled():
@@ -23,4 +29,76 @@ def test_requested_ultralytics_augmentations_are_enabled():
         "copy_paste": 0.0,
         "auto_augment": None,
         "erasing": 0.0,
+    }
+
+
+def test_cli_ultralytics_augmentations_override_defaults():
+    args = Namespace(
+        data=None,
+        model=None,
+        epochs=None,
+        imgsz=None,
+        batch=None,
+        patience=None,
+        save_period=None,
+        device=None,
+        workers=None,
+        optimizer=None,
+        lr0=None,
+        lrf=None,
+        weight_decay=None,
+        cos_lr=None,
+        warmup_epochs=None,
+        freeze=None,
+        pretrained=None,
+        activation=None,
+        exist_ok=None,
+        seed=None,
+        project=None,
+        name=None,
+        resume=None,
+        disable_ultralytics_albumentations=False,
+        mosaic=0.25,
+        close_mosaic=0,
+        hsv_h=0.02,
+        hsv_s=0.6,
+        hsv_v=0.3,
+        degrees=5.0,
+        translate=0.2,
+        scale=0.25,
+        shear=1.0,
+        perspective=0.001,
+        flipud=0.1,
+        fliplr=0.75,
+        bgr=0.2,
+        mixup=0.15,
+        cutmix=0.05,
+        copy_paste=0.1,
+        auto_augment="randaugment",
+        erasing=0.2,
+    )
+
+    config = get_training_config(args)
+    augmentations = get_training_augmentations(config)
+
+    assert config["disable_ultralytics_albumentations"] is False
+    assert augmentations == {
+        "mosaic": 0.25,
+        "close_mosaic": 0,
+        "hsv_h": 0.02,
+        "hsv_s": 0.6,
+        "hsv_v": 0.3,
+        "degrees": 5.0,
+        "translate": 0.2,
+        "scale": 0.25,
+        "shear": 1.0,
+        "perspective": 0.001,
+        "flipud": 0.1,
+        "fliplr": 0.75,
+        "bgr": 0.2,
+        "mixup": 0.15,
+        "cutmix": 0.05,
+        "copy_paste": 0.1,
+        "auto_augment": "randaugment",
+        "erasing": 0.2,
     }

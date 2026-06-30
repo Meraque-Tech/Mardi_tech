@@ -177,6 +177,25 @@ class TrainRequest(BaseModel):
     project: str = "runs/detect"
     name: str = "train"
     resume: bool = False
+    disable_ultralytics_albumentations: bool = True
+    mosaic: float = Field(default=1.0, ge=0, le=1)
+    close_mosaic: int = Field(default=10, ge=0)
+    hsv_h: float = Field(default=0.015, ge=0)
+    hsv_s: float = Field(default=0.7, ge=0)
+    hsv_v: float = Field(default=0.4, ge=0)
+    degrees: float = Field(default=0.0, ge=0)
+    translate: float = Field(default=0.1, ge=0)
+    scale: float = Field(default=0.5, ge=0)
+    shear: float = Field(default=0.0, ge=0)
+    perspective: float = Field(default=0.0, ge=0)
+    flipud: float = Field(default=0.0, ge=0, le=1)
+    fliplr: float = Field(default=0.5, ge=0, le=1)
+    bgr: float = Field(default=0.0, ge=0, le=1)
+    mixup: float = Field(default=0.0, ge=0, le=1)
+    cutmix: float = Field(default=0.0, ge=0, le=1)
+    copy_paste: float = Field(default=0.0, ge=0, le=1)
+    auto_augment: Optional[str] = None
+    erasing: float = Field(default=0.0, ge=0, le=1)
 
 
 class WeightRequest(BaseModel):
@@ -4219,7 +4238,27 @@ def start_training(request: TrainRequest):
         "--seed", str(request.seed),
         "--project", str(training_project_path),
         "--name", request.name,
+        "--disable-ultralytics-albumentations", str(request.disable_ultralytics_albumentations).lower(),
+        "--mosaic", str(request.mosaic),
+        "--close-mosaic", str(request.close_mosaic),
+        "--hsv-h", str(request.hsv_h),
+        "--hsv-s", str(request.hsv_s),
+        "--hsv-v", str(request.hsv_v),
+        "--degrees", str(request.degrees),
+        "--translate", str(request.translate),
+        "--scale", str(request.scale),
+        "--shear", str(request.shear),
+        "--perspective", str(request.perspective),
+        "--flipud", str(request.flipud),
+        "--fliplr", str(request.fliplr),
+        "--bgr", str(request.bgr),
+        "--mixup", str(request.mixup),
+        "--cutmix", str(request.cutmix),
+        "--copy-paste", str(request.copy_paste),
+        "--erasing", str(request.erasing),
     ]
+    if request.auto_augment:
+        cmd.extend(["--auto-augment", request.auto_augment])
 
     if dataset_yaml is not None and not request.resume:
         cmd.extend(["--data", str(dataset_yaml)])

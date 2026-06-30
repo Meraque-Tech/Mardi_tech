@@ -401,6 +401,101 @@
             </div>
 
             <div class="advanced-group">
+              <h3>Augmentation</h3>
+            <p class="field-note">If unsure, keep the defaults.</p>
+            <div class="grid three">
+              <label class="checkbox-row inline-check">
+                <input id="disable-ultralytics-albumentations" type="checkbox" checked>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Disable Ultralytics' optional Albumentations defaults. Keep checked to use only the explicit augmentation values below.">Disable Albumentations</span>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Probability of combining four training images into a mosaic sample.">Mosaic</span>
+                <input id="mosaic" type="number" min="0" max="1" step="0.05" value="1.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Disable mosaic for the final N training epochs.">Close mosaic</span>
+                <input id="close-mosaic" type="number" min="0" value="10">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="HSV hue augmentation gain.">HSV hue</span>
+                <input id="hsv-h" type="number" min="0" step="0.001" value="0.015">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="HSV saturation augmentation gain.">HSV saturation</span>
+                <input id="hsv-s" type="number" min="0" step="0.05" value="0.7">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="HSV brightness/value augmentation gain.">HSV value</span>
+                <input id="hsv-v" type="number" min="0" step="0.05" value="0.4">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Maximum random rotation in degrees.">Degrees</span>
+                <input id="degrees" type="number" min="0" step="0.1" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Maximum random image translation as a fraction of image size.">Translate</span>
+                <input id="translate" type="number" min="0" step="0.01" value="0.1">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Random scale gain used during geometric augmentation.">Scale</span>
+                <input id="scale" type="number" min="0" step="0.05" value="0.5">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Maximum random shear in degrees.">Shear</span>
+                <input id="shear" type="number" min="0" step="0.1" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Perspective transform strength. Small values can be aggressive.">Perspective</span>
+                <input id="perspective" type="number" min="0" step="0.0001" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Vertical flip probability. Usually kept at 0 for upright camera images.">Vertical flip</span>
+                <input id="flipud" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Horizontal flip probability.">Horizontal flip</span>
+                <input id="fliplr" type="number" min="0" max="1" step="0.05" value="0.5">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="BGR channel swap probability.">BGR swap</span>
+                <input id="bgr" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="MixUp augmentation probability.">MixUp</span>
+                <input id="mixup" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="CutMix augmentation probability.">CutMix</span>
+                <input id="cutmix" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Copy-paste augmentation probability for segmentation-style samples.">Copy paste</span>
+                <input id="copy-paste" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Random erasing probability. Most useful for classification; default here is disabled.">Erasing</span>
+                <input id="erasing" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="AutoAugment policy. Leave blank for null. Common values include randaugment, autoaugment, and augmix when supported by the selected task.">Auto augment</span>
+                <input id="auto-augment" type="text" placeholder="blank = null">
+              </label>
+            </div>
+            </div>
+
+            <div class="advanced-group">
               <h3>Output</h3>
             <label class="checkbox-row inline-check">
               <input id="exist-ok" type="checkbox">

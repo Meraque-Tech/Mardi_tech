@@ -3,7 +3,7 @@
 
 import argparse
 import csv
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from functools import wraps
 import json
 import os
@@ -36,6 +36,7 @@ TRAINING_CONFIG = {
     "project": "runs/detect",
     "name": "train",
     "resume": False,
+    "disable_ultralytics_albumentations": True,
 }
 
 # Apply the selected Ultralytics online augmentations during training. Keep
@@ -137,6 +138,13 @@ def str_to_bool(value: str) -> bool:
     if normalized in {"0", "false", "no", "n", "off"}:
         return False
     raise argparse.ArgumentTypeError(f"Expected a boolean value, got: {value}")
+
+
+def none_or_text(value: str):
+    normalized = value.strip()
+    if normalized.lower() in {"", "none", "null"}:
+        return None
+    return normalized
 
 
 def set_activation(name: str):
@@ -297,6 +305,30 @@ def parse_args():
         default=None,
         help="Resume training from the configured or given checkpoint.",
     )
+    parser.add_argument(
+        "--disable-ultralytics-albumentations",
+        type=str_to_bool,
+        default=None,
+        help="Disable Ultralytics' optional Albumentations defaults. Overrides TRAINING_CONFIG.",
+    )
+    parser.add_argument("--mosaic", type=float, default=None, help="Mosaic augmentation probability.")
+    parser.add_argument("--close-mosaic", type=int, default=None, help="Disable mosaic for the final N epochs.")
+    parser.add_argument("--hsv-h", type=float, default=None, help="HSV hue augmentation gain.")
+    parser.add_argument("--hsv-s", type=float, default=None, help="HSV saturation augmentation gain.")
+    parser.add_argument("--hsv-v", type=float, default=None, help="HSV value augmentation gain.")
+    parser.add_argument("--degrees", type=float, default=None, help="Image rotation degrees.")
+    parser.add_argument("--translate", type=float, default=None, help="Image translation fraction.")
+    parser.add_argument("--scale", type=float, default=None, help="Image scale gain.")
+    parser.add_argument("--shear", type=float, default=None, help="Image shear degrees.")
+    parser.add_argument("--perspective", type=float, default=None, help="Image perspective gain.")
+    parser.add_argument("--flipud", type=float, default=None, help="Vertical flip probability.")
+    parser.add_argument("--fliplr", type=float, default=None, help="Horizontal flip probability.")
+    parser.add_argument("--bgr", type=float, default=None, help="BGR channel swap probability.")
+    parser.add_argument("--mixup", type=float, default=None, help="MixUp augmentation probability.")
+    parser.add_argument("--cutmix", type=float, default=None, help="CutMix augmentation probability.")
+    parser.add_argument("--copy-paste", type=float, default=None, help="Copy-paste augmentation probability.")
+    parser.add_argument("--auto-augment", type=none_or_text, default=None, help="AutoAugment policy, or blank/none/null to disable.")
+    parser.add_argument("--erasing", type=float, default=None, help="Random erasing probability.")
     return parser.parse_args()
 
 
@@ -308,6 +340,14 @@ def get_training_config(args):
             config[key] = value
 
     return config
+
+
+def get_training_augmentations(config):
+    augmentations = TRAINING_AUGMENTATIONS.copy()
+    for key in augmentations:
+        if key in config and config[key] is not None:
+            augmentations[key] = config[key]
+    return augmentations
 
 
 def row_float(row: dict, key: str):
@@ -772,7 +812,7 @@ def main():
         "project": config["project"],
         "name": config["name"],
         "resume": config["resume"],
-        **TRAINING_AUGMENTATIONS,
+        **get_training_augmentations(config),
     }
 
     if not config["resume"]:
@@ -784,7 +824,12 @@ def main():
     if config["device"] is not None:
         train_kwargs["device"] = config["device"]
 
-    with use_disabled_ultralytics_albumentations(), use_actual_confusion_matrix_axis_label():
+    albumentations_context = (
+        use_disabled_ultralytics_albumentations()
+        if config["disable_ultralytics_albumentations"]
+        else nullcontext()
+    )
+    with albumentations_context, use_actual_confusion_matrix_axis_label():
         metrics = model.train(**train_kwargs)
 
     run_dir = Path(getattr(model.trainer, "save_dir", Path(config["project"]) / config["name"]))
