@@ -10,6 +10,7 @@ INDEX_HTML = Path(__file__).parent / "static" / "index.html"
 WEB_DIR = Path(__file__).parent
 APP_PY = WEB_DIR / "app.py"
 APP_JS = WEB_DIR / "static" / "app.js"
+REPORT_GENERATOR = WEB_DIR / "report_generator.py"
 TRAIN_YOLOV8 = WEB_DIR.parent / "train" / "train_yolov8.py"
 EXPECTED_PANELS = {"dataset", "training", "gpu", "advanced", "logs", "results", "testing"}
 
@@ -126,6 +127,13 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("task: latest.task", script)
         self.assertIn("modelSizeForTask(session.task", script)
         self.assertIn("defaultProjectForModelSize($(\"model-size\").value)", script)
+
+    def test_report_headings_stay_with_following_content(self):
+        source = REPORT_GENERATOR.read_text(encoding="utf-8")
+
+        self.assertIn('name="Section"', source)
+        self.assertIn('name="Subsection"', source)
+        self.assertGreaterEqual(source.count("keepWithNext=True"), 2)
 
     def test_segmentation_metrics_use_mask_columns_and_labels(self):
         app_source = APP_PY.read_text(encoding="utf-8")

@@ -531,8 +531,8 @@ class _ReportBuilder:
         self.story = []
         styles = getSampleStyleSheet()
         styles.add(ParagraphStyle(name="ReportTitle", parent=styles["Title"], alignment=TA_CENTER, textColor=colors.HexColor("#173b36"), spaceAfter=14))
-        styles.add(ParagraphStyle(name="Section", parent=styles["Heading2"], textColor=colors.HexColor("#176b5b"), spaceBefore=12, spaceAfter=7))
-        styles.add(ParagraphStyle(name="Subsection", parent=styles["Heading3"], textColor=colors.HexColor("#24333f"), spaceBefore=8, spaceAfter=5))
+        styles.add(ParagraphStyle(name="Section", parent=styles["Heading2"], textColor=colors.HexColor("#176b5b"), spaceBefore=12, spaceAfter=7, keepWithNext=True))
+        styles.add(ParagraphStyle(name="Subsection", parent=styles["Heading3"], textColor=colors.HexColor("#24333f"), spaceBefore=8, spaceAfter=5, keepWithNext=True))
         styles.add(ParagraphStyle(name="Small", parent=styles["BodyText"], fontSize=8, leading=10))
         self.styles = styles
         output_path.parent.mkdir(parents=True, exist_ok=True)
