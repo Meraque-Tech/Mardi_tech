@@ -1550,6 +1550,19 @@ def sum_values(row: dict, keys: list[str]) -> Optional[float]:
     return sum(value for value in values if value is not None)
 
 
+def loss_sum(row: dict, prefix: str) -> Optional[float]:
+    values = []
+    for key, value in row.items():
+        normalized = str(key).strip()
+        if normalized.startswith(f"{prefix}/") and normalized.endswith("_loss"):
+            parsed = float_value(row, normalized)
+            if parsed is not None:
+                values.append(parsed)
+    if values:
+        return sum(values)
+    return sum_values(row, [f"{prefix}/box_loss", f"{prefix}/cls_loss", f"{prefix}/dfl_loss"])
+
+
 def format_metric(value: Optional[float], digits: int = 4):
     return round(value, digits) if value is not None and math.isfinite(value) else None
 
@@ -1625,15 +1638,96 @@ def parse_class_metrics_from_log(log_path: Path) -> dict:
     }
 
 
-def build_metric_history(rows: list[dict]) -> list[dict]:
+def infer_task_from_results_columns(row: dict) -> str:
+    keys = {str(key).strip() for key in row}
+    if "metrics/mAP50(M)" in keys or "metrics/mAP50-95(M)" in keys:
+        return "segment"
+    if "metrics/accuracy_top1" in keys or "metrics/accuracy_top5" in keys:
+        return "classify"
+    return "detect"
+
+
+def infer_run_task(run_dir: Path, row: Optional[dict] = None) -> str:
+    context = load_training_report_context(run_dir)
+    task = str(context.get("task") or context.get("hyperparameters", {}).get("task") or "").lower()
+    if task in {"detect", "segment", "classify"}:
+        return task
+    parts = {part.lower() for part in run_dir.parts}
+    if "segment" in parts:
+        return "segment"
+    if "classify" in parts:
+        return "classify"
+    if row:
+        return infer_task_from_results_columns(row)
+    return "detect"
+
+
+def metric_profile(task: str, row: dict) -> dict:
+    if task == "segment":
+        use_mask = float_value(row, "metrics/mAP50(M)") is not None or float_value(row, "metrics/mAP50-95(M)") is not None
+        suffix = "M" if use_mask else "B"
+        metric_type = "mask" if use_mask else "box"
+        prefix = "Mask " if use_mask else "Box "
+        return {
+            "task": "segment",
+            "metric_type": metric_type,
+            "metric_label": "Segmentation Mask" if use_mask else "Segmentation Box",
+            "chart_title": "Segmentation Mask Performance by Epoch" if use_mask else "Segmentation Box Performance by Epoch",
+            "precision_key": f"metrics/precision({suffix})",
+            "recall_key": f"metrics/recall({suffix})",
+            "map50_key": f"metrics/mAP50({suffix})",
+            "map50_95_key": f"metrics/mAP50-95({suffix})",
+            "labels": {
+                "precision": f"{prefix}Precision",
+                "recall": f"{prefix}Recall",
+                "map50": f"{prefix}mAP50",
+                "map50_95": f"{prefix}mAP50-95",
+            },
+        }
+    if task == "classify":
+        return {
+            "task": "classify",
+            "metric_type": "classification",
+            "metric_label": "Classification",
+            "chart_title": "Classification Performance by Epoch",
+            "precision_key": None,
+            "recall_key": None,
+            "map50_key": "metrics/accuracy_top1",
+            "map50_95_key": "metrics/accuracy_top5",
+            "labels": {
+                "precision": "Precision",
+                "recall": "Recall",
+                "map50": "Top-1 Accuracy",
+                "map50_95": "Top-5 Accuracy",
+            },
+        }
+    return {
+        "task": "detect",
+        "metric_type": "box",
+        "metric_label": "Detection",
+        "chart_title": "Detection Performance by Epoch",
+        "precision_key": "metrics/precision(B)",
+        "recall_key": "metrics/recall(B)",
+        "map50_key": "metrics/mAP50(B)",
+        "map50_95_key": "metrics/mAP50-95(B)",
+        "labels": {
+            "precision": "Precision",
+            "recall": "Recall",
+            "map50": "mAP50",
+            "map50_95": "mAP50-95",
+        },
+    }
+
+
+def build_metric_history(rows: list[dict], profile: dict) -> list[dict]:
     history = []
     for row in rows:
         history.append({
             "epoch": int(float_value(row, "epoch") or 0),
-            "map50": format_metric(float_value(row, "metrics/mAP50(B)")),
-            "map50_95": format_metric(float_value(row, "metrics/mAP50-95(B)")),
-            "training_loss": format_metric(sum_values(row, ["train/box_loss", "train/cls_loss", "train/dfl_loss"])),
-            "testing_loss": format_metric(sum_values(row, ["val/box_loss", "val/cls_loss", "val/dfl_loss"])),
+            "map50": format_metric(float_value(row, profile["map50_key"])) if profile.get("map50_key") else None,
+            "map50_95": format_metric(float_value(row, profile["map50_95_key"])) if profile.get("map50_95_key") else None,
+            "training_loss": format_metric(loss_sum(row, "train")),
+            "testing_loss": format_metric(loss_sum(row, "val")),
         })
     return history
 
@@ -1713,12 +1807,14 @@ def read_run_metrics(run_dir: Path) -> dict:
         }
 
     row = rows[-1]
-    precision = float_value(row, "metrics/precision(B)")
-    recall = float_value(row, "metrics/recall(B)")
-    training_loss = sum_values(row, ["train/box_loss", "train/cls_loss", "train/dfl_loss"])
-    testing_loss = sum_values(row, ["val/box_loss", "val/cls_loss", "val/dfl_loss"])
-    map50 = float_value(row, "metrics/mAP50(B)")
-    map50_95 = float_value(row, "metrics/mAP50-95(B)")
+    task = infer_run_task(run_dir, row)
+    profile = metric_profile(task, row)
+    precision = float_value(row, profile["precision_key"]) if profile.get("precision_key") else None
+    recall = float_value(row, profile["recall_key"]) if profile.get("recall_key") else None
+    training_loss = loss_sum(row, "train")
+    testing_loss = loss_sum(row, "val")
+    map50 = float_value(row, profile["map50_key"]) if profile.get("map50_key") else None
+    map50_95 = float_value(row, profile["map50_95_key"]) if profile.get("map50_95_key") else None
     web_metrics = read_web_metrics(run_dir)
     class_metrics = {
         "macro_f1": web_metrics.get("macro_f1"),
@@ -1735,13 +1831,18 @@ def read_run_metrics(run_dir: Path) -> dict:
             "classes": [],
             "note": "ROC-AUC will appear after web metrics are generated for this run.",
         }
-    history = build_metric_history(rows)
+    history = build_metric_history(rows, profile)
 
     return {
         "available": True,
         "run_dir": str(run_dir),
         "results_csv": str(results_path),
         "epoch": int(float_value(row, "epoch") or 0),
+        "task": profile["task"],
+        "metric_type": profile["metric_type"],
+        "metric_label": profile["metric_label"],
+        "metric_labels": profile["labels"],
+        "chart_title": profile["chart_title"],
         "macro_f1": class_metrics["macro_f1"],
         "weighted_f1": class_metrics["weighted_f1"],
         "per_class": class_metrics["classes"],

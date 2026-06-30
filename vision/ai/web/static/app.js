@@ -6,6 +6,8 @@ const state = {
   preparationPollRevision: 0,
   pollTimer: null,
   metricsHistory: [],
+  metricLabels: {},
+  performanceChartTitle: "Detection Performance by Epoch",
   metricsAvailable: false,
   gpuSignature: "",
   logMode: "recent",
@@ -1452,6 +1454,28 @@ function renderDatasetSummary(summary) {
   `;
 }
 
+const DEFAULT_METRIC_LABELS = {
+  precision: "Precision",
+  recall: "Recall",
+  map50: "mAP50",
+  map50_95: "mAP50-95",
+};
+
+function metricLabels(labels = {}) {
+  return { ...DEFAULT_METRIC_LABELS, ...(labels || {}) };
+}
+
+function applyMetricLabels(labels = {}, chartTitle = "Detection Performance by Epoch") {
+  const merged = metricLabels(labels);
+  state.metricLabels = merged;
+  state.performanceChartTitle = chartTitle;
+  $("metric-precision-label").textContent = merged.precision;
+  $("metric-recall-label").textContent = merged.recall;
+  $("metric-map50-label").textContent = merged.map50;
+  $("metric-map-label").textContent = merged.map50_95;
+  $("performance-chart-title").textContent = chartTitle;
+}
+
 function formatBestMetric(row, key, label) {
   if (!row || row[key] === null || row[key] === undefined) {
     return "";
@@ -1459,7 +1483,7 @@ function formatBestMetric(row, key, label) {
   return `<div><span>${label}</span><strong>${metricText(row[key])}</strong><small>Epoch ${row.epoch}</small></div>`;
 }
 
-function renderBestMetrics(best, history = []) {
+function renderBestMetrics(best, history = [], labels = {}) {
   const container = $("best-metrics");
   if (!best) {
     container.innerHTML = "";
@@ -1474,9 +1498,10 @@ function renderBestMetrics(best, history = []) {
       ));
     }
   }
+  const mergedLabels = metricLabels(labels);
   const rows = [
-    formatBestMetric(summary.best_map50_95, "map50_95", "Best mAP50-95"),
-    formatBestMetric(summary.best_map50, "map50", "Best mAP50"),
+    formatBestMetric(summary.best_map50_95, "map50_95", `Best ${mergedLabels.map50_95}`),
+    formatBestMetric(summary.best_map50, "map50", `Best ${mergedLabels.map50}`),
     formatBestMetric(summary.lowest_training_loss, "training_loss", "Lowest training loss"),
     formatBestMetric(summary.lowest_validation_loss, "testing_loss", "Lowest validation loss"),
   ].filter(Boolean);
@@ -1723,12 +1748,13 @@ function drawLineChart(canvasId, history, series) {
   });
 }
 
-function renderMetricCharts(history) {
+function renderMetricCharts(history, labels = {}) {
   const rows = Array.isArray(history) ? history : [];
   state.metricsHistory = rows;
+  const mergedLabels = metricLabels(labels);
   drawLineChart("accuracy-chart", rows, [
-    { key: "map50", label: "mAP50", color: "#16745f" },
-    { key: "map50_95", label: "mAP50-95", color: "#5b6ee1" },
+    { key: "map50", label: mergedLabels.map50, color: "#16745f" },
+    { key: "map50_95", label: mergedLabels.map50_95, color: "#5b6ee1" },
   ]);
   drawLineChart("loss-chart", rows, [
     { key: "training_loss", label: "Train loss", color: "#a43d3d" },
@@ -1737,7 +1763,7 @@ function renderMetricCharts(history) {
 }
 
 function redrawCharts() {
-  renderMetricCharts(state.metricsHistory);
+  renderMetricCharts(state.metricsHistory, state.metricLabels);
 }
 
 function saveBlobWithBrowserDownload(blob, filename) {
@@ -2829,6 +2855,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
 
     if (!metrics.available) {
       state.metricsAvailable = false;
+      applyMetricLabels();
       $("training-results-panel").classList.remove("has-results");
       $("metric-precision").textContent = "-";
       $("metric-recall").textContent = "-";
@@ -2849,6 +2876,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     }
 
     state.metricsAvailable = true;
+    applyMetricLabels(metrics.metric_labels, metrics.chart_title || "Detection Performance by Epoch");
     $("training-results-panel").classList.add("has-results");
     $("metric-precision").textContent = metricText(metrics.precision);
     $("metric-recall").textContent = metricText(metrics.recall);
@@ -2858,9 +2886,9 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     $("metric-test-loss").textContent = metricText(metrics.testing_loss);
     $("metric-map50").textContent = metricText(metrics.map50);
     $("metric-map").textContent = metricText(metrics.map50_95);
-    renderBestMetrics(metrics.best, metrics.history);
+    renderBestMetrics(metrics.best, metrics.history, metrics.metric_labels);
     renderClassMetrics(metrics.per_class);
-    renderMetricCharts(metrics.history);
+    renderMetricCharts(metrics.history, metrics.metric_labels);
     setArtifactButtons(metrics.artifacts || true);
     renderConfusionMatrices(metrics.artifacts || {}, target);
     renderRocAuc(metrics.roc_auc || {}, metrics.artifacts || {}, target);

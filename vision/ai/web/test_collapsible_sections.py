@@ -10,6 +10,7 @@ INDEX_HTML = Path(__file__).parent / "static" / "index.html"
 WEB_DIR = Path(__file__).parent
 APP_PY = WEB_DIR / "app.py"
 APP_JS = WEB_DIR / "static" / "app.js"
+TRAIN_YOLOV8 = WEB_DIR.parent / "train" / "train_yolov8.py"
 EXPECTED_PANELS = {"dataset", "training", "gpu", "advanced", "logs", "results", "testing"}
 
 
@@ -115,6 +116,24 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("function taskForModelSize", script)
         self.assertIn("function syncProjectWithModelTask", script)
         self.assertIn('"model-size").addEventListener("change", syncProjectWithModelTask)', script)
+
+    def test_segmentation_metrics_use_mask_columns_and_labels(self):
+        app_source = APP_PY.read_text(encoding="utf-8")
+        script = APP_JS.read_text(encoding="utf-8")
+        train_source = TRAIN_YOLOV8.read_text(encoding="utf-8")
+
+        self.assertIn('"metrics/mAP50(M)"', app_source)
+        self.assertIn('"metrics/mAP50-95(M)"', app_source)
+        self.assertIn('prefix = "Mask "', app_source)
+        self.assertIn('f"{prefix}Precision"', app_source)
+        self.assertIn('"Segmentation Mask Performance by Epoch"', app_source)
+        self.assertIn("applyMetricLabels(metrics.metric_labels", script)
+        self.assertIn('id="performance-chart-title"', INDEX_HTML.read_text(encoding="utf-8"))
+        self.assertIn('"metrics/mAP50(M)"', train_source)
+        self.assertIn('"metrics/accuracy_top1"', train_source)
+        self.assertIn('"Classification Metrics by Epoch"', train_source)
+        self.assertIn('"Mask" if use_mask else "Box"', train_source)
+        self.assertIn('"Segmentation Mask Metrics by Epoch"', train_source)
 
 
 if __name__ == "__main__":

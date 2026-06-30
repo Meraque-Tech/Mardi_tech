@@ -492,19 +492,19 @@
               <button id="refresh-metrics" class="secondary compact" type="button">Refresh</button>
             </div>
             <div class="metrics-grid">
-              <div><span>Precision</span><strong id="metric-precision">-</strong></div>
-              <div><span>Recall</span><strong id="metric-recall">-</strong></div>
+              <div><span id="metric-precision-label">Precision</span><strong id="metric-precision">-</strong></div>
+              <div><span id="metric-recall-label">Recall</span><strong id="metric-recall">-</strong></div>
               <div><span>Macro F1</span><strong id="metric-macro-f1">-</strong></div>
               <div><span>Weighted F1</span><strong id="metric-weighted-f1">-</strong></div>
               <div><span>Training loss</span><strong id="metric-train-loss">-</strong></div>
               <div><span>Validation loss</span><strong id="metric-test-loss">-</strong></div>
-              <div><span>mAP50</span><strong id="metric-map50">-</strong></div>
-              <div><span>mAP50-95</span><strong id="metric-map">-</strong></div>
+              <div><span id="metric-map50-label">mAP50</span><strong id="metric-map50">-</strong></div>
+              <div><span id="metric-map-label">mAP50-95</span><strong id="metric-map">-</strong></div>
             </div>
             <div class="best-metrics" id="best-metrics"></div>
             <div class="charts-grid">
               <div class="chart-panel">
-                <h4>Detection Performance by Epoch</h4>
+                <h4 id="performance-chart-title">Detection Performance by Epoch</h4>
                 <canvas id="accuracy-chart" width="520" height="220"></canvas>
               </div>
               <div class="chart-panel">

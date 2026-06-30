@@ -332,6 +332,15 @@ def rounded_metric(value, digits: int = 4):
 
 
 def total_loss(row: dict, prefix: str):
+    values = []
+    for key in row:
+        normalized = str(key).strip()
+        if normalized.startswith(f"{prefix}/") and normalized.endswith("_loss"):
+            value = row_float(row, normalized)
+            if value is not None:
+                values.append(value)
+    if values:
+        return sum(values)
     values = [
         row_float(row, f"{prefix}/box_loss"),
         row_float(row, f"{prefix}/cls_loss"),
@@ -342,9 +351,34 @@ def total_loss(row: dict, prefix: str):
     return sum(values)
 
 
-def f1_score(row: dict):
-    precision = row_float(row, "metrics/precision(B)")
-    recall = row_float(row, "metrics/recall(B)")
+def metric_suffix(rows: list[dict]) -> str:
+    keys = {str(key).strip() for row in rows for key in row}
+    if "metrics/mAP50(M)" in keys or "metrics/mAP50-95(M)" in keys:
+        return "M"
+    return "B"
+
+
+def accuracy_metric_series(rows: list[dict], epochs: list[int]):
+    keys = {str(key).strip() for row in rows for key in row}
+    if "metrics/accuracy_top1" in keys or "metrics/accuracy_top5" in keys:
+        return "Classification Metrics by Epoch", [
+            ("Top-1 Accuracy", epochs, [row_float(row, "metrics/accuracy_top1") for row in rows]),
+            ("Top-5 Accuracy", epochs, [row_float(row, "metrics/accuracy_top5") for row in rows]),
+        ]
+
+    suffix = metric_suffix(rows)
+    metric_prefix = "Mask " if suffix == "M" else ""
+    title = "Segmentation Mask Metrics by Epoch" if suffix == "M" else "Accuracy Metrics by Epoch"
+    return title, [
+        (f"{metric_prefix}mAP50", epochs, [row_float(row, f"metrics/mAP50({suffix})") for row in rows]),
+        (f"{metric_prefix}mAP50-95", epochs, [row_float(row, f"metrics/mAP50-95({suffix})") for row in rows]),
+        (f"{metric_prefix}F1", epochs, [f1_score(row, suffix) for row in rows]),
+    ]
+
+
+def f1_score(row: dict, suffix: str = "B"):
+    precision = row_float(row, f"metrics/precision({suffix})")
+    recall = row_float(row, f"metrics/recall({suffix})")
     if precision is None or recall is None or precision + recall <= 0:
         return None
     return 2 * precision * recall / (precision + recall)
@@ -415,9 +449,11 @@ def build_per_class_metrics(metrics) -> dict:
 
     classes = []
     for row in metrics.summary():
-        precision = rounded_metric(row.get("Box-P"))
-        recall = rounded_metric(row.get("Box-R"))
-        f1 = rounded_metric(row.get("Box-F1"))
+        use_mask = "Mask-P" in row or "Mask-R" in row or "Mask-F1" in row
+        metric_prefix = "Mask" if use_mask else "Box"
+        precision = rounded_metric(row.get(f"{metric_prefix}-P"))
+        recall = rounded_metric(row.get(f"{metric_prefix}-R"))
+        f1 = rounded_metric(row.get(f"{metric_prefix}-F1"))
         images = int(row.get("Images") or 0)
         instances = int(row.get("Instances") or 0)
         classes.append(
@@ -428,8 +464,8 @@ def build_per_class_metrics(metrics) -> dict:
                 "precision": precision,
                 "recall": recall,
                 "f1": f1,
-                "map50": rounded_metric(row.get("mAP50")),
-                "map50_95": rounded_metric(row.get("mAP50-95")),
+                "map50": rounded_metric(row.get(f"{metric_prefix}-mAP50", row.get("mAP50"))),
+                "map50_95": rounded_metric(row.get(f"{metric_prefix}-mAP50-95", row.get("mAP50-95"))),
             }
         )
 
@@ -665,12 +701,7 @@ def save_training_graphs(run_dir: Path):
         return
 
     epochs = [int(row_float(row, "epoch") or index + 1) for index, row in enumerate(rows)]
-
-    accuracy_series = [
-        ("mAP50", epochs, [row_float(row, "metrics/mAP50(B)") for row in rows]),
-        ("mAP50-95", epochs, [row_float(row, "metrics/mAP50-95(B)") for row in rows]),
-        ("F1", epochs, [f1_score(row) for row in rows]),
-    ]
+    accuracy_title, accuracy_series = accuracy_metric_series(rows, epochs)
     loss_series = [
         ("Training loss", epochs, [total_loss(row, "train") for row in rows]),
         ("Validation loss", epochs, [total_loss(row, "val") for row in rows]),
@@ -687,7 +718,7 @@ def save_training_graphs(run_dir: Path):
 
     plot_metric_series(
         run_dir / "accuracy_by_epoch.png",
-        "Accuracy Metrics by Epoch",
+        accuracy_title,
         "Epoch",
         "Score",
         accuracy_series,

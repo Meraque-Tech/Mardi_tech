@@ -34,6 +34,22 @@ def _metric(value) -> str:
         return str(value)
 
 
+def _metric_labels(metrics: dict | None) -> dict:
+    labels = {
+        "precision": "Precision",
+        "recall": "Recall",
+        "map50": "mAP50",
+        "map50_95": "mAP50-95",
+    }
+    if isinstance(metrics, dict) and isinstance(metrics.get("metric_labels"), dict):
+        labels.update({
+            key: value
+            for key, value in metrics["metric_labels"].items()
+            if key in labels and value
+        })
+    return labels
+
+
 def _count(value) -> str:
     number = _to_int(value)
     if number is None:
@@ -254,6 +270,7 @@ def _recommendation(validation_metrics: dict, test_metrics: dict | None = None) 
 
 def _result_sentence(validation_metrics: dict, test_metrics: dict | None = None) -> str:
     evidence_label, evidence = _primary_evidence(validation_metrics, test_metrics)
+    labels = _metric_labels(evidence)
     map50 = _metric(evidence.get("map50"))
     map95 = _metric(evidence.get("map50_95"))
     precision = _metric(evidence.get("precision"))
@@ -262,8 +279,9 @@ def _result_sentence(validation_metrics: dict, test_metrics: dict | None = None)
     f1 = _metric(_f1_value(evidence))
     recommendation = _recommendation(validation_metrics, test_metrics)
     return (
-        f"On the {evidence_label}, the model achieved mAP50 {map50}, "
-        f"mAP50-95 {map95}, precision {precision}, recall {recall}, and "
+        f"On the {evidence_label}, the model achieved {labels['map50']} {map50}, "
+        f"{labels['map50_95']} {map95}, {labels['precision'].lower()} {precision}, "
+        f"{labels['recall'].lower()} {recall}, and "
         f"{f1_label} {f1}; {recommendation[0].lower() + recommendation[1:]}"
     )
 
@@ -351,6 +369,7 @@ def _short_config_rows(context: dict, run_dir: Path) -> list[list]:
 
 
 def _training_behaviour_text(metrics: dict) -> str:
+    labels = _metric_labels(metrics)
     history = metrics.get("history") or []
     if len(history) < 2:
         return "Training behaviour could not be interpreted because epoch history is unavailable or incomplete."
@@ -366,10 +385,10 @@ def _training_behaviour_text(metrics: dict) -> str:
     if train_loss is not None and val_loss is not None and val_loss > train_loss * 1.5:
         fit = "validation loss is materially higher than training loss, so possible overfitting should be reviewed"
     elif first_map is not None and last_map is not None and last_map < 0.30:
-        fit = "mAP50-95 remains low, so possible underfitting or dataset issues should be reviewed"
+        fit = f"{labels['map50_95']} remains low, so possible underfitting or dataset issues should be reviewed"
     else:
         fit = "no obvious overfitting or underfitting signal is visible from the final loss relationship"
-    return f"Across {len(history)} completed epochs, mAP50-95 {trend}; the best tracked epoch is {best_epoch}, and {fit}."
+    return f"Across {len(history)} completed epochs, {labels['map50_95']} {trend}; the best tracked epoch is {best_epoch}, and {fit}."
 
 
 def _validation_test_text(validation: dict, test: dict) -> str:
@@ -686,6 +705,7 @@ def _add_executive_summary(
 ):
     summary = context.get("dataset_summary") or {}
     evidence_label, evidence = _primary_evidence(metrics, test_metrics)
+    labels = _metric_labels(evidence)
     best = _best_epoch(metrics)
     builder.heading("Executive Summary")
     builder.table([
@@ -694,10 +714,10 @@ def _add_executive_summary(
         ["Best checkpoint", _checkpoint_label(run_dir)],
         ["Best tracked epoch", best.get("epoch", "N/A")],
         ["Primary evidence", evidence_label.title()],
-        ["Precision", _metric(evidence.get("precision"))],
-        ["Recall", _metric(evidence.get("recall"))],
-        ["mAP50", _metric(evidence.get("map50"))],
-        ["mAP50-95", _metric(evidence.get("map50_95"))],
+        [labels["precision"], _metric(evidence.get("precision"))],
+        [labels["recall"], _metric(evidence.get("recall"))],
+        [labels["map50"], _metric(evidence.get("map50"))],
+        [labels["map50_95"], _metric(evidence.get("map50_95"))],
         [_f1_label(evidence), _metric(_f1_value(evidence))],
     ], widths=[55 * builder.mm, 120 * builder.mm])
     builder.paragraph(_text(_result_sentence(metrics, test_metrics)))
@@ -789,13 +809,14 @@ def _add_training_configuration(builder: _ReportBuilder, run_dir: Path, context:
 
 
 def _add_training_behaviour(builder: _ReportBuilder, run_dir: Path, metrics: dict):
+    labels = _metric_labels(metrics)
     builder.heading("Training Behaviour")
     builder.paragraph(_text(_training_behaviour_text(metrics)))
     best = metrics.get("best") or {}
     best_rows = [["Criterion", "Epoch", "Value"]]
     for key, label, value_key in (
-        ("best_map50", "Best mAP50", "map50"),
-        ("best_map50_95", "Best mAP50-95", "map50_95"),
+        ("best_map50", f"Best {labels['map50']}", "map50"),
+        ("best_map50_95", f"Best {labels['map50_95']}", "map50_95"),
         ("lowest_training_loss", "Lowest training loss", "training_loss"),
         ("lowest_validation_loss", "Lowest validation loss", "testing_loss"),
     ):
@@ -807,7 +828,7 @@ def _add_training_behaviour(builder: _ReportBuilder, run_dir: Path, metrics: dic
 
     for filename, caption in (
         ("loss_by_epoch.png", "Training and validation loss by epoch"),
-        ("accuracy_by_epoch.png", "mAP progression by epoch"),
+        ("accuracy_by_epoch.png", f"{metrics.get('metric_label') or 'mAP'} progression by epoch"),
     ):
         path = run_dir / filename
         if path.is_file():
@@ -816,13 +837,14 @@ def _add_training_behaviour(builder: _ReportBuilder, run_dir: Path, metrics: dic
 
 
 def _add_validation_performance(builder: _ReportBuilder, run_dir: Path, metrics: dict):
+    labels = _metric_labels(metrics)
     builder.heading("Validation Performance")
     builder.table([
         ["Metric", "Final validation value"],
-        ["Precision", _metric(metrics.get("precision"))],
-        ["Recall", _metric(metrics.get("recall"))],
-        ["mAP50", _metric(metrics.get("map50"))],
-        ["mAP50-95", _metric(metrics.get("map50_95"))],
+        [labels["precision"], _metric(metrics.get("precision"))],
+        [labels["recall"], _metric(metrics.get("recall"))],
+        [labels["map50"], _metric(metrics.get("map50"))],
+        [labels["map50_95"], _metric(metrics.get("map50_95"))],
         ["Macro F1", _metric(metrics.get("macro_f1"))],
         ["Weighted F1", _metric(metrics.get("weighted_f1"))],
     ], widths=[90 * builder.mm, 85 * builder.mm])
@@ -1017,16 +1039,18 @@ def _add_training(
 
 
 def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: dict, validation: dict):
+    labels = _metric_labels(metrics)
+    validation_labels = _metric_labels(validation)
     builder.page_break()
     builder.paragraph("Independent Test Evaluation", "ReportTitle")
     builder.heading("Final Test-Set Performance")
     builder.paragraph(_text(_result_sentence(validation, metrics)))
     builder.table([
         ["Metric", "Final test value"],
-        ["Precision", _metric(metrics.get("precision"))],
-        ["Recall", _metric(metrics.get("recall"))],
-        ["mAP50", _metric(metrics.get("map50"))],
-        ["mAP50-95", _metric(metrics.get("map50_95"))],
+        [labels["precision"], _metric(metrics.get("precision"))],
+        [labels["recall"], _metric(metrics.get("recall"))],
+        [labels["map50"], _metric(metrics.get("map50"))],
+        [labels["map50_95"], _metric(metrics.get("map50_95"))],
         ["Macro F1", _metric(metrics.get("macro_f1"))],
         ["Weighted F1", _metric(metrics.get("weighted_f1"))],
     ], widths=[90 * builder.mm, 85 * builder.mm])
@@ -1065,10 +1089,10 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
     builder.paragraph(_text(_validation_test_text(validation, metrics)))
     builder.table([
         ["Metric", "Validation", "Test"],
-        ["Precision", _metric(validation.get("precision")), _metric(metrics.get("precision"))],
-        ["Recall", _metric(validation.get("recall")), _metric(metrics.get("recall"))],
-        ["mAP50", _metric(validation.get("map50")), _metric(metrics.get("map50"))],
-        ["mAP50-95", _metric(validation.get("map50_95")), _metric(metrics.get("map50_95"))],
+        [validation_labels["precision"], _metric(validation.get("precision")), _metric(metrics.get("precision"))],
+        [validation_labels["recall"], _metric(validation.get("recall")), _metric(metrics.get("recall"))],
+        [validation_labels["map50"], _metric(validation.get("map50")), _metric(metrics.get("map50"))],
+        [validation_labels["map50_95"], _metric(validation.get("map50_95")), _metric(metrics.get("map50_95"))],
         ["Macro F1", _metric(validation.get("macro_f1")), _metric(metrics.get("macro_f1"))],
         ["Weighted F1", _metric(validation.get("weighted_f1")), _metric(metrics.get("weighted_f1"))],
     ], widths=[70 * builder.mm, 52 * builder.mm, 53 * builder.mm])
