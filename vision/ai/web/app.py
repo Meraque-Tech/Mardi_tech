@@ -56,6 +56,9 @@ DATA_ROOT = Path(os.getenv("WEB_DATA_ROOT") or WEB_DIR / "datasets").expanduser(
 INFERENCE_ROOT = DATA_ROOT / "inference"
 INFERENCE_UPLOAD_ROOT = INFERENCE_ROOT / "uploads"
 INFERENCE_JOB_ROOT = INFERENCE_ROOT / "jobs"
+DATASET_UPLOAD_ROOT = DATA_ROOT / "uploads"
+DATASET_EXTRACTED_ROOT = DATA_ROOT / "extracted"
+DATASET_PREPARED_ROOT = DATA_ROOT / "prepared"
 TRAINING_PYTHON = os.getenv("TRAINING_PYTHON", "python3")
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -256,6 +259,9 @@ def ensure_dirs():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     TEST_RUNS_ROOT.mkdir(parents=True, exist_ok=True)
+    DATASET_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+    DATASET_EXTRACTED_ROOT.mkdir(parents=True, exist_ok=True)
+    DATASET_PREPARED_ROOT.mkdir(parents=True, exist_ok=True)
     INFERENCE_UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     INFERENCE_JOB_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -467,6 +473,60 @@ def inference_jobs_storage_payload() -> dict:
     }
 
 
+STORAGE_CLEANUP_TARGETS = {
+    "inference_outputs": {
+        "label": "Inference output jobs",
+        "path": INFERENCE_JOB_ROOT,
+        "requires_idle": "inference",
+    },
+    "inference_uploads": {
+        "label": "Inference uploaded weights",
+        "path": INFERENCE_UPLOAD_ROOT,
+        "requires_idle": "inference",
+    },
+    "dataset_prepared": {
+        "label": "Prepared datasets",
+        "path": DATASET_PREPARED_ROOT,
+        "requires_idle": "dataset",
+    },
+    "dataset_extracted": {
+        "label": "Extracted datasets",
+        "path": DATASET_EXTRACTED_ROOT,
+        "requires_idle": "dataset",
+    },
+    "dataset_uploads": {
+        "label": "Uploaded dataset ZIPs",
+        "path": DATASET_UPLOAD_ROOT,
+        "requires_idle": "dataset",
+    },
+}
+
+
+def storage_target_payload(key: str) -> dict:
+    ensure_dirs()
+    target = STORAGE_CLEANUP_TARGETS.get(key)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Storage cleanup target not found.")
+    root = target["path"]
+    children = list(root.iterdir()) if root.is_dir() else []
+    return {
+        "key": key,
+        "label": target["label"],
+        "path": str(root),
+        "item_count": len(children),
+        "size": directory_size(root),
+    }
+
+
+def storage_payload() -> dict:
+    return {
+        "targets": [
+            storage_target_payload(key)
+            for key in STORAGE_CLEANUP_TARGETS
+        ],
+    }
+
+
 def has_active_inference_job() -> bool:
     with inference_jobs_lock:
         return any(
@@ -475,36 +535,67 @@ def has_active_inference_job() -> bool:
         )
 
 
-def clear_inference_outputs() -> dict:
-    if has_active_inference_job():
-        raise HTTPException(status_code=409, detail="Stop the active inference job before clearing outputs.")
+def has_active_dataset_preparation() -> bool:
+    with dataset_preparation_lock:
+        return any(
+            job.get("status") == "running"
+            for job in dataset_preparation_jobs.values()
+        )
 
-    before = inference_jobs_storage_payload()
-    removed_jobs = 0
-    job_root = INFERENCE_JOB_ROOT.resolve()
-    for child in list(INFERENCE_JOB_ROOT.iterdir()):
+
+def ensure_storage_target_idle(target: dict):
+    if target.get("requires_idle") == "inference" and has_active_inference_job():
+        raise HTTPException(status_code=409, detail="Stop the active inference job before clearing outputs.")
+    if target.get("requires_idle") == "dataset":
+        if current_status()["running"]:
+            raise HTTPException(status_code=409, detail="Stop training before clearing dataset storage.")
+        if test_status()["running"]:
+            raise HTTPException(status_code=409, detail="Stop testing before clearing dataset storage.")
+        if has_active_dataset_preparation():
+            raise HTTPException(status_code=409, detail="Wait for dataset preparation to finish before clearing dataset storage.")
+
+
+def clear_storage_target(key: str) -> dict:
+    target = STORAGE_CLEANUP_TARGETS.get(key)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Storage cleanup target not found.")
+    ensure_storage_target_idle(target)
+
+    before = storage_target_payload(key)
+    removed_items = 0
+    root = target["path"].resolve()
+    for child in list(target["path"].iterdir()):
         target = child.resolve()
         try:
-            target.relative_to(job_root)
+            target.relative_to(root)
         except ValueError as exc:
-            raise HTTPException(status_code=500, detail="Refusing to delete outside inference jobs.") from exc
+            raise HTTPException(status_code=500, detail="Refusing to delete outside storage target.") from exc
         if child.is_dir():
             shutil.rmtree(child)
-            removed_jobs += 1
+            removed_items += 1
         elif child.is_file() or child.is_symlink():
             child.unlink()
+            removed_items += 1
 
-    with inference_jobs_lock:
-        inference_jobs.clear()
+    if key == "inference_outputs":
+        with inference_jobs_lock:
+            inference_jobs.clear()
 
-    after = inference_jobs_storage_payload()
+    after = storage_target_payload(key)
     return {
-        "jobs_path": before["jobs_path"],
-        "removed_jobs": removed_jobs,
-        "freed_bytes": max(0, before["jobs_size"] - after["jobs_size"]),
+        "key": key,
+        "label": before["label"],
+        "path": before["path"],
+        "removed_items": removed_items,
+        "removed_jobs": removed_items if key == "inference_outputs" else 0,
+        "freed_bytes": max(0, before["size"] - after["size"]),
         "before": before,
         "after": after,
     }
+
+
+def clear_inference_outputs() -> dict:
+    return clear_storage_target("inference_outputs")
 
 
 def relative_to_repo(path: Path) -> str:
@@ -3054,6 +3145,21 @@ def inference_storage():
 @app.delete("/api/inference/outputs")
 def delete_inference_outputs():
     return clear_inference_outputs()
+
+
+@app.get("/api/storage")
+def storage():
+    return storage_payload()
+
+
+@app.get("/api/storage/{target_key}")
+def storage_target(target_key: str):
+    return storage_target_payload(target_key)
+
+
+@app.delete("/api/storage/{target_key}")
+def delete_storage_target(target_key: str):
+    return clear_storage_target(target_key)
 
 
 @app.get("/api/train/sessions")

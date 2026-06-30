@@ -24,6 +24,7 @@ const state = {
   lastDataRefresh: 0,
   resizeFrame: null,
   downloads: new Set(),
+  storageCleanup: new Set(),
   folderTooLarge: false,
   resolvedRunPath: "",
   runResolutionType: "not_found",
@@ -550,6 +551,16 @@ function syncActionStates() {
     ? "Preparing Annotated ZIP..."
     : "Download Annotated ZIP";
   $("download-annotated-dataset").setAttribute("aria-busy", String(annotatedDatasetDownloadActive));
+  [
+    ["clear-dataset-uploads", "dataset_uploads", "Clear Uploaded ZIPs"],
+    ["clear-dataset-extracted", "dataset_extracted", "Clear Extracted"],
+    ["clear-dataset-prepared", "dataset_prepared", "Clear Prepared"],
+  ].forEach(([id, key, label]) => {
+    const active = state.storageCleanup.has(key);
+    $(id).disabled = locked || preparing || active;
+    $(id).textContent = active ? "Clearing..." : label;
+    $(id).setAttribute("aria-busy", String(active));
+  });
   $("start-training").disabled = locked || preparing || (!hasDataset && !canResume);
   $("start-training").textContent = state.isStarting ? "Starting..." : "Start";
   $("start-training").setAttribute("aria-busy", String(state.isStarting));
@@ -2027,6 +2038,10 @@ function syncInferenceControls() {
   $("clear-inference-output").disabled = state.inferenceRunning || state.inferenceClearing;
   $("clear-inference-output").textContent = state.inferenceClearing ? "Clearing..." : "Clear Inference Output";
   $("clear-inference-output").setAttribute("aria-busy", String(state.inferenceClearing));
+  const clearingInferenceUploads = state.storageCleanup.has("inference_uploads");
+  $("clear-inference-uploads").disabled = state.inferenceRunning || clearingInferenceUploads;
+  $("clear-inference-uploads").textContent = clearingInferenceUploads ? "Clearing..." : "Clear Uploaded Weights";
+  $("clear-inference-uploads").setAttribute("aria-busy", String(clearingInferenceUploads));
 }
 
 function renderInferenceWeights(weights) {
@@ -2603,6 +2618,44 @@ async function clearInferenceOutput() {
   } finally {
     state.inferenceClearing = false;
     syncInferenceControls();
+  }
+}
+
+async function clearStorageTarget(key, options = {}) {
+  if (state.storageCleanup.has(key)) {
+    return;
+  }
+  const {
+    label = "storage",
+    message = setMessage,
+    sync = syncActionStates,
+  } = options;
+  state.storageCleanup.add(key);
+  sync();
+  try {
+    const storage = await apiJson(`/api/storage/${encodeURIComponent(key)}`);
+    const itemCount = Number(storage.item_count) || 0;
+    const size = Number(storage.size) || 0;
+    if (!itemCount || size <= 0) {
+      message(`No ${label} to clear.`);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ${formatBytes(size)} from ${itemCount} ${label} item${itemCount === 1 ? "" : "s"}? This cannot be undone.`,
+    );
+    if (!confirmed) {
+      message(`${label} cleanup cancelled.`);
+      return;
+    }
+    const result = await apiJson(`/api/storage/${encodeURIComponent(key)}`, { method: "DELETE" });
+    message(
+      `Cleared ${formatBytes(result.freed_bytes || 0)} from ${result.removed_items || 0} ${label} item${result.removed_items === 1 ? "" : "s"}.`,
+    );
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    state.storageCleanup.delete(key);
+    sync();
   }
 }
 
@@ -3561,6 +3614,9 @@ document.querySelectorAll("[data-app-tab]").forEach((button) => {
 $("prepare-dataset").addEventListener("click", prepareDataset);
 $("download-dataset").addEventListener("click", downloadPreparedDataset);
 $("download-annotated-dataset").addEventListener("click", downloadAnnotatedDataset);
+$("clear-dataset-uploads").addEventListener("click", () => clearStorageTarget("dataset_uploads", { label: "uploaded dataset ZIP" }));
+$("clear-dataset-extracted").addEventListener("click", () => clearStorageTarget("dataset_extracted", { label: "extracted dataset" }));
+$("clear-dataset-prepared").addEventListener("click", () => clearStorageTarget("dataset_prepared", { label: "prepared dataset" }));
 $("detect-classes").addEventListener("click", detectClasses);
 $("model-size").addEventListener("change", syncProjectWithModelTask);
 $("start-training").addEventListener("click", startTraining);
@@ -3593,6 +3649,11 @@ $("training-session-select").addEventListener("change", () => {
 });
 $("refresh-inference-weights").addEventListener("click", () => loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true)));
 $("clear-inference-output").addEventListener("click", clearInferenceOutput);
+$("clear-inference-uploads").addEventListener("click", () => clearStorageTarget("inference_uploads", {
+  label: "uploaded inference weight",
+  message: setInferenceMessage,
+  sync: syncInferenceControls,
+}));
 $("run-inference").addEventListener("click", runInference);
 $("stop-inference").addEventListener("click", stopInference);
 $("project").addEventListener("input", scheduleTargetRefresh);

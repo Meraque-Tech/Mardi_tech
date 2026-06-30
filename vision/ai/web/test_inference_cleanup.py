@@ -26,6 +26,8 @@ def configure_inference_workspace(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(web_app, "INFERENCE_ROOT", inference_root)
     monkeypatch.setattr(web_app, "INFERENCE_UPLOAD_ROOT", upload_root)
     monkeypatch.setattr(web_app, "INFERENCE_JOB_ROOT", job_root)
+    monkeypatch.setitem(web_app.STORAGE_CLEANUP_TARGETS["inference_uploads"], "path", upload_root)
+    monkeypatch.setitem(web_app.STORAGE_CLEANUP_TARGETS["inference_outputs"], "path", job_root)
     with web_app.inference_jobs_lock:
         web_app.inference_jobs.clear()
     return inference_root, upload_root, job_root
@@ -38,10 +40,18 @@ def test_inference_cleanup_ui_and_routes_are_exposed():
 
     assert '@app.get("/api/inference/storage")' in app_source
     assert '@app.delete("/api/inference/outputs")' in app_source
+    assert '@app.get("/api/storage/{target_key}")' in app_source
+    assert '@app.delete("/api/storage/{target_key}")' in app_source
     assert 'id="clear-inference-output"' in markup
+    assert 'id="clear-inference-uploads"' in markup
+    assert 'id="clear-dataset-uploads"' in markup
+    assert 'id="clear-dataset-extracted"' in markup
+    assert 'id="clear-dataset-prepared"' in markup
     assert "function clearInferenceOutput" in script
+    assert "function clearStorageTarget" in script
     assert "/api/inference/storage" in script
     assert "/api/inference/outputs" in script
+    assert "/api/storage/" in script
 
 
 def test_clear_inference_outputs_deletes_only_job_outputs(monkeypatch, tmp_path: Path):
@@ -96,3 +106,42 @@ def test_clear_inference_outputs_refuses_active_job(monkeypatch, tmp_path: Path)
     assert (upload_root / "weights.pt").exists()
     with web_app.inference_jobs_lock:
         web_app.inference_jobs.clear()
+
+
+def test_clear_storage_target_deletes_only_selected_dataset_cache(monkeypatch, tmp_path: Path):
+    web_app = load_web_app()
+    data_root = tmp_path / "datasets"
+    uploads_root = data_root / "uploads"
+    extracted_root = data_root / "extracted"
+    prepared_root = data_root / "prepared"
+    inference_root = data_root / "inference"
+    inference_upload_root = inference_root / "uploads"
+    inference_job_root = inference_root / "jobs"
+    monkeypatch.setattr(web_app, "DATA_ROOT", data_root)
+    monkeypatch.setattr(web_app, "DATASET_UPLOAD_ROOT", uploads_root)
+    monkeypatch.setattr(web_app, "DATASET_EXTRACTED_ROOT", extracted_root)
+    monkeypatch.setattr(web_app, "DATASET_PREPARED_ROOT", prepared_root)
+    monkeypatch.setattr(web_app, "INFERENCE_ROOT", inference_root)
+    monkeypatch.setattr(web_app, "INFERENCE_UPLOAD_ROOT", inference_upload_root)
+    monkeypatch.setattr(web_app, "INFERENCE_JOB_ROOT", inference_job_root)
+    monkeypatch.setitem(web_app.STORAGE_CLEANUP_TARGETS["dataset_uploads"], "path", uploads_root)
+    monkeypatch.setitem(web_app.STORAGE_CLEANUP_TARGETS["dataset_extracted"], "path", extracted_root)
+    monkeypatch.setitem(web_app.STORAGE_CLEANUP_TARGETS["dataset_prepared"], "path", prepared_root)
+    monkeypatch.setitem(web_app.STORAGE_CLEANUP_TARGETS["inference_uploads"], "path", inference_upload_root)
+    monkeypatch.setitem(web_app.STORAGE_CLEANUP_TARGETS["inference_outputs"], "path", inference_job_root)
+    web_app.ensure_dirs()
+    (uploads_root / "dataset_a").mkdir()
+    (uploads_root / "dataset_a" / "source.zip").write_bytes(b"delete")
+    (extracted_root / "dataset_a").mkdir()
+    (extracted_root / "dataset_a" / "data.yaml").write_text("keep", encoding="utf-8")
+    (prepared_root / "dataset_a").mkdir()
+    (prepared_root / "dataset_a" / "data.yaml").write_text("keep", encoding="utf-8")
+
+    result = web_app.clear_storage_target("dataset_uploads")
+
+    assert result["removed_items"] == 1
+    assert result["freed_bytes"] >= 6
+    assert uploads_root.is_dir()
+    assert list(uploads_root.iterdir()) == []
+    assert (extracted_root / "dataset_a" / "data.yaml").exists()
+    assert (prepared_root / "dataset_a" / "data.yaml").exists()
