@@ -2629,9 +2629,9 @@ async function clearInferenceOutput() {
     state.inferenceJobId = "";
     state.inferenceStoppable = false;
     setInferenceUploadProgress(false);
-    setInferenceMessage(
-      `Cleared ${formatBytes(result.freed_bytes || 0)} from ${result.removed_jobs || 0} inference job${result.removed_jobs === 1 ? "" : "s"}.`,
-    );
+    const successMessage = `Cleared ${formatBytes(result.freed_bytes || 0)} from ${result.removed_jobs || 0} inference job${result.removed_jobs === 1 ? "" : "s"}.`;
+    setInferenceMessage(successMessage);
+    setMessage(successMessage);
   } catch (error) {
     setInferenceMessage(error.message, true);
   } finally {
@@ -2647,6 +2647,7 @@ async function clearStorageTarget(key, options = {}) {
   const {
     label = "storage",
     message = setMessage,
+    systemMessage = setMessage,
     sync = syncActionStates,
   } = options;
   state.storageCleanup.add(key);
@@ -2667,9 +2668,11 @@ async function clearStorageTarget(key, options = {}) {
       return;
     }
     const result = await apiJson(`/api/storage/${encodeURIComponent(key)}`, { method: "DELETE" });
-    message(
-      `Cleared ${formatBytes(result.freed_bytes || 0)} from ${result.removed_items || 0} ${label} item${result.removed_items === 1 ? "" : "s"}.`,
-    );
+    const successMessage = `Cleared ${formatBytes(result.freed_bytes || 0)} from ${result.removed_items || 0} ${label} item${result.removed_items === 1 ? "" : "s"}.`;
+    message(successMessage);
+    if (systemMessage && systemMessage !== message) {
+      systemMessage(successMessage);
+    }
   } catch (error) {
     message(error.message, true);
   } finally {
