@@ -48,6 +48,10 @@ const state = {
   inferencePollRevision: 0,
   inferenceJobId: "",
   inferencePreviewStreamJobId: "",
+  inferenceWebRtcJobId: "",
+  inferenceWebRtcStartingJobId: "",
+  inferenceWebRtcFailedJobId: "",
+  inferenceWebRtcPeer: null,
   trainingSessions: [],
 };
 
@@ -1906,6 +1910,9 @@ async function loadInferenceWeights() {
 function updateInferenceFileSelection() {
   const weight = $("inference-weight-file").files[0];
   const weightSuffix = inferenceWeightSuffix(weight);
+  if (weightSuffix === ".pt") {
+    $("inference-convert-onnx").checked = true;
+  }
   $("inference-weight-selection").textContent = weight
     ? `${weight.name} (${formatBytes(weight.size)})${[".pt", ".onnx"].includes(weightSuffix) ? "" : " - unsupported"}`
     : "No weights file selected.";
@@ -2026,9 +2033,12 @@ function resetInferenceResultForRun() {
   $("inference-result-video").pause();
   $("inference-result-video").removeAttribute("src");
   $("inference-detections").innerHTML = "";
+  stopInferenceWebRtc();
   $("inference-live-preview-shell").hidden = true;
   $("inference-live-preview-image").removeAttribute("src");
+  $("inference-live-preview-image").hidden = false;
   state.inferencePreviewStreamJobId = "";
+  state.inferenceWebRtcFailedJobId = "";
   $("inference-live-preview-summary").textContent = "Waiting for annotated frames.";
 }
 
@@ -2038,10 +2048,91 @@ function stopInferencePolling() {
   state.inferencePollTimer = null;
 }
 
+function stopInferenceWebRtc() {
+  const video = $("inference-live-preview-video");
+  if (state.inferenceWebRtcPeer) {
+    state.inferenceWebRtcPeer.close();
+    state.inferenceWebRtcPeer = null;
+  }
+  state.inferenceWebRtcJobId = "";
+  state.inferenceWebRtcStartingJobId = "";
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach((track) => track.stop());
+  }
+  video.pause();
+  video.srcObject = null;
+  video.hidden = true;
+}
+
+function waitForIceGatheringComplete(peer) {
+  if (peer.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(() => {
+      peer.removeEventListener("icegatheringstatechange", checkState);
+      resolve();
+    }, 1500);
+    const checkState = () => {
+      if (peer.iceGatheringState === "complete") {
+        window.clearTimeout(timeout);
+        peer.removeEventListener("icegatheringstatechange", checkState);
+        resolve();
+      }
+    };
+    peer.addEventListener("icegatheringstatechange", checkState);
+  });
+}
+
+async function startInferenceWebRtc(jobId) {
+  if (!window.RTCPeerConnection) {
+    throw new Error("WebRTC is not supported by this browser.");
+  }
+  stopInferenceWebRtc();
+  state.inferenceWebRtcStartingJobId = jobId;
+  const peer = new RTCPeerConnection();
+  state.inferenceWebRtcPeer = peer;
+  const video = $("inference-live-preview-video");
+  peer.addTransceiver("video", { direction: "recvonly" });
+  peer.addEventListener("track", (event) => {
+    if (event.track.kind !== "video") {
+      return;
+    }
+    video.srcObject = event.streams[0] || new MediaStream([event.track]);
+    video.hidden = false;
+    $("inference-live-preview-image").hidden = true;
+    video.play().catch(() => {});
+  });
+  peer.addEventListener("connectionstatechange", () => {
+    if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
+      if (state.inferenceWebRtcPeer === peer) {
+        state.inferenceWebRtcPeer = null;
+        state.inferenceWebRtcJobId = "";
+      }
+    }
+  });
+
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+  await waitForIceGatheringComplete(peer);
+  const answer = await apiJson(`/api/inference/webrtc/${encodeURIComponent(jobId)}/offer`, {
+    method: "POST",
+    body: JSON.stringify({
+      sdp: peer.localDescription.sdp,
+      type: peer.localDescription.type,
+    }),
+  });
+  await peer.setRemoteDescription(answer);
+  state.inferenceWebRtcJobId = jobId;
+  state.inferenceWebRtcStartingJobId = "";
+}
+
 function renderInferenceLivePreview(job) {
   if (!$("inference-live-preview-enabled").checked) {
     $("inference-live-preview-shell").hidden = true;
+    stopInferenceWebRtc();
     $("inference-live-preview-image").removeAttribute("src");
+    $("inference-live-preview-image").hidden = false;
     state.inferencePreviewStreamJobId = "";
     return;
   }
@@ -2052,7 +2143,22 @@ function renderInferenceLivePreview(job) {
     return;
   }
   $("inference-live-preview-shell").hidden = false;
-  if (state.inferencePreviewStreamJobId !== job.job_id) {
+  const canStartWebRtc = state.inferenceWebRtcFailedJobId !== job.job_id
+    && state.inferenceWebRtcStartingJobId !== job.job_id
+    && state.inferenceWebRtcJobId !== job.job_id
+    && !state.inferenceWebRtcPeer;
+  if (canStartWebRtc) {
+    startInferenceWebRtc(job.job_id).catch(() => {
+      stopInferenceWebRtc();
+      state.inferenceWebRtcFailedJobId = job.job_id;
+      $("inference-live-preview-image").hidden = false;
+      if (state.inferencePreviewStreamJobId !== job.job_id) {
+        $("inference-live-preview-image").src = `/api/inference/stream/${encodeURIComponent(job.job_id)}?t=${Date.now()}`;
+        state.inferencePreviewStreamJobId = job.job_id;
+      }
+    });
+  } else if (!state.inferenceWebRtcPeer && state.inferencePreviewStreamJobId !== job.job_id) {
+    $("inference-live-preview-image").hidden = false;
     $("inference-live-preview-image").src = `/api/inference/stream/${encodeURIComponent(job.job_id)}?t=${Date.now()}`;
     state.inferencePreviewStreamJobId = job.job_id;
   }
@@ -2096,6 +2202,7 @@ function pollInferenceJob(jobId, revision) {
         state.inferenceRunning = false;
         state.inferenceStopping = false;
         state.inferenceStoppable = false;
+        stopInferenceWebRtc();
         $("run-inference").textContent = "Run Inference";
         setInferenceMessage("Inference complete.");
         renderInferenceResult(job.result || {});
@@ -2106,6 +2213,7 @@ function pollInferenceJob(jobId, revision) {
         state.inferenceRunning = false;
         state.inferenceStopping = false;
         state.inferenceStoppable = false;
+        stopInferenceWebRtc();
         $("run-inference").textContent = "Run Inference";
         setInferenceMessage(job.error || job.detail || "Inference failed.", true);
         syncInferenceControls();
@@ -2115,6 +2223,7 @@ function pollInferenceJob(jobId, revision) {
         state.inferenceRunning = false;
         state.inferenceStopping = false;
         state.inferenceStoppable = false;
+        stopInferenceWebRtc();
         $("run-inference").textContent = "Run Inference";
         setInferenceMessage(job.detail || "Inference stopped.");
         updateInferenceJobProgress(job);
@@ -2243,7 +2352,7 @@ async function runInference() {
   form.append("weight_source", source);
   form.append("weight_path", $("inference-weight-select").value);
   form.append("convert_to_onnx", convertToOnnx ? "true" : "false");
-  form.append("imgsz", $("inference-imgsz").value || "640");
+  form.append("imgsz", $("inference-imgsz").value || "512");
   form.append("conf", $("inference-conf").value || "0.25");
   form.append("iou", $("inference-iou").value || "0.45");
   form.append("vid_stride", $("inference-vid-stride").value || "1");

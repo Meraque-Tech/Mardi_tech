@@ -271,6 +271,7 @@ def run_yolo_inference(
     vid_stride: int = 1,
     progress_callback: Callable[[dict], None] | None = None,
     preview_callback: Callable[[bytes], None] | None = None,
+    live_frame_callback: Callable[[object], None] | None = None,
     preview_fps: float = 30.0,
     preview_max_width: int = 640,
     stop_event: threading.Event | None = None,
@@ -348,6 +349,8 @@ def run_yolo_inference(
 
     def emit_preview(image, force_disk: bool = False):
         nonlocal last_preview_disk_at
+        if live_frame_callback is not None:
+            live_frame_callback(image)
         jpeg = encode_preview_jpeg(image, max_width=preview_max_width)
         if jpeg is None:
             return

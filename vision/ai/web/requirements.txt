@@ -7,5 +7,7 @@ roboflow
 ultralytics
 onnx
 onnxruntime-gpu
+aiortc
+av
 scikit-learn
 reportlab

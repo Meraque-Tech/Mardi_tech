@@ -781,7 +781,7 @@
                 </label>
                 <p id="inference-weight-selection" class="file-selection">No weights file selected.</p>
                 <label class="checkbox-row" id="inference-convert-onnx-row" hidden>
-                  <input id="inference-convert-onnx" type="checkbox">
+                  <input id="inference-convert-onnx" type="checkbox" checked>
                   Convert uploaded .pt to ONNX before inference
                 </label>
               </div>
@@ -831,7 +831,7 @@
               <div class="grid four inference-settings">
                 <label>
                   Image size
-                  <input id="inference-imgsz" type="number" min="32" step="32" value="640">
+                  <input id="inference-imgsz" type="number" min="32" step="32" value="512">
                 </label>
                 <label>
                   Confidence
@@ -863,6 +863,7 @@
               </div>
             </div>
             <div class="inference-preview">
+              <video id="inference-live-preview-video" autoplay playsinline muted hidden></video>
               <img id="inference-live-preview-image" alt="Latest annotated inference frame">
             </div>
           </section>

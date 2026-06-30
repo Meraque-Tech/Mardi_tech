@@ -97,6 +97,8 @@ dataset_downloads: dict[str, dict] = {}
 dataset_download_lock = threading.Lock()
 inference_jobs: dict[str, dict] = {}
 inference_jobs_lock = threading.Lock()
+inference_peers: dict[str, set] = {}
+inference_peers_lock = threading.Lock()
 gpu_status_cache: dict = {"checked_at": 0.0, "payload": None}
 gpu_status_lock = threading.Lock()
 
@@ -171,6 +173,11 @@ class TestArtifactRequest(BaseModel):
 
 class InferenceWeightsRequest(BaseModel):
     weight_path: str
+
+
+class WebRTCOffer(BaseModel):
+    sdp: str
+    type: str
 
 
 def ensure_dirs():
@@ -537,6 +544,26 @@ def update_inference_preview_frame(job_id: str, frame: bytes):
             condition.notify_all()
 
 
+def update_inference_webrtc_frame(job_id: str, frame):
+    with inference_jobs_lock:
+        job = inference_jobs.get(job_id)
+        if job is None:
+            return
+        job["webrtc_frame"] = frame.copy()
+        job["webrtc_updated_at"] = time.time()
+        job["webrtc_frame_seq"] = int(job.get("webrtc_frame_seq") or 0) + 1
+
+
+def latest_inference_webrtc_frame(job_id: str):
+    with inference_jobs_lock:
+        job = inference_jobs.get(job_id)
+        if job is None:
+            return None, "missing"
+        frame = job.get("webrtc_frame")
+        status = job.get("status", "")
+    return (frame.copy() if frame is not None else None), status
+
+
 def inference_mjpeg_stream(job_id: str):
     last_updated_at = 0.0
     while True:
@@ -686,6 +713,9 @@ def run_inference_job(
     def handle_preview(frame: bytes):
         update_inference_preview_frame(job_id, frame)
 
+    def handle_live_frame(frame):
+        update_inference_webrtc_frame(job_id, frame)
+
     update_inference_job(
         job_id,
         status="running",
@@ -724,6 +754,7 @@ def run_inference_job(
             **inference_request,
             progress_callback=handle_progress,
             preview_callback=handle_preview,
+            live_frame_callback=handle_live_frame,
             stop_event=stop_event,
             use_model_cache=True,
         )
@@ -2741,7 +2772,7 @@ def run_inference(
     weight_source: str = Form("selected"),
     weight_path: str = Form(""),
     convert_to_onnx: bool = Form(False),
-    imgsz: int = Form(640),
+    imgsz: int = Form(512),
     conf: float = Form(0.25),
     iou: float = Form(0.45),
     vid_stride: int = Form(1),
@@ -2831,6 +2862,9 @@ def run_inference(
         "preview_frame": None,
         "preview_frame_times": [],
         "preview_updated_at": 0,
+        "webrtc_frame": None,
+        "webrtc_frame_seq": 0,
+        "webrtc_updated_at": 0,
         "created_at": time.time(),
         "updated_at": time.time(),
     }
@@ -2893,6 +2927,87 @@ def inference_stream(job_id: str):
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.post("/api/inference/webrtc/{job_id}/offer")
+async def inference_webrtc_offer(job_id: str, offer: WebRTCOffer):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Inference WebRTC stream not found.")
+    with inference_jobs_lock:
+        if job_id not in inference_jobs:
+            raise HTTPException(status_code=404, detail="Inference WebRTC stream not available.")
+
+    try:
+        import numpy as np
+        from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
+        from aiortc.mediastreams import MediaStreamError
+        from av import VideoFrame
+    except ModuleNotFoundError as exc:
+        missing = exc.name or "aiortc"
+        raise HTTPException(
+            status_code=501,
+            detail=f"WebRTC live preview requires {missing}. Rebuild the container after updating requirements.txt.",
+        ) from exc
+
+    class InferenceVideoTrack(VideoStreamTrack):
+        kind = "video"
+
+        def __init__(self, stream_job_id: str):
+            super().__init__()
+            self.stream_job_id = stream_job_id
+            self.last_frame = None
+
+        async def recv(self):
+            pts, time_base = await self.next_timestamp()
+            frame, status = latest_inference_webrtc_frame(self.stream_job_id)
+            if status in {"complete", "failed", "stopped", "missing"}:
+                raise MediaStreamError
+            if frame is not None:
+                self.last_frame = frame
+            elif self.last_frame is not None:
+                frame = self.last_frame
+            else:
+                frame = np.zeros((360, 640, 3), dtype=np.uint8)
+
+            video_frame = VideoFrame.from_ndarray(np.ascontiguousarray(frame), format="bgr24")
+            video_frame.pts = pts
+            video_frame.time_base = time_base
+            return video_frame
+
+    peer = RTCPeerConnection()
+    peer.addTrack(InferenceVideoTrack(job_id))
+    with inference_peers_lock:
+        inference_peers.setdefault(job_id, set()).add(peer)
+
+    @peer.on("connectionstatechange")
+    async def on_connectionstatechange():
+        if peer.connectionState in {"failed", "disconnected", "closed"}:
+            with inference_peers_lock:
+                peers = inference_peers.get(job_id)
+                if peers is not None:
+                    peers.discard(peer)
+                    if not peers:
+                        inference_peers.pop(job_id, None)
+            if peer.connectionState != "closed":
+                await peer.close()
+
+    try:
+        remote_offer = RTCSessionDescription(sdp=offer.sdp, type=offer.type)
+        await peer.setRemoteDescription(remote_offer)
+        answer = await peer.createAnswer()
+        await peer.setLocalDescription(answer)
+    except Exception as exc:
+        with inference_peers_lock:
+            peers = inference_peers.get(job_id)
+            if peers is not None:
+                peers.discard(peer)
+        await peer.close()
+        raise HTTPException(status_code=400, detail=f"Could not create WebRTC stream: {exc}") from exc
+
+    return {
+        "sdp": peer.localDescription.sdp,
+        "type": peer.localDescription.type,
+    }
 
 
 @app.get("/api/inference/result/{job_id}")
