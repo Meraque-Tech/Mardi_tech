@@ -452,6 +452,16 @@ p {
   min-width: 0;
 }
 
+.dataset-panel > .panel-header {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) minmax(0, 1fr);
+  align-items: start;
+}
+
+.dataset-panel > .panel-header .button-row {
+  justify-content: flex-end;
+}
+
 button.section-toggle {
   width: 30px;
   min-width: 30px;
@@ -549,10 +559,50 @@ button.secondary:disabled:hover {
   color: var(--text);
 }
 
+button.secondary.danger:hover {
+  border-color: var(--danger);
+  color: #fff;
+}
+
+button.secondary.danger:disabled:hover {
+  border-color: var(--danger);
+  color: #fff;
+}
+
 button.compact {
   min-height: 30px;
   padding: 0 10px;
   font-size: 12px;
+}
+
+.action-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.action-menu-options {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: none;
+  min-width: 176px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgb(16 24 40 / 14%);
+}
+
+.action-menu.is-open .action-menu-options {
+  display: grid;
+  gap: 6px;
+}
+
+.action-menu-options button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
 }
 
 button.tab.active {
@@ -1697,6 +1747,17 @@ pre:focus {
   }
 }
 
+@media (max-width: 860px) {
+  .dataset-panel > .panel-header {
+    grid-template-columns: 1fr;
+  }
+
+  .dataset-panel > .panel-header .button-row {
+    justify-content: flex-start;
+    padding-left: 38px;
+  }
+}
+
 @media (max-width: 520px) {
   .app-shell {
     width: min(100% - 20px, 1360px);
@@ -1747,5 +1808,25 @@ pre:focus {
 
   .logs-panel .button-row button {
     flex: 1 1 calc(50% - 8px);
+  }
+
+  .dataset-panel > .panel-header .button-row {
+    padding-left: 0;
+  }
+
+  .dataset-panel > .panel-header .button-row > button,
+  .dataset-panel > .panel-header .action-menu,
+  .dataset-panel > .panel-header .action-menu > button {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  .dataset-panel > .panel-header #prepare-dataset {
+    flex-basis: 100%;
+  }
+
+  .action-menu-options {
+    right: auto;
+    left: 0;
+    width: min(220px, calc(100vw - 48px));
   }
 }

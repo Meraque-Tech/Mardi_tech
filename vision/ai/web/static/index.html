@@ -86,9 +86,14 @@
             <div class="button-row">
               <button id="download-dataset" class="secondary" type="button" disabled>Download ZIP</button>
               <button id="download-annotated-dataset" class="secondary" type="button" disabled>Download Annotated ZIP</button>
-              <button id="clear-dataset-uploads" class="secondary danger compact" type="button">Clear Uploaded ZIPs</button>
-              <button id="clear-dataset-extracted" class="secondary danger compact" type="button">Clear Extracted</button>
-              <button id="clear-dataset-prepared" class="secondary danger compact" type="button">Clear Prepared</button>
+              <div class="action-menu" id="dataset-cleanup-menu">
+                <button id="dataset-cleanup-toggle" class="secondary compact" type="button" aria-expanded="false" aria-haspopup="menu" aria-controls="dataset-cleanup-options">Clear...</button>
+                <div class="action-menu-options" id="dataset-cleanup-options" role="menu" aria-labelledby="dataset-cleanup-toggle">
+                  <button id="clear-dataset-uploads" class="secondary danger compact" type="button" role="menuitem">Uploaded ZIPs</button>
+                  <button id="clear-dataset-extracted" class="secondary danger compact" type="button" role="menuitem">Extracted</button>
+                  <button id="clear-dataset-prepared" class="secondary danger compact" type="button" role="menuitem">Prepared</button>
+                </div>
+              </div>
               <button id="prepare-dataset" type="button">Prepare Dataset</button>
             </div>
           </div>

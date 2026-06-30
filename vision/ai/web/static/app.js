@@ -526,6 +526,21 @@ function syncTrainingGuide() {
   $("guide-progress").textContent = `Step ${currentStep} of 5`;
 }
 
+function closeDatasetCleanupMenu() {
+  const menu = $("dataset-cleanup-menu");
+  const toggle = $("dataset-cleanup-toggle");
+  menu.classList.remove("is-open");
+  toggle.setAttribute("aria-expanded", "false");
+}
+
+function toggleDatasetCleanupMenu() {
+  const menu = $("dataset-cleanup-menu");
+  const toggle = $("dataset-cleanup-toggle");
+  const expanded = toggle.getAttribute("aria-expanded") === "true";
+  menu.classList.toggle("is-open", !expanded);
+  toggle.setAttribute("aria-expanded", String(!expanded));
+}
+
 function syncActionStates() {
   const trainingLocked = state.running || state.isStarting || state.isStopping;
   const testLocked = state.testRunning || state.testStarting || state.testStopping;
@@ -561,6 +576,10 @@ function syncActionStates() {
     $(id).textContent = active ? "Clearing..." : label;
     $(id).setAttribute("aria-busy", String(active));
   });
+  $("dataset-cleanup-toggle").disabled = locked || preparing;
+  if ($("dataset-cleanup-toggle").disabled) {
+    closeDatasetCleanupMenu();
+  }
   $("start-training").disabled = locked || preparing || (!hasDataset && !canResume);
   $("start-training").textContent = state.isStarting ? "Starting..." : "Start";
   $("start-training").setAttribute("aria-busy", String(state.isStarting));
@@ -3614,9 +3633,19 @@ document.querySelectorAll("[data-app-tab]").forEach((button) => {
 $("prepare-dataset").addEventListener("click", prepareDataset);
 $("download-dataset").addEventListener("click", downloadPreparedDataset);
 $("download-annotated-dataset").addEventListener("click", downloadAnnotatedDataset);
-$("clear-dataset-uploads").addEventListener("click", () => clearStorageTarget("dataset_uploads", { label: "uploaded dataset ZIP" }));
-$("clear-dataset-extracted").addEventListener("click", () => clearStorageTarget("dataset_extracted", { label: "extracted dataset" }));
-$("clear-dataset-prepared").addEventListener("click", () => clearStorageTarget("dataset_prepared", { label: "prepared dataset" }));
+$("dataset-cleanup-toggle").addEventListener("click", toggleDatasetCleanupMenu);
+$("clear-dataset-uploads").addEventListener("click", () => {
+  closeDatasetCleanupMenu();
+  clearStorageTarget("dataset_uploads", { label: "uploaded dataset ZIP" });
+});
+$("clear-dataset-extracted").addEventListener("click", () => {
+  closeDatasetCleanupMenu();
+  clearStorageTarget("dataset_extracted", { label: "extracted dataset" });
+});
+$("clear-dataset-prepared").addEventListener("click", () => {
+  closeDatasetCleanupMenu();
+  clearStorageTarget("dataset_prepared", { label: "prepared dataset" });
+});
 $("detect-classes").addEventListener("click", detectClasses);
 $("model-size").addEventListener("change", syncProjectWithModelTask);
 $("start-training").addEventListener("click", startTraining);
@@ -3697,6 +3726,16 @@ document.querySelectorAll("[data-log-mode]").forEach((button) => {
 });
 document.querySelectorAll("[data-preset]").forEach((button) => {
   button.addEventListener("click", () => applyPreset(button.dataset.preset));
+});
+document.addEventListener("click", (event) => {
+  if (!$("dataset-cleanup-menu").contains(event.target)) {
+    closeDatasetCleanupMenu();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeDatasetCleanupMenu();
+  }
 });
 $("reset-advanced").addEventListener("click", () => {
   applyControlValues(CONTROL_DEFAULTS);

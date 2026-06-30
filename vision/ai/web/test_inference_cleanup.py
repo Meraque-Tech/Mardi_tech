@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import threading
 
 import pytest
@@ -52,6 +53,17 @@ def test_inference_cleanup_ui_and_routes_are_exposed():
     assert "/api/inference/storage" in script
     assert "/api/inference/outputs" in script
     assert "/api/storage/" in script
+
+
+def test_storage_cleanup_buttons_use_backend_targets():
+    web_app = load_web_app()
+    script = APP_JS.read_text(encoding="utf-8")
+    keys = set(re.findall(r'clearStorageTarget\("([^"]+)"', script))
+
+    assert keys
+    assert keys <= set(web_app.STORAGE_CLEANUP_TARGETS)
+    for key in keys:
+        assert web_app.normalize_storage_target_key(key) in web_app.STORAGE_CLEANUP_TARGETS
 
 
 def test_clear_inference_outputs_deletes_only_job_outputs(monkeypatch, tmp_path: Path):
@@ -136,6 +148,8 @@ def test_clear_storage_target_deletes_only_selected_dataset_cache(monkeypatch, t
     (extracted_root / "dataset_a" / "data.yaml").write_text("keep", encoding="utf-8")
     (prepared_root / "dataset_a").mkdir()
     (prepared_root / "dataset_a" / "data.yaml").write_text("keep", encoding="utf-8")
+    (inference_upload_root / "weights").mkdir(parents=True)
+    (inference_upload_root / "weights" / "best.pt").write_bytes(b"weights")
 
     result = web_app.clear_storage_target("dataset_uploads")
 
@@ -145,3 +159,25 @@ def test_clear_storage_target_deletes_only_selected_dataset_cache(monkeypatch, t
     assert list(uploads_root.iterdir()) == []
     assert (extracted_root / "dataset_a" / "data.yaml").exists()
     assert (prepared_root / "dataset_a" / "data.yaml").exists()
+
+    result = web_app.clear_storage_target("dataset_extracted")
+
+    assert result["removed_items"] == 1
+    assert result["freed_bytes"] >= 4
+    assert extracted_root.is_dir()
+    assert list(extracted_root.iterdir()) == []
+    assert (prepared_root / "dataset_a" / "data.yaml").exists()
+
+    result = web_app.clear_storage_target("dataset_prepared")
+
+    assert result["removed_items"] == 1
+    assert result["freed_bytes"] >= 4
+    assert prepared_root.is_dir()
+    assert list(prepared_root.iterdir()) == []
+
+    result = web_app.clear_storage_target("inference_uploads")
+
+    assert result["removed_items"] == 1
+    assert result["freed_bytes"] >= 7
+    assert inference_upload_root.is_dir()
+    assert list(inference_upload_root.iterdir()) == []

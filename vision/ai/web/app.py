@@ -501,9 +501,32 @@ STORAGE_CLEANUP_TARGETS = {
     },
 }
 
+STORAGE_CLEANUP_ALIASES = {
+    "inference_output": "inference_outputs",
+    "inference_upload": "inference_uploads",
+    "uploaded_inference": "inference_uploads",
+    "uploaded_inference_weight": "inference_uploads",
+    "uploaded_inference_weights": "inference_uploads",
+    "dataset_extract": "dataset_extracted",
+    "dataset_extracts": "dataset_extracted",
+    "extracted_dataset": "dataset_extracted",
+    "extracted_datasets": "dataset_extracted",
+    "dataset_upload": "dataset_uploads",
+    "uploaded_dataset": "dataset_uploads",
+    "uploaded_datasets": "dataset_uploads",
+    "dataset_preparation": "dataset_prepared",
+    "prepared_dataset": "dataset_prepared",
+    "prepared_datasets": "dataset_prepared",
+}
+
+
+def normalize_storage_target_key(key: str) -> str:
+    return STORAGE_CLEANUP_ALIASES.get(key, key)
+
 
 def storage_target_payload(key: str) -> dict:
     ensure_dirs()
+    key = normalize_storage_target_key(key)
     target = STORAGE_CLEANUP_TARGETS.get(key)
     if target is None:
         raise HTTPException(status_code=404, detail="Storage cleanup target not found.")
@@ -556,6 +579,7 @@ def ensure_storage_target_idle(target: dict):
 
 
 def clear_storage_target(key: str) -> dict:
+    key = normalize_storage_target_key(key)
     target = STORAGE_CLEANUP_TARGETS.get(key)
     if target is None:
         raise HTTPException(status_code=404, detail="Storage cleanup target not found.")
