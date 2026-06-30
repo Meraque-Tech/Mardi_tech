@@ -91,6 +91,16 @@ const CONTROL_DEFAULTS = {
   resume: false,
 };
 
+const TASK_PROJECT_DEFAULTS = {
+  detect: "runs/detect",
+  segment: "runs/segment",
+  classify: "runs/classify",
+};
+
+const KNOWN_TRAINING_PROJECTS = new Set(
+  Object.values(TASK_PROJECT_DEFAULTS).flatMap((project) => [project, `/app/${project}`]),
+);
+
 const TRAINING_PRESETS = {
   stable: {
     epochs: 100,
@@ -148,6 +158,39 @@ const TRAINING_PRESETS = {
     "cos-lr": true,
   },
 };
+
+function taskForModelSize(modelSize) {
+  const value = String(modelSize || "");
+  if (value.endsWith("-seg")) {
+    return "segment";
+  }
+  if (value.endsWith("-cls")) {
+    return "classify";
+  }
+  return "detect";
+}
+
+function defaultProjectForModelSize(modelSize) {
+  return TASK_PROJECT_DEFAULTS[taskForModelSize(modelSize)] || TASK_PROJECT_DEFAULTS.detect;
+}
+
+function normalizedProjectValue(value) {
+  return normalizedPath(value || "").replace(/^\.\//, "");
+}
+
+function isKnownTrainingProject(value) {
+  return !String(value || "").trim() || KNOWN_TRAINING_PROJECTS.has(normalizedProjectValue(value));
+}
+
+function syncProjectWithModelTask() {
+  const project = $("project");
+  if (!project || !isKnownTrainingProject(project.value)) {
+    return;
+  }
+  project.value = defaultProjectForModelSize($("model-size").value);
+  updateCurrentRunDisplay();
+  scheduleTargetRefresh();
+}
 
 function setMessage(text, isError = false) {
   const message = $("message");
@@ -607,9 +650,12 @@ function setControlValue(id, value) {
 
 function applyControlValues(values) {
   Object.entries(values).forEach(([id, value]) => setControlValue(id, value));
+  if (Object.hasOwn(values, "model-size")) {
+    syncProjectWithModelTask();
+  }
   updateCurrentRunDisplay();
   syncActionStates();
-  if (Object.hasOwn(values, "project") || Object.hasOwn(values, "run-name")) {
+  if (Object.hasOwn(values, "project") || Object.hasOwn(values, "run-name") || Object.hasOwn(values, "model-size")) {
     scheduleTargetRefresh();
   }
 }
@@ -1747,7 +1793,7 @@ function renderTrainingSessions(sessions) {
   select.innerHTML = "";
   const placeholder = document.createElement("option");
   placeholder.value = "";
-  placeholder.textContent = "Choose a run from runs/detect";
+  placeholder.textContent = "Choose a training run";
   select.appendChild(placeholder);
 
   sessions.forEach((session) => {
@@ -1764,14 +1810,14 @@ function renderTrainingSessions(sessions) {
   }
   setTrainingSessionStatus(
     sessions.length
-      ? `${sessions.length} previous training session${sessions.length === 1 ? "" : "s"} found in runs/detect.`
-      : "No completed training sessions were found in runs/detect.",
+      ? `${sessions.length} previous training session${sessions.length === 1 ? "" : "s"} found.`
+      : "No completed training sessions were found.",
     false,
   );
 }
 
 async function loadTrainingSessions() {
-  setTrainingSessionStatus("Loading runs from runs/detect...");
+  setTrainingSessionStatus("Loading training runs...");
   const payload = await apiJson("/api/train/sessions");
   state.trainingSessions = Array.isArray(payload.sessions) ? payload.sessions : [];
   renderTrainingSessions(state.trainingSessions);
@@ -2696,6 +2742,9 @@ async function startTraining() {
     setPanelExpanded("results", true);
     state.lastDataRefresh = 0;
     setMessage(`${result.message}\nPID: ${result.pid}`);
+    if (result.training_run?.requested_project) {
+      $("project").value = result.training_run.requested_project;
+    }
     updateCurrentRunDisplay({ ...(result.training_run || {}), running: true });
     pollStatus();
   } catch (error) {
@@ -3348,6 +3397,7 @@ $("prepare-dataset").addEventListener("click", prepareDataset);
 $("download-dataset").addEventListener("click", downloadPreparedDataset);
 $("download-annotated-dataset").addEventListener("click", downloadAnnotatedDataset);
 $("detect-classes").addEventListener("click", detectClasses);
+$("model-size").addEventListener("change", syncProjectWithModelTask);
 $("start-training").addEventListener("click", startTraining);
 $("stop-training").addEventListener("click", stopTraining);
 $("refresh-logs").addEventListener("click", refreshLogs);

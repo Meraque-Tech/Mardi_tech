@@ -9,6 +9,7 @@ import unittest
 INDEX_HTML = Path(__file__).parent / "static" / "index.html"
 WEB_DIR = Path(__file__).parent
 APP_PY = WEB_DIR / "app.py"
+APP_JS = WEB_DIR / "static" / "app.js"
 EXPECTED_PANELS = {"dataset", "training", "gpu", "advanced", "logs", "results", "testing"}
 
 
@@ -86,6 +87,28 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIsNotNone(model_map)
         for value, checkpoint in expected_options.items():
             self.assertEqual(model_map[value], checkpoint)
+
+    def test_task_specific_project_defaults_are_exposed(self):
+        app_module = ast.parse(APP_PY.read_text(encoding="utf-8"))
+        project_defaults = None
+        for node in app_module.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "TRAINING_PROJECT_DEFAULTS"
+                for target in node.targets
+            ):
+                project_defaults = ast.literal_eval(node.value)
+                break
+
+        self.assertEqual(project_defaults, {
+            "detect": "runs/detect",
+            "segment": "runs/segment",
+            "classify": "runs/classify",
+        })
+
+        script = APP_JS.read_text(encoding="utf-8")
+        self.assertIn("function taskForModelSize", script)
+        self.assertIn("function syncProjectWithModelTask", script)
+        self.assertIn('"model-size").addEventListener("change", syncProjectWithModelTask)', script)
 
 
 if __name__ == "__main__":

@@ -272,7 +272,7 @@
 
           <div class="grid two">
             <label>
-              <span class="tooltip-label" tabindex="0" data-tooltip="Output directory for training runs. With Docker defaults, runs/detect maps to the repo's runs/detect folder.">Project</span>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Output directory for training runs. The default follows the selected task: runs/detect, runs/segment, or runs/classify.">Project</span>
               <input id="project" type="text" value="runs/detect">
             </label>
             <label class="checkbox-row inline-check">
@@ -465,7 +465,7 @@
             <label>
               Previous training session
               <select id="training-session-select">
-                <option value="">Choose a run from runs/detect</option>
+                <option value="">Choose a training run</option>
               </select>
             </label>
             <div class="button-row">

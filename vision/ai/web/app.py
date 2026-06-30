@@ -43,6 +43,9 @@ LOG_FILE = LOG_DIR / "current.log"
 TEST_LOG_FILE = LOG_DIR / "test-current.log"
 RUNS_ROOT = REPO_ROOT / "runs"
 DETECT_RUNS_ROOT = RUNS_ROOT / "detect"
+SEGMENT_RUNS_ROOT = RUNS_ROOT / "segment"
+CLASSIFY_RUNS_ROOT = RUNS_ROOT / "classify"
+TRAINING_RUNS_ROOTS = (DETECT_RUNS_ROOT, SEGMENT_RUNS_ROOT, CLASSIFY_RUNS_ROOT)
 TEST_RUNS_ROOT = RUNS_ROOT / "test"
 INFERENCE_SCRIPT = WEB_DIR / "infer_yolo.py"
 MYT = timezone(timedelta(hours=8), name="MYT")
@@ -80,6 +83,11 @@ MODEL_MAP = {
     "medium-cls": "yolov8m-cls.pt",
     "large-cls": "yolov8l-cls.pt",
     "xlarge-cls": "yolov8x-cls.pt",
+}
+TRAINING_PROJECT_DEFAULTS = {
+    "detect": "runs/detect",
+    "segment": "runs/segment",
+    "classify": "runs/classify",
 }
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
@@ -307,6 +315,38 @@ def resolve_project_path(project: str) -> Path:
     return project_path.resolve()
 
 
+def training_task_for_model_size(model_size: str) -> str:
+    value = str(model_size or "")
+    if value.endswith("-seg"):
+        return "segment"
+    if value.endswith("-cls"):
+        return "classify"
+    return "detect"
+
+
+def default_project_for_training_task(task: str) -> str:
+    return TRAINING_PROJECT_DEFAULTS.get(task, TRAINING_PROJECT_DEFAULTS["detect"])
+
+
+def is_known_training_project_default(project: str) -> bool:
+    value = str(project or "").strip().replace("\\", "/").rstrip("/")
+    if not value:
+        return True
+
+    known_values = set(TRAINING_PROJECT_DEFAULTS.values())
+    known_values.update(f"/app/{item}" for item in TRAINING_PROJECT_DEFAULTS.values())
+    if value in known_values:
+        return True
+
+    try:
+        project_path = resolve_project_path(value)
+    except (OSError, RuntimeError):
+        return False
+
+    known_paths = {resolve_project_path(item) for item in TRAINING_PROJECT_DEFAULTS.values()}
+    return project_path in known_paths
+
+
 def normalize_training_project_path(project: str) -> Path:
     project_path = resolve_project_path(project or "runs/detect")
     ensure_runs_path(project_path)
@@ -446,30 +486,31 @@ def export_inference_pt_to_onnx(weights_path: Path, imgsz: int) -> Path:
 
 
 def available_training_sessions() -> list[dict]:
-    if not DETECT_RUNS_ROOT.is_dir():
-        return []
-
     sessions = []
-    for path in DETECT_RUNS_ROOT.rglob("*"):
-        if not path.is_dir() or not is_run_dir(path):
+    for root in TRAINING_RUNS_ROOTS:
+        if not root.is_dir():
             continue
-        try:
-            ensure_runs_path(path)
-        except HTTPException:
-            continue
-        file_times = [item.stat().st_mtime for item in path.rglob("*") if item.is_file()]
-        modified_at = max(file_times, default=path.stat().st_mtime)
-        project_path = path.parent
-        sessions.append({
-            "label": relative_to_repo(path),
-            "name": path.name,
-            "project": relative_to_repo(project_path),
-            "run_dir": relative_to_repo(path),
-            "modified_at": modified_at,
-            "has_results": (path / "results.csv").is_file(),
-            "has_best": (path / "weights" / "best.pt").is_file(),
-            "has_last": (path / "weights" / "last.pt").is_file(),
-        })
+        for path in root.rglob("*"):
+            if not path.is_dir() or not is_run_dir(path):
+                continue
+            try:
+                ensure_runs_path(path)
+            except HTTPException:
+                continue
+            file_times = [item.stat().st_mtime for item in path.rglob("*") if item.is_file()]
+            modified_at = max(file_times, default=path.stat().st_mtime)
+            project_path = path.parent
+            sessions.append({
+                "label": relative_to_repo(path),
+                "name": path.name,
+                "project": relative_to_repo(project_path),
+                "run_dir": relative_to_repo(path),
+                "task": root.name,
+                "modified_at": modified_at,
+                "has_results": (path / "results.csv").is_file(),
+                "has_best": (path / "weights" / "best.pt").is_file(),
+                "has_last": (path / "weights" / "last.pt").is_file(),
+            })
 
     sessions.sort(key=lambda item: item["modified_at"], reverse=True)
     return sessions
@@ -3976,12 +4017,16 @@ def start_training(request: TrainRequest):
     model = MODEL_MAP.get(request.model_size)
     if not model:
         raise HTTPException(status_code=400, detail=f"Unknown model size: {request.model_size}")
-    training_project_path = normalize_training_project_path(request.project)
+    model_task = training_task_for_model_size(request.model_size)
+    requested_project = request.project
+    if is_known_training_project_default(requested_project):
+        requested_project = default_project_for_training_task(model_task)
+    training_project_path = normalize_training_project_path(requested_project)
     resume_checkpoint = None
     resume_run_dir = None
     if request.resume:
         try:
-            resume_run_dir, _ = resolve_run_dir_details(request.project, request.name)
+            resume_run_dir, _ = resolve_run_dir_details(requested_project, request.name)
         except HTTPException as exc:
             raise HTTPException(
                 status_code=400,
@@ -3997,6 +4042,9 @@ def start_training(request: TrainRequest):
         model = str(resume_checkpoint)
 
     request_payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    request_payload["task"] = model_task
+    request_payload["model"] = model
+    request_payload["project"] = str(training_project_path)
     report_context = {}
     if resume_run_dir:
         report_context = read_json_object(resume_run_dir / TRAINING_REPORT_CONTEXT_FILE)
@@ -4009,6 +4057,7 @@ def start_training(request: TrainRequest):
             "dataset_yaml": str(report_dataset_yaml) if report_dataset_yaml else "",
             "dataset_summary": cached_dataset_summary(report_dataset_yaml) if report_dataset_yaml else {},
             "hyperparameters": request_payload,
+            "task": model_task,
             "model": model,
             "pretrained": True,
             "device": request.device or os.getenv("TRAINING_DEVICE") or "auto",
@@ -4021,14 +4070,18 @@ def start_training(request: TrainRequest):
             },
         }
     report_context["last_started_at"] = datetime.now(MYT).isoformat()
+    report_context["task"] = model_task
+    report_context["model"] = model
     report_context["hyperparameters"] = request_payload
     report_context["resume"] = bool(request.resume)
 
     training_run_info = {
-        "requested_project": request.project,
+        "requested_project": requested_project,
         "requested_name": request.name,
         "project": str(training_project_path),
         "name": request.name,
+        "task": model_task,
+        "model": model,
         "expected_run_dir": str(training_project_path / request.name),
         "run_dir": str(resume_run_dir) if resume_run_dir else "",
         "resolution_type": "actual" if resume_run_dir else "pending",
