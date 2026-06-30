@@ -41,17 +41,39 @@
     button:hover { filter:brightness(1.1) } button:disabled { opacity:.45;cursor:wait }
     button.green { background:#199b59 } button.red { background:#c83f4b } button.gray { background:#394052 }
     button.link { padding:3px;background:none;color:#9da1ff;font-size:12px }
-    .metric { font-size:27px;font-weight:750;letter-spacing:-1px }
-    .counts { display:grid;gap:11px }.count-row { display:grid;grid-template-columns:90px 1fr 42px;align-items:center;gap:8px }
-    .bar { height:7px;border-radius:8px;background:#272c3a;overflow:hidden }.bar span { display:block;height:100%;border-radius:8px }
-    .toggle-row { display:flex;justify-content:space-between;align-items:center;gap:12px }
-    .switch { position:relative;width:44px;height:24px }.switch input { opacity:0;width:0;height:0 }
+    /* ── Sidebar detection summary ── */
+    .sb-summary { display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-radius:10px;overflow:hidden;margin-bottom:16px }
+    .sb-stat { background:var(--card);padding:13px 14px }
+    .sb-stat .label { font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px }
+    .sb-stat .value { font-size:26px;font-weight:750;letter-spacing:-1px;line-height:1 }
+    .sb-stat .value.small { font-size:14px;font-weight:600;letter-spacing:0;line-height:1.4 }
+    .sb-divider { border:none;border-top:1px solid var(--line);margin:14px 0 }
+    .sb-conf-row { display:flex;align-items:center;gap:10px }
+    .sb-conf-bar { flex:1;height:6px;border-radius:4px;background:#1e2436;overflow:hidden }
+    .sb-conf-bar span { display:block;height:100%;border-radius:4px;transition:width .4s ease,background .4s }
+    .sb-conf-val { font-size:13px;font-weight:700;font-family:ui-monospace,monospace;min-width:44px;text-align:right }
+    /* ── Class breakdown ── */
+    .counts { display:grid;gap:0;min-height:160px }
+    .count-row { display:grid;grid-template-columns:1fr 52px 38px;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1a2030;transition:opacity .3s }
+    .count-row:last-child { border-bottom:none }
+    .count-row.zero { opacity:.38 }
+    .count-name { font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+    .count-bar-wrap { position:relative;height:5px;border-radius:4px;background:#1e2436;overflow:hidden }
+    .count-bar-fill { position:absolute;inset:0 auto 0 0;border-radius:4px;transition:width .45s ease }
+    .count-val { font-size:14px;font-weight:750;text-align:right }
+    /* ── Settings card ── */
+    .toggle-row { display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0 }
+    .toggle-row:first-child { padding-top:0 } .toggle-row:last-child { padding-bottom:0 }
+    .toggle-label strong { display:block;font-size:13px;margin-bottom:2px }
+    .toggle-label .sub { font-size:11px;color:var(--muted) }
+    .switch { position:relative;width:44px;height:24px;flex-shrink:0 }.switch input { opacity:0;width:0;height:0 }
     .slider { position:absolute;inset:0;background:#3b4254;border-radius:20px;cursor:pointer;transition:.2s }
     .slider:before { content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;background:white;border-radius:50%;transition:.2s }
     .switch input:checked + .slider { background:var(--blue) }.switch input:checked + .slider:before { transform:translateX(20px) }
-    canvas { display:block;width:100%;height:230px }
-    .legend { display:flex;gap:12px;flex-wrap:wrap;min-height:18px;margin-top:7px;font-size:11px;color:var(--muted) }
-    .legend i { width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:4px }
+    /* ── Chart ── */
+    canvas { display:block;width:100%;height:200px }
+    .legend { display:flex;gap:10px;flex-wrap:wrap;min-height:18px;margin-top:8px;font-size:11px;color:var(--muted) }
+    .legend i { width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px }
     .history-card { grid-column:1/-1 }
     .table-wrap { overflow:auto;max-height:520px;border:1px solid var(--line);border-radius:12px }
     table { width:100%;border-collapse:collapse }
@@ -138,26 +160,63 @@
     </div>
 
     <aside class="stack">
+
+      <!-- Detection summary -->
       <section class="card">
-        <div class="card-head"><h2>Current class counts</h2><span class="metric" id="count-metric">0</span></div>
-        <div id="counts" class="counts"><span class="muted">Waiting for detection data…</span></div>
-      </section>
-      <section class="card">
-        <h2>Counting mode</h2>
-        <div class="toggle-row">
-          <div><strong id="track-title">Per-frame count</strong><div id="track-desc" class="muted">Objects visible in the current frame</div></div>
-          <label class="switch"><input id="track-toggle" type="checkbox" onchange="setTracking(this.checked)"><span class="slider"></span></label>
+        <div class="card-head" style="margin-bottom:14px"><h2>Live Detection</h2><span class="live" id="sb-live-dot">● LIVE</span></div>
+        <div class="sb-summary">
+          <div class="sb-stat">
+            <div class="label">Total Objects</div>
+            <div class="value" id="count-metric">0</div>
+          </div>
+          <div class="sb-stat">
+            <div class="label">Object Status</div>
+            <div class="value small" id="bed-badge-sb"><span class="badge clear">CLEAR</span></div>
+          </div>
+        </div>
+        <div class="sb-stat" style="background:transparent;padding:0">
+          <div class="label" style="margin-bottom:8px">Confidence</div>
+          <div class="sb-conf-row">
+            <div class="sb-conf-bar"><span id="sb-conf-fill" style="width:0%;background:var(--green)"></span></div>
+            <span class="sb-conf-val" id="sb-conf-val" style="color:var(--green)">0.000</span>
+          </div>
         </div>
       </section>
+
+      <!-- Class breakdown — fixed structure, never collapses -->
       <section class="card">
-        <h2>Automatic saving</h2>
+        <div class="card-head" style="margin-bottom:6px">
+          <h2>Class Breakdown</h2>
+          <span style="font-size:11px;color:var(--muted)" id="sb-mode-label">Per-frame</span>
+        </div>
+        <div id="counts" class="counts">
+          <div style="padding:24px 0;text-align:center;color:var(--muted);font-size:12px">Waiting for detection data…</div>
+        </div>
+      </section>
+
+      <!-- Settings — merged into one card -->
+      <section class="card">
+        <h2 style="margin-bottom:12px">Settings</h2>
         <div class="toggle-row">
-          <div><strong>Frame + count</strong><div class="muted">Every 0.5 seconds while detection runs</div></div>
+          <div class="toggle-label">
+            <strong id="track-title">Per-frame count</strong>
+            <div class="sub" id="track-desc">Objects visible in the current frame</div>
+          </div>
+          <label class="switch"><input id="track-toggle" type="checkbox" onchange="setTracking(this.checked)"><span class="slider"></span></label>
+        </div>
+        <hr class="sb-divider">
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <strong>Auto-save</strong>
+            <div class="sub">Frame + count every 0.5 s while running</div>
+          </div>
           <label class="switch"><input id="auto-save-toggle" type="checkbox" onchange="setAutoSave(this.checked)"><span class="slider"></span></label>
         </div>
       </section>
+
+      <!-- Class labels -->
       <section class="card">
-        <h2>Class labels</h2>
+        <h2 style="margin-bottom:12px">Class Labels</h2>
         <div class="label-input-row">
           <input id="lbl-id" type="number" min="0" placeholder="ID" title="Class ID">
           <input id="lbl-name" type="text" placeholder="Name (e.g. human)" title="Human-readable name">
@@ -165,10 +224,14 @@
         </div>
         <div id="label-list" class="label-list"></div>
       </section>
+
+      <!-- Trend chart -->
       <section class="card">
-        <div class="card-head"><h2>Recent count chart</h2><span class="muted">Persistent samples</span></div>
-        <canvas id="chart"></canvas><div id="legend" class="legend"></div>
+        <div class="card-head" style="margin-bottom:10px"><h2>Count Trend</h2><span style="font-size:11px;color:var(--muted)">Recent samples</span></div>
+        <canvas id="chart"></canvas>
+        <div id="legend" class="legend"></div>
       </section>
+
     </aside>
 
     <section class="card history-card">
@@ -249,11 +312,26 @@
     return data;
   }
 
+  // Persistent class registry — classes never disappear once seen, only go to 0
+  const knownClasses = new Map(); // id → index (for stable color assignment)
+
   function applySnapshot(data) {
     const running=Boolean(data.detecting), bed=Boolean(data.bed_status);
+    // Top status bar
     const detect=document.getElementById('detect-badge');detect.textContent=running?'RUNNING':'STOPPED';detect.className=`badge ${running?'running':'stopped'}`;
+    // Sidebar status badge (synced to same badge element via bed-badge-sb)
+    const bedSb=document.getElementById('bed-badge-sb');
+    bedSb.innerHTML=bed?'<span class="badge found">OBJ FOUND</span>':'<span class="badge clear">CLEAR</span>';
     const bedEl=document.getElementById('bed-badge');bedEl.textContent=bed?'OBJ FOUND':'CLEAR';bedEl.className=`badge ${bed?'found':'clear'}`;
-    document.getElementById('confidence').textContent=Number(data.conf||0).toFixed(3);
+    // Confidence — top bar + sidebar bar
+    const conf=Number(data.conf||0);
+    document.getElementById('confidence').textContent=conf.toFixed(3);
+    const confPct=Math.round(conf*100);
+    const confColor=confPct>=80?'var(--green)':confPct>=50?'var(--amber)':'var(--red)';
+    const fill=document.getElementById('sb-conf-fill');
+    fill.style.width=confPct+'%';fill.style.background=confColor;
+    const confVal=document.getElementById('sb-conf-val');
+    confVal.textContent=conf.toFixed(3);confVal.style.color=confColor;
     if(data.last_updated)document.getElementById('last-update').textContent=formatTime(data.last_updated);
     renderCounts(data.counts||{});
     if(typeof data.is_track==='boolean')applyTracking(data.is_track);
@@ -263,17 +341,38 @@
   }
 
   function renderCounts(counts) {
-    const entries=Object.entries(counts), total=entries.reduce((sum,item)=>sum+Number(item[1]),0);
-    document.getElementById('count-metric').textContent=total;document.getElementById('current-total').textContent=total;
+    // Register any new class IDs so we never remove a row once shown
+    Object.keys(counts).forEach(id=>{
+      if(!knownClasses.has(id))knownClasses.set(id,knownClasses.size);
+    });
+    const total=Object.values(counts).reduce((s,v)=>s+Number(v),0);
+    document.getElementById('count-metric').textContent=total;
+    document.getElementById('current-total').textContent=total;
     const el=document.getElementById('counts');
-    if(!entries.length){el.innerHTML='<span class="muted">No detections in the latest live update.</span>';return;}
-    el.innerHTML=entries.map(([name,value],index)=>{const width=total?Math.round(value/total*100):0,color=COLORS[index%COLORS.length];return `<div class="count-row"><strong style="color:${color}">${escapeHtml(labelFor(name))}</strong><div class="bar"><span style="width:${width}%;background:${color}"></span></div><span>${Number(value)}</span></div>`}).join('');
+    if(!knownClasses.size){
+      el.innerHTML='<div style="padding:24px 0;text-align:center;color:var(--muted);font-size:12px">Waiting for detection data…</div>';
+      return;
+    }
+    const sorted=[...knownClasses.entries()].sort((a,b)=>Number(a[0])-Number(b[0]));
+    el.innerHTML=sorted.map(([id,colorIdx])=>{
+      const value=Number(counts[id]||0);
+      const color=COLORS[colorIdx%COLORS.length];
+      const pct=total?Math.round(value/total*100):0;
+      const label=escapeHtml(classLabels[String(id)]||`Class ${id}`);
+      const zero=value===0?' zero':'';
+      return `<div class="count-row${zero}">
+        <span class="count-name" style="color:${color}">${label}</span>
+        <div class="count-bar-wrap"><div class="count-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <span class="count-val" style="color:${color}">${value}</span>
+      </div>`;
+    }).join('');
   }
 
   function applyTracking(enabled) {
     document.getElementById('track-toggle').checked=enabled;
     document.getElementById('track-title').textContent=enabled?'Unique-object tracking':'Per-frame count';
     document.getElementById('track-desc').textContent=enabled?'Cumulative unique objects in this run':'Objects visible in the current frame';
+    document.getElementById('sb-mode-label').textContent=enabled?'Unique track':'Per-frame';
   }
 
   async function setDetection(start) {
