@@ -580,9 +580,9 @@ function syncDatasetSourceControls() {
   $("split-controls").hidden = !splitEnabled;
 
   const classNotes = {
-    upload: "For ZIP uploads, leave this empty to read class names from data.yaml.",
-    folder: "Use Auto Fetch to read class names from data.yaml, or enter one class per line.",
-    roboflow: "Leave this empty to use the class names supplied by the Roboflow dataset version.",
+    upload: "Class names are read from data.yaml during dataset preparation.",
+    folder: "Use Auto Fetch to preview class names from data.yaml, or prepare the dataset to fill them automatically.",
+    roboflow: "Class names are supplied by the Roboflow dataset version.",
   };
   $("classes-note").textContent = classNotes[state.source];
   updateDatasetNameSuggestion();

@@ -46,6 +46,12 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertNotIn('id="activation"', markup)
         self.assertNotIn("Model Architecture", markup)
 
+    def test_class_ids_field_is_read_only(self):
+        markup = INDEX_HTML.read_text(encoding="utf-8")
+
+        self.assertIn('id="classes"', markup)
+        self.assertIn("readonly", markup)
+
     def test_model_selector_exposes_yolov8_task_families(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
 
