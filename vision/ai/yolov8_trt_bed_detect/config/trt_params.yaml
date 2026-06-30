@@ -31,7 +31,7 @@ yolov8_trt:
     nms_thresh:  0.45
 
     # ── Confidence gate (published on /conf, triggers /bed_detection) ─────────
-    conf_score_value: 0.8
+    conf_score_value: 0.3
 
     # ── Tracking ──────────────────────────────────────────────────────────────
     # true  → count unique objects across frames (MOSSE tracker)
