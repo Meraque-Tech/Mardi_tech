@@ -65,6 +65,21 @@ MODEL_MAP = {
     "medium": "yolov8m.pt",
     "large": "yolov8l.pt",
     "xlarge": "yolov8x.pt",
+    "nano-det": "yolov8n.pt",
+    "small-det": "yolov8s.pt",
+    "medium-det": "yolov8m.pt",
+    "large-det": "yolov8l.pt",
+    "xlarge-det": "yolov8x.pt",
+    "nano-seg": "yolov8n-seg.pt",
+    "small-seg": "yolov8s-seg.pt",
+    "medium-seg": "yolov8m-seg.pt",
+    "large-seg": "yolov8l-seg.pt",
+    "xlarge-seg": "yolov8x-seg.pt",
+    "nano-cls": "yolov8n-cls.pt",
+    "small-cls": "yolov8s-cls.pt",
+    "medium-cls": "yolov8m-cls.pt",
+    "large-cls": "yolov8l-cls.pt",
+    "xlarge-cls": "yolov8x-cls.pt",
 }
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")

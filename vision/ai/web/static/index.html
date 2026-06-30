@@ -209,13 +209,29 @@
 
           <div class="grid two">
             <label>
-              <span class="tooltip-label" tabindex="0" data-tooltip="Base YOLOv8 checkpoint size. Larger models can be more accurate but train slower and need more GPU memory.">Model size</span>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Base YOLOv8 task and checkpoint size. Choose detection, segmentation, or classification to match your dataset labels. Larger models can be more accurate but train slower and need more GPU memory.">Model task &amp; size</span>
               <select id="model-size">
-                <option value="nano">Nano - yolov8n.pt</option>
-                <option value="small">Small - yolov8s.pt</option>
-                <option value="medium">Medium - yolov8m.pt</option>
-                <option value="large">Large - yolov8l.pt</option>
-                <option value="xlarge">Extra large - yolov8x.pt</option>
+                <optgroup label="Detection">
+                  <option value="nano">Nano - yolov8n.pt</option>
+                  <option value="small">Small - yolov8s.pt</option>
+                  <option value="medium">Medium - yolov8m.pt</option>
+                  <option value="large">Large - yolov8l.pt</option>
+                  <option value="xlarge">Extra large - yolov8x.pt</option>
+                </optgroup>
+                <optgroup label="Segmentation">
+                  <option value="nano-seg">Nano - yolov8n-seg.pt</option>
+                  <option value="small-seg">Small - yolov8s-seg.pt</option>
+                  <option value="medium-seg">Medium - yolov8m-seg.pt</option>
+                  <option value="large-seg">Large - yolov8l-seg.pt</option>
+                  <option value="xlarge-seg">Extra large - yolov8x-seg.pt</option>
+                </optgroup>
+                <optgroup label="Classification">
+                  <option value="nano-cls">Nano - yolov8n-cls.pt</option>
+                  <option value="small-cls">Small - yolov8s-cls.pt</option>
+                  <option value="medium-cls">Medium - yolov8m-cls.pt</option>
+                  <option value="large-cls">Large - yolov8l-cls.pt</option>
+                  <option value="xlarge-cls">Extra large - yolov8x-cls.pt</option>
+                </optgroup>
               </select>
             </label>
             <label>

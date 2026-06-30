@@ -1,11 +1,14 @@
 """Tests for collapsible web UI panel markup."""
 
+import ast
 from html.parser import HTMLParser
 from pathlib import Path
 import unittest
 
 
 INDEX_HTML = Path(__file__).parent / "static" / "index.html"
+WEB_DIR = Path(__file__).parent
+APP_PY = WEB_DIR / "app.py"
 EXPECTED_PANELS = {"dataset", "training", "gpu", "advanced", "logs", "results", "testing"}
 
 
@@ -41,6 +44,48 @@ class CollapsibleSectionTests(unittest.TestCase):
 
         self.assertNotIn('id="activation"', markup)
         self.assertNotIn("Model Architecture", markup)
+
+    def test_model_selector_exposes_yolov8_task_families(self):
+        markup = INDEX_HTML.read_text(encoding="utf-8")
+
+        expected_options = {
+            "nano": "yolov8n.pt",
+            "small": "yolov8s.pt",
+            "medium": "yolov8m.pt",
+            "large": "yolov8l.pt",
+            "xlarge": "yolov8x.pt",
+            "nano-seg": "yolov8n-seg.pt",
+            "small-seg": "yolov8s-seg.pt",
+            "medium-seg": "yolov8m-seg.pt",
+            "large-seg": "yolov8l-seg.pt",
+            "xlarge-seg": "yolov8x-seg.pt",
+            "nano-cls": "yolov8n-cls.pt",
+            "small-cls": "yolov8s-cls.pt",
+            "medium-cls": "yolov8m-cls.pt",
+            "large-cls": "yolov8l-cls.pt",
+            "xlarge-cls": "yolov8x-cls.pt",
+        }
+
+        self.assertIn('optgroup label="Detection"', markup)
+        self.assertIn('optgroup label="Segmentation"', markup)
+        self.assertIn('optgroup label="Classification"', markup)
+        for value, checkpoint in expected_options.items():
+            self.assertIn(f'<option value="{value}">', markup)
+            self.assertIn(checkpoint, markup)
+
+        app_module = ast.parse(APP_PY.read_text(encoding="utf-8"))
+        model_map = None
+        for node in app_module.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "MODEL_MAP"
+                for target in node.targets
+            ):
+                model_map = ast.literal_eval(node.value)
+                break
+
+        self.assertIsNotNone(model_map)
+        for value, checkpoint in expected_options.items():
+            self.assertEqual(model_map[value], checkpoint)
 
 
 if __name__ == "__main__":
