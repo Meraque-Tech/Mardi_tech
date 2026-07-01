@@ -4,3 +4,4 @@
 
 !.gitignore
 !/yolov8n.*
+!/mardi_pineapple_yolo_v8.wts
