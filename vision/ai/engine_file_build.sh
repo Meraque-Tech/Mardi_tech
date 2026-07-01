@@ -4,6 +4,7 @@
 # Defaults: model_name=yolov8n, model_type=n, num_classes=80
 # Example: ./engine_file_build.sh mardi_pineapple_yolo_v8 n 3
 # ./engine_file_build.sh mardi_pineapple_yolo_v8 n 3
+# ./engine_file_build.sh yolov8n n 80
 
 MODEL_NAME="${1:-yolov8n}"
 MODEL_TYPE="${2:-n}"
