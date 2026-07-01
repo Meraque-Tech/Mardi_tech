@@ -4,6 +4,9 @@
 # engine can be a full path or just a filename — only the basename is used (weights dir is mounted)
 # Defaults: engine=yolov8n.engine, cam_id=0, postprocess=g, show=true
 
+# ./run_yolov8_det_video.sh ./yolov8/weights/mardi_pineapple_yolo_v8.engine 0 g true
+# ./run_yolov8_det_video.sh ./yolov8/weights/yolov8n.engine 0 g true
+
 ENGINE="$(basename "${1:-yolov8n.engine}")"
 CAM_ID="${2:-0}"
 POSTPROCESS="${3:-g}"
