@@ -2071,7 +2071,7 @@ function renderInferenceWeights(weights) {
     option.value = "";
     option.textContent = "No weights found";
     select.appendChild(option);
-    $("inference-weights-status").textContent = "No .pt or .onnx weights were found under runs/detect.";
+    $("inference-weights-status").textContent = "No .pt or .onnx weights were found under runs/detect, runs/segment, or runs/classify.";
     syncInferenceControls();
     return;
   }
@@ -2082,12 +2082,12 @@ function renderInferenceWeights(weights) {
     option.textContent = `${weight.label} [${format}] (${formatBytes(weight.size)})`;
     select.appendChild(option);
   });
-  $("inference-weights-status").textContent = `${weights.length} .pt/.onnx weight file${weights.length === 1 ? "" : "s"} available from runs/detect.`;
+  $("inference-weights-status").textContent = `${weights.length} .pt/.onnx weight file${weights.length === 1 ? "" : "s"} available from runs.`;
   syncInferenceControls();
 }
 
 async function loadInferenceWeights() {
-  $("inference-weights-status").textContent = "Loading weights from runs/detect...";
+  $("inference-weights-status").textContent = "Loading weights from runs...";
   const payload = await apiJson("/api/inference/weights");
   state.inferenceWeights = Array.isArray(payload.weights) ? payload.weights : [];
   renderInferenceWeights(state.inferenceWeights);
@@ -2096,9 +2096,6 @@ async function loadInferenceWeights() {
 function updateInferenceFileSelection() {
   const weight = $("inference-weight-file").files[0];
   const weightSuffix = inferenceWeightSuffix(weight);
-  if (weightSuffix === ".pt") {
-    $("inference-convert-onnx").checked = true;
-  }
   $("inference-weight-selection").textContent = weight
     ? `${weight.name} (${formatBytes(weight.size)})${[".pt", ".onnx"].includes(weightSuffix) ? "" : " - unsupported"}`
     : "No weights file selected.";
@@ -2163,21 +2160,78 @@ function renderInferenceInputPreview(media) {
   }
 }
 
-function renderInferenceDetections(detections) {
+function inferenceTaskLabel(task) {
+  const labels = {
+    detect: "Detection",
+    segment: "Segmentation",
+    classify: "Classification",
+    pose: "Pose",
+    obb: "Oriented Detection",
+  };
+  return labels[task] || "YOLO";
+}
+
+function inferenceResultTask(result) {
+  if (result.task) {
+    return result.task;
+  }
+  if (Array.isArray(result.image_classifications) && result.image_classifications.length) {
+    return "classify";
+  }
+  const detections = Array.isArray(result.image_detections) ? result.image_detections : [];
+  if (detections.some((row) => row.mask_area !== undefined && row.mask_area !== null)) {
+    return "segment";
+  }
+  return "detect";
+}
+
+function renderInferencePredictions(result) {
   const container = $("inference-detections");
-  const rows = Array.isArray(detections) ? detections : [];
-  if (!rows.length) {
-    container.innerHTML = "<p>No image detections passed the selected confidence threshold.</p>";
+  const task = inferenceResultTask(result || {});
+  if (task === "classify") {
+    const rows = Array.isArray(result.image_classifications) ? result.image_classifications : [];
+    if (!rows.length) {
+      container.innerHTML = "<p>No image classifications were returned.</p>";
+      return;
+    }
+    container.innerHTML = `
+      <h4>Image Classifications</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Class</th>
+            <th>Confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${Math.round(Number(row.rank) || 0)}</td>
+              <td>${escapeHtml(row.class_name || `class_${row.class_id}`)}</td>
+              <td>${metricText(row.confidence)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>`;
     return;
   }
+
+  const rows = Array.isArray(result.image_detections) ? result.image_detections : [];
+  if (!rows.length) {
+    container.innerHTML = "<p>No image predictions passed the selected confidence threshold.</p>";
+    return;
+  }
+  const hasMasks = rows.some((row) => row.mask_area !== undefined && row.mask_area !== null);
   container.innerHTML = `
-    <h4>Image Detections</h4>
+    <h4>${task === "segment" || hasMasks ? "Image Instances" : "Image Detections"}</h4>
     <table>
       <thead>
         <tr>
           <th>Class</th>
           <th>Confidence</th>
           <th>Box</th>
+          ${hasMasks ? "<th>Mask Area</th>" : ""}
         </tr>
       </thead>
       <tbody>
@@ -2186,6 +2240,7 @@ function renderInferenceDetections(detections) {
             <td>${escapeHtml(row.class_name || `class_${row.class_id}`)}</td>
             <td>${metricText(row.confidence)}</td>
             <td>${(row.box || []).map((value) => Math.round(Number(value) || 0)).join(", ")}</td>
+            ${hasMasks ? `<td>${row.mask_area === null || row.mask_area === undefined ? "N/A" : Math.round(Number(row.mask_area) || 0)}</td>` : ""}
           </tr>
         `).join("")}
       </tbody>
@@ -2443,10 +2498,21 @@ function renderInferenceResult(result) {
   const resultUrl = `${result.result_url}?${cacheBust}`;
   $("inference-results").hidden = false;
   $("download-inference-result").href = result.download_url || result.result_url;
+  const task = inferenceResultTask(result);
+  const taskLabel = inferenceTaskLabel(task);
+  const frames = Number(result.frames) || 0;
   const videoDetails = result.media_type === "video"
     ? ` Video stride ${result.video_stride || 1}; browser MP4 ${result.browser_video ? "ready" : "fallback"}.`
     : "";
-  const summary = `${result.engine || "YOLO inference"} processed ${result.frames || 0} frame${result.frames === 1 ? "" : "s"} with ${result.detections || 0} detection${result.detections === 1 ? "" : "s"} in ${metricText(result.elapsed_ms)} ms.${videoDetails}`;
+  const predictionCount = task === "classify"
+    ? Number(result.classifications) || frames
+    : Number(result.detections) || 0;
+  const predictionLabel = task === "classify"
+    ? `classification${predictionCount === 1 ? "" : "s"}`
+    : task === "segment"
+      ? `instance${predictionCount === 1 ? "" : "s"}`
+      : `detection${predictionCount === 1 ? "" : "s"}`;
+  const summary = `${taskLabel} inference processed ${frames} frame${frames === 1 ? "" : "s"} with ${predictionCount} ${predictionLabel} in ${metricText(result.elapsed_ms)} ms.${videoDetails}`;
   $("inference-result-summary").textContent = summary;
 
   const image = $("inference-result-image");
@@ -2470,7 +2536,7 @@ function renderInferenceResult(result) {
     image.hidden = false;
     image.src = resultUrl;
   }
-  renderInferenceDetections(result.image_detections);
+  renderInferencePredictions(result);
 }
 
 function uploadInferenceRequest(form) {
@@ -2515,7 +2581,7 @@ async function runInference() {
     return;
   }
   if (source === "selected" && !$("inference-weight-select").value) {
-    setInferenceMessage("Choose weights from runs/detect or upload a .pt/.onnx file.", true);
+    setInferenceMessage("Choose weights from runs or upload a .pt/.onnx file.", true);
     return;
   }
   if (source === "upload" && !$("inference-weight-file").files[0]) {
@@ -2542,6 +2608,10 @@ async function runInference() {
   form.append("conf", $("inference-conf").value || "0.25");
   form.append("iou", $("inference-iou").value || "0.45");
   form.append("vid_stride", $("inference-vid-stride").value || "1");
+  form.append("show_masks", $("inference-show-masks").checked ? "true" : "false");
+  form.append("show_boxes", $("inference-show-boxes").checked ? "true" : "false");
+  form.append("show_labels", $("inference-show-labels").checked ? "true" : "false");
+  form.append("show_conf", $("inference-show-conf").checked ? "true" : "false");
   form.append("media_file", media);
   if (source === "upload") {
     form.append("weight_file", $("inference-weight-file").files[0]);

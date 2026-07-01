@@ -425,15 +425,22 @@ def ensure_runs_path(path: Path):
         ) from exc
 
 
+def ensure_inference_runs_path(path: Path):
+    resolved = path.resolve()
+    for root in TRAINING_RUNS_ROOTS:
+        try:
+            resolved.relative_to(root.resolve())
+            return
+        except ValueError:
+            continue
+    raise HTTPException(
+        status_code=400,
+        detail="Inference weights can only be selected from runs/detect, runs/segment, or runs/classify.",
+    )
+
+
 def ensure_detect_runs_path(path: Path):
-    detect_root = DETECT_RUNS_ROOT.resolve()
-    try:
-        path.resolve().relative_to(detect_root)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="Inference weights can only be selected from runs/detect.",
-        ) from exc
+    ensure_inference_runs_path(path)
 
 
 def ensure_inference_path(path: Path):
@@ -635,39 +642,58 @@ def resolve_inference_weight_path(weight_path: str) -> Path:
         candidate = value.resolve()
     else:
         candidate = (REPO_ROOT / value).resolve()
-    ensure_detect_runs_path(candidate)
+    ensure_inference_runs_path(candidate)
     if candidate.suffix.lower() not in INFERENCE_WEIGHT_EXTENSIONS or not candidate.is_file():
         raise HTTPException(status_code=404, detail="Selected inference weights were not found.")
     return candidate
 
 
-def available_detection_weights() -> list[dict]:
-    if not DETECT_RUNS_ROOT.is_dir():
-        return []
+def task_for_runs_root(root: Path) -> str:
+    if root == SEGMENT_RUNS_ROOT:
+        return "segment"
+    if root == CLASSIFY_RUNS_ROOT:
+        return "classify"
+    return "detect"
+
+
+def available_inference_weights() -> list[dict]:
     weights = []
-    candidates = [
-        path
-        for path in DETECT_RUNS_ROOT.rglob("weights/*")
-        if path.suffix.lower() in INFERENCE_WEIGHT_EXTENSIONS
-    ]
-    for path in sorted(candidates):
-        try:
-            ensure_detect_runs_path(path)
-        except HTTPException:
+    for root in TRAINING_RUNS_ROOTS:
+        if not root.is_dir():
             continue
-        run_dir = path.parent.parent
-        stat = path.stat()
-        weights.append({
-            "label": f"{run_dir.name}/{path.name}",
-            "path": relative_to_repo(path),
-            "run": run_dir.name,
-            "weight": path.stem,
-            "format": path.suffix.lower().lstrip("."),
-            "size": stat.st_size,
-            "modified_at": stat.st_mtime,
-        })
+        task = task_for_runs_root(root)
+        candidates = [
+            path
+            for path in root.rglob("weights/*")
+            if path.suffix.lower() in INFERENCE_WEIGHT_EXTENSIONS
+        ]
+        for path in sorted(candidates):
+            try:
+                ensure_inference_runs_path(path)
+            except HTTPException:
+                continue
+            run_dir = path.parent.parent
+            stat = path.stat()
+            try:
+                run_label = run_dir.relative_to(root).as_posix()
+            except ValueError:
+                run_label = run_dir.name
+            weights.append({
+                "label": f"{task}/{run_label}/{path.name}",
+                "path": relative_to_repo(path),
+                "task": task,
+                "run": run_label,
+                "weight": path.stem,
+                "format": path.suffix.lower().lstrip("."),
+                "size": stat.st_size,
+                "modified_at": stat.st_mtime,
+            })
     weights.sort(key=lambda item: item["modified_at"], reverse=True)
     return weights
+
+
+def available_detection_weights() -> list[dict]:
+    return available_inference_weights()
 
 
 def normalize_exported_model_path(exported, fallback: Path) -> Path:
@@ -771,6 +797,8 @@ def inference_job_payload(job: dict) -> dict:
         "frames",
         "total_frames",
         "detections",
+        "classifications",
+        "task",
         "elapsed_ms",
         "media_type",
         "weights",
@@ -927,6 +955,8 @@ def inference_job_from_disk(job_id: str) -> dict | None:
             "frames": result.get("frames", 0),
             "total_frames": result.get("frames", 0),
             "detections": result.get("detections", 0),
+            "classifications": result.get("classifications", 0),
+            "task": result.get("task", ""),
             "elapsed_ms": result.get("elapsed_ms", 0),
             "media_type": result.get("media_type", "video" if output_path.suffix == ".mp4" else "image"),
             "preview_available": preview_path.is_file(),
@@ -945,6 +975,8 @@ def inference_job_from_disk(job_id: str) -> dict | None:
             "frames": progress.get("frames", 0),
             "total_frames": progress.get("total_frames", 0),
             "detections": progress.get("detections", 0),
+            "classifications": progress.get("classifications", 0),
+            "task": progress.get("task", ""),
             "elapsed_ms": 0,
             "media_type": "video" if (job_dir / "annotated.mp4").exists() else "image",
             "preview_available": preview_path.is_file(),
@@ -962,6 +994,8 @@ def inference_job_from_disk(job_id: str) -> dict | None:
             "frames": 0,
             "total_frames": 0,
             "detections": 0,
+            "classifications": 0,
+            "task": "",
             "elapsed_ms": 0,
             "preview_available": preview_path.is_file(),
             "preview_fps": 0,
@@ -991,6 +1025,8 @@ def run_inference_job(
             frames=progress.get("frames", 0),
             total_frames=progress.get("total_frames", 0),
             detections=progress.get("detections", 0),
+            classifications=progress.get("classifications", 0),
+            task=progress.get("task", ""),
             elapsed_ms=round((time.time() - started) * 1000, 2),
             preview_available=inference_has_live_preview(job_id, preview_path),
             stoppable=True,
@@ -1111,6 +1147,8 @@ def run_inference_job(
         frames=payload.get("frames", 0),
         total_frames=payload.get("frames", 0),
         detections=payload.get("detections", 0),
+        classifications=payload.get("classifications", 0),
+        task=payload.get("task", ""),
         elapsed_ms=payload.get("elapsed_ms", round((time.time() - started) * 1000, 2)),
         preview_available=inference_has_live_preview(job_id, preview_path),
         result=result_payload,
@@ -3158,7 +3196,7 @@ def config():
 
 @app.get("/api/inference/weights")
 def inference_weights():
-    return {"weights": available_detection_weights()}
+    return {"weights": available_inference_weights()}
 
 
 @app.get("/api/inference/storage")
@@ -3200,6 +3238,10 @@ def run_inference(
     conf: float = Form(0.25),
     iou: float = Form(0.45),
     vid_stride: int = Form(1),
+    show_boxes: bool = Form(True),
+    show_labels: bool = Form(True),
+    show_conf: bool = Form(True),
+    show_masks: bool = Form(True),
     weight_file: Optional[UploadFile] = File(None),
     media_file: UploadFile = File(...),
 ):
@@ -3261,6 +3303,10 @@ def run_inference(
         "iou": iou,
         "device": inference_device,
         "vid_stride": vid_stride,
+        "show_boxes": show_boxes,
+        "show_labels": show_labels,
+        "show_conf": show_conf,
+        "show_masks": show_masks,
         "convert_to_onnx": convert_to_onnx,
     }
     stop_event = threading.Event()
@@ -3275,6 +3321,8 @@ def run_inference(
         "frames": 0,
         "total_frames": 0,
         "detections": 0,
+        "classifications": 0,
+        "task": "",
         "elapsed_ms": 0,
         "media_type": media_kind,
         "weights": weights_label,

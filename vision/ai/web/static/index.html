@@ -935,7 +935,7 @@
                   Available weights
                   <select id="inference-weight-select"></select>
                 </label>
-                <p id="inference-weights-status" class="file-selection">Loading weights from runs/detect...</p>
+                <p id="inference-weights-status" class="file-selection">Loading weights from runs...</p>
               </div>
               <div id="inference-upload-weight-wrap" hidden>
                 <label>
@@ -944,7 +944,7 @@
                 </label>
                 <p id="inference-weight-selection" class="file-selection">No weights file selected.</p>
                 <label class="checkbox-row" id="inference-convert-onnx-row" hidden>
-                  <input id="inference-convert-onnx" type="checkbox" checked>
+                  <input id="inference-convert-onnx" type="checkbox">
                   Convert uploaded .pt to ONNX before inference
                 </label>
               </div>
@@ -1013,6 +1013,24 @@
                 <input id="inference-live-preview-enabled" type="checkbox" checked>
                 Show live annotated preview
               </label>
+              <div class="button-row toggle-row" aria-label="Inference overlay options">
+                <label class="choice-chip">
+                  <input id="inference-show-masks" type="checkbox" checked>
+                  <span>Masks</span>
+                </label>
+                <label class="choice-chip">
+                  <input id="inference-show-boxes" type="checkbox" checked>
+                  <span>Boxes</span>
+                </label>
+                <label class="choice-chip">
+                  <input id="inference-show-labels" type="checkbox" checked>
+                  <span>Labels</span>
+                </label>
+                <label class="choice-chip">
+                  <input id="inference-show-conf" type="checkbox" checked>
+                  <span>Confidence</span>
+                </label>
+              </div>
             </div>
           </div>
 

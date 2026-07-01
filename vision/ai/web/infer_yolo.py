@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import math
 import shutil
@@ -165,7 +166,64 @@ def write_preview(preview_path: Path | None, image, max_width: int = 640) -> byt
     return jpeg
 
 
-def draw_result_fast(result):
+def class_name(names, class_id: int) -> str:
+    if isinstance(names, dict):
+        return str(names.get(class_id, f"class_{class_id}"))
+    if isinstance(names, (list, tuple)) and 0 <= class_id < len(names):
+        return str(names[class_id])
+    return f"class_{class_id}"
+
+
+def result_task(result, fallback: str = "detect") -> str:
+    if getattr(result, "probs", None) is not None:
+        return "classify"
+    if getattr(result, "masks", None) is not None:
+        return "segment"
+    if getattr(result, "keypoints", None) is not None:
+        return "pose"
+    if getattr(result, "obb", None) is not None:
+        return "obb"
+    if fallback in {"classify", "segment", "pose", "obb"}:
+        return fallback
+    if getattr(result, "boxes", None) is not None:
+        return "detect"
+    return fallback
+
+
+def supported_plot_kwargs(plotter) -> set[str] | None:
+    try:
+        signature = inspect.signature(plotter)
+    except (TypeError, ValueError):
+        return None
+    parameters = signature.parameters.values()
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return None
+    return set(signature.parameters)
+
+
+def plot_result(
+    result,
+    show_boxes: bool = True,
+    show_labels: bool = True,
+    show_conf: bool = True,
+    show_masks: bool = True,
+):
+    plotter = getattr(result, "plot", None)
+    if callable(plotter):
+        kwargs = {
+            "boxes": show_boxes,
+            "labels": show_labels,
+            "conf": show_conf,
+            "masks": show_masks,
+        }
+        supported = supported_plot_kwargs(plotter)
+        if supported is not None:
+            kwargs = {key: value for key, value in kwargs.items() if key in supported}
+        try:
+            return plotter(**kwargs)
+        except TypeError:
+            return plotter()
+
     image = result.orig_img.copy()
     boxes = getattr(result, "boxes", None)
     if boxes is None or boxes.xyxy is None:
@@ -183,10 +241,13 @@ def draw_result_fast(result):
         x1, y1, x2, y2 = [int(round(value)) for value in coords]
         class_id = int(cls_ids[index]) if index < len(cls_ids) else -1
         confidence = float(confs[index]) if index < len(confs) else 0.0
-        label = names.get(class_id, f"class_{class_id}") if isinstance(names, dict) else f"class_{class_id}"
-        caption = f"{label} {confidence:.2f}"
-        cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+        label = class_name(names, class_id)
+        caption = f"{label} {confidence:.2f}" if show_conf else label
+        if show_boxes:
+            cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
 
+        if not show_labels:
+            continue
         text_size, baseline = cv2.getTextSize(caption, font, 0.55, 1)
         text_width, text_height = text_size
         label_top = max(0, y1 - text_height - baseline - 6)
@@ -206,6 +267,25 @@ def draw_result_fast(result):
     return image
 
 
+def collect_mask_areas(result) -> list[int | None]:
+    masks = getattr(result, "masks", None)
+    mask_data = getattr(masks, "data", None)
+    if mask_data is None:
+        return []
+
+    areas = []
+    for mask in mask_data:
+        try:
+            value = mask.detach().float().sum().item()
+        except AttributeError:
+            value = mask.sum()
+        try:
+            areas.append(int(round(float(value))))
+        except (TypeError, ValueError):
+            areas.append(None)
+    return areas
+
+
 def collect_image_detections(result) -> list[dict]:
     boxes = getattr(result, "boxes", None)
     if boxes is None or boxes.xyxy is None:
@@ -215,13 +295,14 @@ def collect_image_detections(result) -> list[dict]:
     cls_ids = boxes.cls.cpu().tolist() if boxes.cls is not None else []
     confs = boxes.conf.cpu().tolist() if boxes.conf is not None else []
     names = getattr(result, "names", {}) or {}
+    mask_areas = collect_mask_areas(result)
     detections = []
     for index, coords in enumerate(xyxy):
         class_id = int(cls_ids[index]) if index < len(cls_ids) else -1
         confidence = float(confs[index]) if index < len(confs) else 0.0
-        label = names.get(class_id, f"class_{class_id}") if isinstance(names, dict) else f"class_{class_id}"
+        label = class_name(names, class_id)
         x1, y1, x2, y2 = coords
-        detections.append({
+        detection = {
             "class_id": class_id,
             "class_name": str(label),
             "confidence": round(confidence, 4),
@@ -231,8 +312,45 @@ def collect_image_detections(result) -> list[dict]:
                 int(round(x2 - x1)),
                 int(round(y2 - y1)),
             ],
-        })
+        }
+        if index < len(mask_areas):
+            detection["mask_area"] = mask_areas[index]
+        detections.append(detection)
     return detections
+
+
+def collect_image_classifications(result, limit: int = 5) -> list[dict]:
+    probs = getattr(result, "probs", None)
+    data = getattr(probs, "data", None)
+    if data is None:
+        return []
+
+    try:
+        scores = data.detach().cpu().tolist()
+    except AttributeError:
+        try:
+            scores = data.tolist()
+        except AttributeError:
+            scores = list(data)
+
+    names = getattr(result, "names", {}) or {}
+    ranked = sorted(enumerate(scores), key=lambda item: float(item[1]), reverse=True)[:limit]
+    return [
+        {
+            "rank": rank,
+            "class_id": int(class_id),
+            "class_name": class_name(names, int(class_id)),
+            "confidence": round(float(score), 4),
+        }
+        for rank, (class_id, score) in enumerate(ranked, start=1)
+    ]
+
+
+def count_result_predictions(result) -> int:
+    if getattr(result, "probs", None) is not None:
+        return 1
+    boxes = getattr(result, "boxes", None)
+    return len(boxes) if boxes is not None else 0
 
 
 def browser_transcode_video(input_path: Path, output_path: Path) -> bool:
@@ -276,6 +394,10 @@ def run_yolo_inference(
     preview_max_width: int = 640,
     stop_event: threading.Event | None = None,
     use_model_cache: bool = False,
+    show_boxes: bool = True,
+    show_labels: bool = True,
+    show_conf: bool = True,
+    show_masks: bool = True,
 ) -> dict:
     weights_path = Path(weights_path).expanduser().resolve()
     input_path = Path(input_path).expanduser().resolve()
@@ -294,6 +416,7 @@ def run_yolo_inference(
     selected_device = resolve_device(device)
     model_format = weights_path.suffix.lower().lstrip(".") or "pt"
     model_label = "ONNX" if model_format == "onnx" else "PyTorch"
+    detected_task = ""
 
     def stopped():
         return stop_event is not None and stop_event.is_set()
@@ -326,6 +449,7 @@ def run_yolo_inference(
         raise InferenceStopped()
 
     model, model_lock, cache_hit = get_yolo_model(weights_path, selected_device, use_model_cache)
+    detected_task = str(getattr(model, "task", "") or detected_task or "")
     if stopped():
         raise InferenceStopped()
     emit_progress(
@@ -338,7 +462,9 @@ def run_yolo_inference(
 
     frames = 0
     detections = 0
+    classifications = 0
     image_detections = []
+    image_classifications = []
     video_writer = None
     transcoded = False
     last_progress_at = 0.0
@@ -379,16 +505,26 @@ def run_yolo_inference(
                 if stopped():
                     raise InferenceStopped()
                 frames += 1
-                boxes = getattr(result, "boxes", None)
-                count = len(boxes) if boxes is not None else 0
-                detections += count
-                plotted = draw_result_fast(result)
+                detected_task = result_task(result, detected_task or "detect")
+                count = count_result_predictions(result)
+                if detected_task == "classify":
+                    classifications += count
+                else:
+                    detections += count
+                plotted = plot_result(
+                    result,
+                    show_boxes=show_boxes,
+                    show_labels=show_labels,
+                    show_conf=show_conf,
+                    show_masks=show_masks,
+                )
                 now = time.perf_counter()
                 if now - last_preview_at >= preview_interval or frames == 1:
                     emit_preview(plotted, force_disk=frames == 1)
                     last_preview_at = now
                 if frames == 1 and media_kind == "image":
                     image_detections = collect_image_detections(result)
+                    image_classifications = collect_image_classifications(result)
                     if not cv2.imwrite(str(output_path), plotted):
                         raise RuntimeError("Could not write annotated image output.")
                     emit_preview(plotted, force_disk=True)
@@ -439,15 +575,22 @@ def run_yolo_inference(
         "engine": f"python-ultralytics-{model_format}",
         "device": device_label(selected_device),
         "model_cached": cache_hit,
+        "task": detected_task or "detect",
         "media_type": media_kind,
         "frames": frames,
         "detections": detections,
+        "classifications": classifications,
         "elapsed_ms": elapsed_ms,
         "output": str(output_path),
         "video_stride": video_stride,
         "preview_fps_target": preview_fps,
         "browser_video": transcoded,
         "image_detections": image_detections,
+        "image_classifications": image_classifications,
+        "show_boxes": show_boxes,
+        "show_labels": show_labels,
+        "show_conf": show_conf,
+        "show_masks": show_masks,
     }
     write_json_atomic(json_path, payload)
     emit_progress(

@@ -66,6 +66,72 @@ def test_storage_cleanup_buttons_use_backend_targets():
         assert web_app.normalize_storage_target_key(key) in web_app.STORAGE_CLEANUP_TARGETS
 
 
+def test_inference_weight_picker_scans_all_supported_task_runs(monkeypatch, tmp_path: Path):
+    web_app = load_web_app()
+    runs_root = tmp_path / "runs"
+    detect_root = runs_root / "detect"
+    segment_root = runs_root / "segment"
+    classify_root = runs_root / "classify"
+    monkeypatch.setattr(web_app, "RUNS_ROOT", runs_root)
+    monkeypatch.setattr(web_app, "DETECT_RUNS_ROOT", detect_root)
+    monkeypatch.setattr(web_app, "SEGMENT_RUNS_ROOT", segment_root)
+    monkeypatch.setattr(web_app, "CLASSIFY_RUNS_ROOT", classify_root)
+    monkeypatch.setattr(web_app, "TRAINING_RUNS_ROOTS", (detect_root, segment_root, classify_root))
+
+    for root, run_name in (
+        (detect_root, "train-det"),
+        (segment_root, "train-seg"),
+        (classify_root, "train-cls"),
+    ):
+        weights_dir = root / run_name / "weights"
+        weights_dir.mkdir(parents=True)
+        (weights_dir / "best.pt").write_bytes(b"weights")
+
+    weights = web_app.available_inference_weights()
+    labels = {item["label"] for item in weights}
+    tasks = {item["task"] for item in weights}
+
+    assert labels == {
+        "detect/train-det/best.pt",
+        "segment/train-seg/best.pt",
+        "classify/train-cls/best.pt",
+    }
+    assert tasks == {"detect", "segment", "classify"}
+    assert web_app.resolve_inference_weight_path(str(segment_root / "train-seg" / "weights" / "best.pt")).is_file()
+
+
+def test_inference_ui_and_backend_are_task_aware():
+    app_source = APP_PY.read_text(encoding="utf-8")
+    markup = INDEX_HTML.read_text(encoding="utf-8")
+    script = APP_JS.read_text(encoding="utf-8")
+    infer_source = (WEB_DIR / "infer_yolo.py").read_text(encoding="utf-8")
+
+    assert "available_inference_weights" in app_source
+    assert "runs/segment" in markup
+    assert 'id="inference-show-masks"' in markup
+    assert 'id="inference-show-boxes"' in markup
+    assert 'id="inference-show-labels"' in markup
+    assert 'id="inference-show-conf"' in markup
+    assert "renderInferencePredictions" in script
+    assert "image_classifications" in script
+    assert "mask_area" in script
+    assert 'getattr(result, "plot"' in infer_source
+    assert "collect_image_classifications" in infer_source
+
+
+def test_result_task_preserves_known_segmentation_task_without_masks():
+    from vision.ai.web import infer_yolo
+
+    class EmptySegmentationResult:
+        probs = None
+        masks = None
+        keypoints = None
+        obb = None
+        boxes = object()
+
+    assert infer_yolo.result_task(EmptySegmentationResult(), "segment") == "segment"
+
+
 def test_clear_inference_outputs_deletes_only_job_outputs(monkeypatch, tmp_path: Path):
     web_app = load_web_app()
     from fastapi.testclient import TestClient
