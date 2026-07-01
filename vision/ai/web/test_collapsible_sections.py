@@ -215,6 +215,77 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('"Mask" if use_mask else "Box"', train_source)
         self.assertIn('"Segmentation Mask Metrics by Epoch"', train_source)
 
+    def test_task_aware_loss_summary_excludes_auxiliary_losses(self):
+        app_module = ast.parse(APP_PY.read_text(encoding="utf-8"))
+        required = {
+            "float_value",
+            "sum_values",
+            "loss_components",
+            "raw_loss_sum",
+            "comparable_loss_component_names",
+            "loss_summary",
+            "loss_note",
+        }
+        nodes = [
+            node for node in app_module.body
+            if isinstance(node, ast.FunctionDef) and node.name in required
+        ]
+        namespace = {"math": math, "Optional": Optional}
+        exec(compile(ast.Module(nodes, []), str(APP_PY), "exec"), namespace)
+
+        yolo26_row = {
+            "train/box_loss": "1.12065",
+            "train/seg_loss": "1.68615",
+            "train/cls_loss": "0.98417",
+            "train/dfl_loss": "0.01301",
+            "train/sem_loss": "0.51730",
+            "val/box_loss": "1.13102",
+            "val/seg_loss": "1.65126",
+            "val/cls_loss": "0.83375",
+            "val/dfl_loss": "0.01515",
+            "val/sem_loss": "0",
+        }
+        summary = namespace["loss_summary"](yolo26_row, "segment")
+        self.assertAlmostEqual(summary["training_loss"], 3.80398)
+        self.assertAlmostEqual(summary["testing_loss"], 3.63118)
+        self.assertAlmostEqual(summary["raw_training_loss"], 4.32128)
+        self.assertEqual(summary["loss_components"]["comparable"], ["box", "seg", "cls", "dfl"])
+        self.assertEqual(summary["loss_components"]["auxiliary"]["train"], {"sem": 0.5173})
+        self.assertEqual(summary["loss_components"]["auxiliary"]["val"], {"sem": 0.0})
+        self.assertIn("train/sem_loss", namespace["loss_note"](summary))
+
+        detect_row = {
+            "train/box_loss": "1",
+            "train/cls_loss": "2",
+            "train/dfl_loss": "3",
+            "train/extra_loss": "99",
+            "val/box_loss": "4",
+            "val/cls_loss": "5",
+            "val/dfl_loss": "6",
+        }
+        detect_summary = namespace["loss_summary"](detect_row, "detect")
+        self.assertEqual(detect_summary["training_loss"], 6)
+        self.assertEqual(detect_summary["testing_loss"], 15)
+        self.assertEqual(detect_summary["auxiliary_training_loss"], 99)
+
+        classify_row = {
+            "train/loss": "0.8",
+            "val/loss": "0.9",
+            "train/cls_loss": "3",
+            "val/cls_loss": "4",
+        }
+        classify_summary = namespace["loss_summary"](classify_row, "classify")
+        self.assertEqual(classify_summary["training_loss"], 0.8)
+        self.assertEqual(classify_summary["testing_loss"], 0.9)
+
+        classify_cls_row = {
+            "train/cls_loss": "0.3",
+            "val/cls_loss": "0.4",
+        }
+        classify_cls_summary = namespace["loss_summary"](classify_cls_row, "classify")
+        self.assertEqual(classify_cls_summary["training_loss"], 0.3)
+        self.assertEqual(classify_cls_summary["testing_loss"], 0.4)
+
     def test_ultralytics_augmentation_controls_are_exposed(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")

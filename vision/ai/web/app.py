@@ -1818,17 +1818,93 @@ def sum_values(row: dict, keys: list[str]) -> Optional[float]:
     return sum(value for value in values if value is not None)
 
 
-def loss_sum(row: dict, prefix: str) -> Optional[float]:
-    values = []
-    for key, value in row.items():
+def loss_components(row: dict, prefix: str) -> dict[str, float]:
+    components = {}
+    for key in row:
         normalized = str(key).strip()
-        if normalized.startswith(f"{prefix}/") and normalized.endswith("_loss"):
-            parsed = float_value(row, normalized)
-            if parsed is not None:
-                values.append(parsed)
-    if values:
-        return sum(values)
+        if not normalized.startswith(f"{prefix}/"):
+            continue
+        suffix = normalized.removeprefix(f"{prefix}/")
+        if suffix == "loss":
+            component = "loss"
+        elif suffix.endswith("_loss"):
+            component = suffix.removesuffix("_loss")
+        else:
+            continue
+        parsed = float_value(row, normalized)
+        if parsed is not None:
+            components[component] = parsed
+    return components
+
+
+def raw_loss_sum(row: dict, prefix: str) -> Optional[float]:
+    components = loss_components(row, prefix)
+    if components:
+        return sum(components.values())
     return sum_values(row, [f"{prefix}/box_loss", f"{prefix}/cls_loss", f"{prefix}/dfl_loss"])
+
+
+def comparable_loss_component_names(task: str, row: dict) -> list[str]:
+    train = loss_components(row, "train")
+    val = loss_components(row, "val")
+    if task == "classify":
+        candidates = ["loss"] if "loss" in train and "loss" in val else ["cls"]
+    elif task == "segment":
+        candidates = ["box", "seg", "cls", "dfl"]
+    else:
+        candidates = ["box", "cls", "dfl"]
+    return [component for component in candidates if component in train and component in val]
+
+
+def loss_summary(row: dict, task: str) -> dict:
+    train = loss_components(row, "train")
+    val = loss_components(row, "val")
+    comparable_components = comparable_loss_component_names(task, row)
+
+    def component_sum(components: dict[str, float], names: list[str]) -> Optional[float]:
+        if not names:
+            return None
+        return sum(components[name] for name in names)
+
+    auxiliary_train = {
+        key: value for key, value in train.items() if key not in comparable_components
+    }
+    auxiliary_val = {
+        key: value for key, value in val.items() if key not in comparable_components
+    }
+    return {
+        "training_loss": component_sum(train, comparable_components),
+        "testing_loss": component_sum(val, comparable_components),
+        "raw_training_loss": sum(train.values()) if train else None,
+        "raw_testing_loss": sum(val.values()) if val else None,
+        "auxiliary_training_loss": sum(auxiliary_train.values()) if auxiliary_train else None,
+        "auxiliary_testing_loss": sum(auxiliary_val.values()) if auxiliary_val else None,
+        "loss_components": {
+            "train": train,
+            "val": val,
+            "comparable": comparable_components,
+            "auxiliary": {
+                "train": auxiliary_train,
+                "val": auxiliary_val,
+            },
+        },
+    }
+
+
+def loss_note(summary: dict) -> str:
+    components = summary.get("loss_components") or {}
+    auxiliary = components.get("auxiliary") or {}
+    auxiliary_names = sorted({
+        f"{prefix}/{name}_loss" if name != "loss" else f"{prefix}/loss"
+        for prefix in ("train", "val")
+        for name in (auxiliary.get(prefix) or {})
+    })
+    if auxiliary_names:
+        return (
+            "Comparable loss excludes auxiliary or unmatched losses: "
+            f"{', '.join(auxiliary_names)}."
+        )
+    return "Loss values are comparable across train and validation components."
 
 
 def format_metric(value: Optional[float], digits: int = 4):
@@ -2002,12 +2078,18 @@ def metric_profile(task: str, row: dict) -> dict:
 def build_metric_history(rows: list[dict], profile: dict) -> list[dict]:
     history = []
     for row in rows:
+        losses = loss_summary(row, profile["task"])
         history.append({
             "epoch": int(float_value(row, "epoch") or 0),
             "map50": format_metric(float_value(row, profile["map50_key"])) if profile.get("map50_key") else None,
             "map50_95": format_metric(float_value(row, profile["map50_95_key"])) if profile.get("map50_95_key") else None,
-            "training_loss": format_metric(loss_sum(row, "train")),
-            "testing_loss": format_metric(loss_sum(row, "val")),
+            "training_loss": format_metric(losses["training_loss"]),
+            "testing_loss": format_metric(losses["testing_loss"]),
+            "raw_training_loss": format_metric(losses["raw_training_loss"]),
+            "raw_testing_loss": format_metric(losses["raw_testing_loss"]),
+            "auxiliary_training_loss": format_metric(losses["auxiliary_training_loss"]),
+            "auxiliary_testing_loss": format_metric(losses["auxiliary_testing_loss"]),
+            "loss_components": losses["loss_components"],
         })
     return history
 
@@ -2091,8 +2173,7 @@ def read_run_metrics(run_dir: Path) -> dict:
     profile = metric_profile(task, row)
     precision = float_value(row, profile["precision_key"]) if profile.get("precision_key") else None
     recall = float_value(row, profile["recall_key"]) if profile.get("recall_key") else None
-    training_loss = loss_sum(row, "train")
-    testing_loss = loss_sum(row, "val")
+    losses = loss_summary(row, profile["task"])
     map50 = float_value(row, profile["map50_key"]) if profile.get("map50_key") else None
     map50_95 = float_value(row, profile["map50_95_key"]) if profile.get("map50_95_key") else None
     web_metrics = read_web_metrics(run_dir)
@@ -2127,8 +2208,13 @@ def read_run_metrics(run_dir: Path) -> dict:
         "weighted_f1": class_metrics["weighted_f1"],
         "per_class": class_metrics["classes"],
         "roc_auc": roc_auc,
-        "training_loss": format_metric(training_loss),
-        "testing_loss": format_metric(testing_loss),
+        "training_loss": format_metric(losses["training_loss"]),
+        "testing_loss": format_metric(losses["testing_loss"]),
+        "raw_training_loss": format_metric(losses["raw_training_loss"]),
+        "raw_testing_loss": format_metric(losses["raw_testing_loss"]),
+        "auxiliary_training_loss": format_metric(losses["auxiliary_training_loss"]),
+        "auxiliary_testing_loss": format_metric(losses["auxiliary_testing_loss"]),
+        "loss_components": losses["loss_components"],
         "precision": format_metric(precision),
         "recall": format_metric(recall),
         "map50": format_metric(map50),
@@ -2136,7 +2222,10 @@ def read_run_metrics(run_dir: Path) -> dict:
         "history": history,
         "best": best_metric_summary(history),
         "artifacts": run_artifact_statuses(run_dir),
-        "note": "Macro and weighted F1 are calculated from final per-class validation rows when available.",
+        "note": (
+            "Macro and weighted F1 are calculated from final per-class validation rows when available. "
+            + loss_note(losses)
+        ),
     }
 
 

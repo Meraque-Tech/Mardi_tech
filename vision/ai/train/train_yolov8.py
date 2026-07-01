@@ -371,24 +371,59 @@ def rounded_metric(value, digits: int = 4):
         return None
 
 
-def total_loss(row: dict, prefix: str):
-    values = []
+def loss_components(row: dict, prefix: str):
+    components = {}
     for key in row:
         normalized = str(key).strip()
-        if normalized.startswith(f"{prefix}/") and normalized.endswith("_loss"):
-            value = row_float(row, normalized)
-            if value is not None:
-                values.append(value)
-    if values:
-        return sum(values)
-    values = [
-        row_float(row, f"{prefix}/box_loss"),
-        row_float(row, f"{prefix}/cls_loss"),
-        row_float(row, f"{prefix}/dfl_loss"),
-    ]
-    if any(value is None for value in values):
+        if not normalized.startswith(f"{prefix}/"):
+            continue
+        suffix = normalized.removeprefix(f"{prefix}/")
+        if suffix == "loss":
+            component = "loss"
+        elif suffix.endswith("_loss"):
+            component = suffix.removesuffix("_loss")
+        else:
+            continue
+        value = row_float(row, normalized)
+        if value is not None:
+            components[component] = value
+    return components
+
+
+def infer_task_from_results(rows: list[dict]) -> str:
+    keys = {str(key).strip() for row in rows for key in row}
+    if "metrics/mAP50(M)" in keys or "metrics/mAP50-95(M)" in keys:
+        return "segment"
+    if "metrics/accuracy_top1" in keys or "metrics/accuracy_top5" in keys:
+        return "classify"
+    return "detect"
+
+
+def comparable_loss_component_names(task: str, row: dict):
+    train = loss_components(row, "train")
+    val = loss_components(row, "val")
+    if task == "classify":
+        candidates = ["loss"] if "loss" in train and "loss" in val else ["cls"]
+    elif task == "segment":
+        candidates = ["box", "seg", "cls", "dfl"]
+    else:
+        candidates = ["box", "cls", "dfl"]
+    return [component for component in candidates if component in train and component in val]
+
+
+def comparable_loss(row: dict, prefix: str, task: str):
+    components = loss_components(row, prefix)
+    names = comparable_loss_component_names(task, row)
+    if not names:
         return None
-    return sum(values)
+    return sum(components[name] for name in names)
+
+
+def auxiliary_loss(row: dict, prefix: str, task: str):
+    components = loss_components(row, prefix)
+    comparable_names = set(comparable_loss_component_names(task, row))
+    values = [value for name, value in components.items() if name not in comparable_names]
+    return sum(values) if values else None
 
 
 def metric_suffix(rows: list[dict]) -> str:
@@ -741,10 +776,12 @@ def save_training_graphs(run_dir: Path):
         return
 
     epochs = [int(row_float(row, "epoch") or index + 1) for index, row in enumerate(rows)]
+    task = infer_task_from_results(rows)
     accuracy_title, accuracy_series = accuracy_metric_series(rows, epochs)
     loss_series = [
-        ("Training loss", epochs, [total_loss(row, "train") for row in rows]),
-        ("Validation loss", epochs, [total_loss(row, "val") for row in rows]),
+        ("Comparable training loss", epochs, [comparable_loss(row, "train", task) for row in rows]),
+        ("Comparable validation loss", epochs, [comparable_loss(row, "val", task) for row in rows]),
+        ("Training auxiliary loss", epochs, [auxiliary_loss(row, "train", task) for row in rows]),
     ]
 
     accuracy_series = [
@@ -765,7 +802,7 @@ def save_training_graphs(run_dir: Path):
     )
     plot_metric_series(
         run_dir / "loss_by_epoch.png",
-        "Loss by Epoch",
+        "Comparable Loss by Epoch",
         "Epoch",
         "Loss",
         loss_series,
