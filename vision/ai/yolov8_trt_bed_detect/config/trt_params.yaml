@@ -31,6 +31,7 @@ yolov8_trt:
     conf_thresh: 0.35
     nms_thresh:  0.5
 
+    
     # ── Confidence gate (published on /conf, triggers /bed_detection) ─────────
     conf_score_value: 0.3
 
