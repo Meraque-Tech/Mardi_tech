@@ -153,6 +153,11 @@ def _join_limited(values: list[str], limit: int = 4) -> str:
     return f"{', '.join(values[:limit])}, and {len(values) - limit} more"
 
 
+def _join_all(values: list[str]) -> str:
+    values = [str(value) for value in values if value]
+    return ", ".join(values) if values else "None identified"
+
+
 def _first_present(*values):
     for value in values:
         if _nonempty(value):
@@ -255,12 +260,12 @@ def _weak_classes(metrics: dict, limit: int | None = None) -> list[dict]:
 def _recommendation(validation_metrics: dict, test_metrics: dict | None = None) -> str:
     evidence_label, evidence = _primary_evidence(validation_metrics, test_metrics)
     band = _metric_band(evidence)
-    weak = _weak_classes(evidence, limit=3)
+    weak = _weak_classes(evidence)
     if band == "strong" and not weak:
         return f"Use the model for a controlled deployment pilot, with continued monitoring against the {evidence_label} baseline."
     if band in {"strong", "usable"}:
         if weak:
-            weak_text = _join_limited([item["class_name"] for item in weak], 3)
+            weak_text = _join_all([item["class_name"] for item in weak])
             return f"Proceed to real-world testing while collecting more examples for weaker classes before broader deployment: {weak_text}."
         return f"Proceed to real-world testing and monitor performance against the {evidence_label} baseline before broader deployment."
     if band == "incomplete":
@@ -791,7 +796,7 @@ def _add_dataset_quality(builder: _ReportBuilder, context: dict):
             widths=[85 * builder.mm, 45 * builder.mm, 45 * builder.mm],
         )
     if underrepresented:
-        names = _join_limited([row.get("class_name") for row in underrepresented], 5)
+        names = _join_all([row.get("class_name") for row in underrepresented])
         builder.paragraph(
             _text(
                 "Underrepresented classes may have unstable per-class metrics and higher "
@@ -852,12 +857,12 @@ def _add_validation_performance(builder: _ReportBuilder, run_dir: Path, metrics:
     ], widths=[90 * builder.mm, 85 * builder.mm])
 
     classes = metrics.get("per_class") or []
-    weak = _weak_classes(metrics, limit=5)
+    weak = _weak_classes(metrics)
     if weak:
         builder.paragraph(
             _text(
                 "Weak classes requiring review: "
-                + _join_limited([f"{row['class_name']} ({row['reasons']})" for row in weak], 5)
+                + _join_all([f"{row['class_name']} ({row['reasons']})" for row in weak])
                 + "."
             ),
             "Small",
@@ -918,7 +923,7 @@ def _add_conclusion_and_recommendation(
 ):
     builder.heading("Conclusion and Recommendation")
     evidence_label, evidence = _primary_evidence(metrics, test_metrics)
-    weak = _weak_classes(evidence, limit=4)
+    weak = _weak_classes(evidence)
     strengths = []
     if _metric_value(evidence, "map50") is not None:
         strengths.append(f"mAP50 {_metric(evidence.get('map50'))}")
@@ -932,7 +937,7 @@ def _add_conclusion_and_recommendation(
         builder.paragraph(
             _text(
                 "Classes or scenarios requiring additional attention: "
-                + _join_limited([item["class_name"] for item in weak], 4)
+                + _join_all([item["class_name"] for item in weak])
                 + "."
             )
         )
@@ -1101,12 +1106,12 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
     classes = metrics.get("per_class") or []
     if classes:
         builder.heading("Per-Class Test Metrics")
-        weak = _weak_classes(metrics, limit=5)
+        weak = _weak_classes(metrics)
         if weak:
             builder.paragraph(
                 _text(
                     "Weak test classes requiring review: "
-                    + _join_limited([f"{row['class_name']} ({row['reasons']})" for row in weak], 5)
+                    + _join_all([f"{row['class_name']} ({row['reasons']})" for row in weak])
                     + "."
                 ),
                 "Small",

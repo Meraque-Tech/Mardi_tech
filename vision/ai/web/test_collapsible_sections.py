@@ -286,6 +286,73 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertEqual(classify_cls_summary["training_loss"], 0.3)
         self.assertEqual(classify_cls_summary["testing_loss"], 0.4)
 
+    def test_underrepresented_report_classes_are_not_truncated(self):
+        source = REPORT_GENERATOR.read_text(encoding="utf-8")
+        module = ast.parse(source)
+        required = {"_to_float", "_to_int", "_count", "_nonempty", "_join_all", "_imbalance_summary"}
+        nodes = [
+            node for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name in required
+        ]
+        namespace = {}
+        exec(compile(ast.Module(nodes, []), str(REPORT_GENERATOR), "exec"), namespace)
+
+        summary = {
+            "class_distribution": [
+                {"class_name": "Palm", "images": 100, "instances": 120},
+                {"class_name": "Human", "images": 5, "instances": 5},
+                {"class_name": "car", "images": 6, "instances": 6},
+                {"class_name": "hill", "images": 7, "instances": 7},
+                {"class_name": "leaf", "images": 8, "instances": 8},
+                {"class_name": "pothole", "images": 9, "instances": 9},
+                {"class_name": "road", "images": 4, "instances": 4},
+            ]
+        }
+        _, underrepresented = namespace["_imbalance_summary"](summary)
+        names = namespace["_join_all"]([row.get("class_name") for row in underrepresented])
+
+        self.assertIn("Human, car, hill, leaf, pothole, road", names)
+        self.assertNotIn("and 1 more", names)
+
+    def test_weak_report_classes_are_not_truncated(self):
+        source = REPORT_GENERATOR.read_text(encoding="utf-8")
+        module = ast.parse(source)
+        required = {
+            "_to_float",
+            "_to_int",
+            "_nonempty",
+            "_join_all",
+            "_metric_value",
+            "_f1_value",
+            "_metric_band",
+            "_primary_evidence",
+            "_weak_classes",
+            "_recommendation",
+        }
+        nodes = [
+            node for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name in required
+        ]
+        namespace = {}
+        exec(compile(ast.Module(nodes, []), str(REPORT_GENERATOR), "exec"), namespace)
+
+        metrics = {
+            "map50": 0.8,
+            "map50_95": 0.5,
+            "recall": 0.7,
+            "per_class": [
+                {"class_name": name, "instances": 5, "recall": 0.4, "f1": 0.4, "map50_95": 0.3}
+                for name in ("Human", "car", "hill", "leaf", "pothole", "road")
+            ],
+        }
+        weak = namespace["_weak_classes"](metrics)
+        names = namespace["_join_all"]([row["class_name"] for row in weak])
+        recommendation = namespace["_recommendation"](metrics)
+
+        self.assertIn("Human, car, hill, leaf, pothole, road", names)
+        self.assertIn("Human, car, hill, leaf, pothole, road", recommendation)
+        self.assertNotIn("and 1 more", recommendation)
+
     def test_ultralytics_augmentation_controls_are_exposed(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
