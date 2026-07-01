@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # Usage: ./run_yolov8_det_video.sh [engine] [cam_id] [c/g] [show: true/false]
+# engine can be a full path or just a filename — only the basename is used (weights dir is mounted)
 # Defaults: engine=yolov8n.engine, cam_id=0, postprocess=g, show=true
 
-ENGINE="${1:-yolov8n.engine}"
+ENGINE="$(basename "${1:-yolov8n.engine}")"
 CAM_ID="${2:-0}"
 POSTPROCESS="${3:-g}"
 SHOW="${4:-true}"
