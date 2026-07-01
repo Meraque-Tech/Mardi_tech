@@ -384,11 +384,11 @@ def _training_behaviour_text(metrics: dict) -> str:
     trend = "improved" if first_map is not None and last_map is not None and last_map >= first_map else "did not clearly improve"
     loss_note = str(metrics.get("note") or "").split("Macro and weighted F1 are calculated from final per-class validation rows when available.")[-1].strip()
     if train_loss is not None and val_loss is not None and val_loss > train_loss * 1.5:
-        fit = "comparable validation loss is materially higher than comparable training loss, so possible overfitting should be reviewed"
+        fit = "validation loss is materially higher than training loss, so possible overfitting should be reviewed"
     elif first_map is not None and last_map is not None and last_map < 0.30:
         fit = f"{labels['map50_95']} remains low, so possible underfitting or dataset issues should be reviewed"
     else:
-        fit = "no obvious overfitting or underfitting signal is visible from the final comparable-loss relationship"
+        fit = "no obvious overfitting or underfitting signal is visible from the final loss relationship"
     suffix = f" {loss_note}" if loss_note else ""
     return f"Across {len(history)} completed epochs, {labels['map50_95']} {trend}; the best tracked epoch is {best_epoch}, and {fit}.{suffix}"
 
@@ -819,8 +819,8 @@ def _add_training_behaviour(builder: _ReportBuilder, run_dir: Path, metrics: dic
     for key, label, value_key in (
         ("best_map50", f"Best {labels['map50']}", "map50"),
         ("best_map50_95", f"Best {labels['map50_95']}", "map50_95"),
-        ("lowest_training_loss", "Lowest comparable train loss", "training_loss"),
-        ("lowest_validation_loss", "Lowest comparable val loss", "testing_loss"),
+        ("lowest_training_loss", "Lowest train loss", "training_loss"),
+        ("lowest_validation_loss", "Lowest val loss", "testing_loss"),
     ):
         row = best.get(key)
         if row:
@@ -829,7 +829,7 @@ def _add_training_behaviour(builder: _ReportBuilder, run_dir: Path, metrics: dic
         builder.table(best_rows, widths=[85 * builder.mm, 35 * builder.mm, 55 * builder.mm])
 
     for filename, caption in (
-        ("loss_by_epoch.png", "Comparable training and validation loss by epoch"),
+        ("loss_by_epoch.png", "Training and validation loss by epoch"),
         ("accuracy_by_epoch.png", f"{metrics.get('metric_label') or 'mAP'} progression by epoch"),
     ):
         path = run_dir / filename
@@ -988,7 +988,7 @@ def _add_technical_appendix(
     builder.heading("Additional Training Plots")
     for filename, caption in (
         ("accuracy_by_epoch.png", "Detection performance by epoch"),
-        ("loss_by_epoch.png", "Comparable training and validation loss by epoch"),
+        ("loss_by_epoch.png", "Training and validation loss by epoch"),
         ("confusion_matrix_normalized.png", "Normalized validation confusion matrix"),
         ("confusion_matrix.png", "Validation confusion matrix (raw counts)"),
         ("roc_auc_curve.png", "Validation ROC-AUC by class"),

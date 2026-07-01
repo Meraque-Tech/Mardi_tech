@@ -779,9 +779,8 @@ def save_training_graphs(run_dir: Path):
     task = infer_task_from_results(rows)
     accuracy_title, accuracy_series = accuracy_metric_series(rows, epochs)
     loss_series = [
-        ("Comparable training loss", epochs, [comparable_loss(row, "train", task) for row in rows]),
-        ("Comparable validation loss", epochs, [comparable_loss(row, "val", task) for row in rows]),
-        ("Training auxiliary loss", epochs, [auxiliary_loss(row, "train", task) for row in rows]),
+        ("Training loss", epochs, [comparable_loss(row, "train", task) for row in rows]),
+        ("Validation loss", epochs, [comparable_loss(row, "val", task) for row in rows]),
     ]
 
     accuracy_series = [
@@ -802,7 +801,7 @@ def save_training_graphs(run_dir: Path):
     )
     plot_metric_series(
         run_dir / "loss_by_epoch.png",
-        "Comparable Loss by Epoch",
+        "Loss by Epoch",
         "Epoch",
         "Loss",
         loss_series,

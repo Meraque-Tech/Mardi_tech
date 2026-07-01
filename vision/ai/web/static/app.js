@@ -1584,8 +1584,8 @@ function renderBestMetrics(best, history = [], labels = {}) {
   const rows = [
     formatBestMetric(summary.best_map50_95, "map50_95", `Best ${mergedLabels.map50_95}`),
     formatBestMetric(summary.best_map50, "map50", `Best ${mergedLabels.map50}`),
-    formatBestMetric(summary.lowest_training_loss, "training_loss", "Lowest comparable train loss"),
-    formatBestMetric(summary.lowest_validation_loss, "testing_loss", "Lowest comparable val loss"),
+    formatBestMetric(summary.lowest_training_loss, "training_loss", "Lowest train loss"),
+    formatBestMetric(summary.lowest_validation_loss, "testing_loss", "Lowest val loss"),
   ].filter(Boolean);
   container.innerHTML = rows.length ? `<h4>Best Epochs</h4><div class="best-grid">${rows.join("")}</div>` : "";
 }
@@ -1839,9 +1839,8 @@ function renderMetricCharts(history, labels = {}) {
     { key: "map50_95", label: mergedLabels.map50_95, color: "#5b6ee1" },
   ]);
   drawLineChart("loss-chart", rows, [
-    { key: "training_loss", label: "Train comparable", color: "#a43d3d" },
-    { key: "testing_loss", label: "Val comparable", color: "#16745f" },
-    { key: "auxiliary_training_loss", label: "Train auxiliary", color: "#8a5a12" },
+    { key: "training_loss", label: "Train loss", color: "#a43d3d" },
+    { key: "testing_loss", label: "Val loss", color: "#16745f" },
   ]);
 }
 

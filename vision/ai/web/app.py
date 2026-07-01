@@ -1901,10 +1901,10 @@ def loss_note(summary: dict) -> str:
     })
     if auxiliary_names:
         return (
-            "Comparable loss excludes auxiliary or unmatched losses: "
+            "Train and val loss use matching loss parts only; extra model-specific losses are excluded: "
             f"{', '.join(auxiliary_names)}."
         )
-    return "Loss values are comparable across train and validation components."
+    return "Train and val loss use matching loss parts."
 
 
 def format_metric(value: Optional[float], digits: int = 4):
