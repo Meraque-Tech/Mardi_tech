@@ -17,6 +17,7 @@
 #   ./engine_file_build.sh yolov8n n 80
 #   ./engine_file_build.sh mardi_pineapple_yolo_v8 n 3
 #   ./engine_file_build.sh mardi_pineapple_yolo_v8 n 3 640 640 --target nano
+# ./engine_file_build.sh mardi_pineapple_yolo_v8 n 3 512 512 --target nano
 
 set -euo pipefail
 
