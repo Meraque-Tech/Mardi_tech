@@ -217,72 +217,81 @@
 
           <div class="grid two">
             <label>
-              <span class="tooltip-label" tabindex="0" data-tooltip="Base YOLOv8 task and checkpoint size. Choose detection, segmentation, or classification to match your dataset labels. Larger models can be more accurate but train slower and need more GPU memory.">Model task &amp; size</span>
-              <select id="model-size">
-                <optgroup label="Detection - YOLOv8">
-                  <option value="nano">YOLOv8 Nano - yolov8n.pt</option>
-                  <option value="small">YOLOv8 Small - yolov8s.pt</option>
-                  <option value="medium">YOLOv8 Medium - yolov8m.pt</option>
-                  <option value="large">YOLOv8 Large - yolov8l.pt</option>
-                  <option value="xlarge">YOLOv8 Extra large - yolov8x.pt</option>
-                </optgroup>
-                <optgroup label="Detection - YOLO11">
-                  <option value="yolo11-nano">YOLO11 Nano - yolo11n.pt</option>
-                  <option value="yolo11-small">YOLO11 Small - yolo11s.pt</option>
-                  <option value="yolo11-medium">YOLO11 Medium - yolo11m.pt</option>
-                  <option value="yolo11-large">YOLO11 Large - yolo11l.pt</option>
-                  <option value="yolo11-xlarge">YOLO11 Extra large - yolo11x.pt</option>
-                </optgroup>
-                <optgroup label="Detection - YOLO26">
-                  <option value="yolo26-nano">YOLO26 Nano - yolo26n.pt</option>
-                  <option value="yolo26-small">YOLO26 Small - yolo26s.pt</option>
-                  <option value="yolo26-medium">YOLO26 Medium - yolo26m.pt</option>
-                  <option value="yolo26-large">YOLO26 Large - yolo26l.pt</option>
-                  <option value="yolo26-xlarge">YOLO26 Extra large - yolo26x.pt</option>
-                </optgroup>
-                <optgroup label="Segmentation - YOLOv8">
-                  <option value="nano-seg">YOLOv8 Nano - yolov8n-seg.pt</option>
-                  <option value="small-seg">YOLOv8 Small - yolov8s-seg.pt</option>
-                  <option value="medium-seg">YOLOv8 Medium - yolov8m-seg.pt</option>
-                  <option value="large-seg">YOLOv8 Large - yolov8l-seg.pt</option>
-                  <option value="xlarge-seg">YOLOv8 Extra large - yolov8x-seg.pt</option>
-                </optgroup>
-                <optgroup label="Segmentation - YOLO11">
-                  <option value="yolo11-nano-seg">YOLO11 Nano - yolo11n-seg.pt</option>
-                  <option value="yolo11-small-seg">YOLO11 Small - yolo11s-seg.pt</option>
-                  <option value="yolo11-medium-seg">YOLO11 Medium - yolo11m-seg.pt</option>
-                  <option value="yolo11-large-seg">YOLO11 Large - yolo11l-seg.pt</option>
-                  <option value="yolo11-xlarge-seg">YOLO11 Extra large - yolo11x-seg.pt</option>
-                </optgroup>
-                <optgroup label="Segmentation - YOLO26">
-                  <option value="yolo26-nano-seg">YOLO26 Nano - yolo26n-seg.pt</option>
-                  <option value="yolo26-small-seg">YOLO26 Small - yolo26s-seg.pt</option>
-                  <option value="yolo26-medium-seg">YOLO26 Medium - yolo26m-seg.pt</option>
-                  <option value="yolo26-large-seg">YOLO26 Large - yolo26l-seg.pt</option>
-                  <option value="yolo26-xlarge-seg">YOLO26 Extra large - yolo26x-seg.pt</option>
-                </optgroup>
-                <optgroup label="Classification - YOLOv8">
-                  <option value="nano-cls">YOLOv8 Nano - yolov8n-cls.pt</option>
-                  <option value="small-cls">YOLOv8 Small - yolov8s-cls.pt</option>
-                  <option value="medium-cls">YOLOv8 Medium - yolov8m-cls.pt</option>
-                  <option value="large-cls">YOLOv8 Large - yolov8l-cls.pt</option>
-                  <option value="xlarge-cls">YOLOv8 Extra large - yolov8x-cls.pt</option>
-                </optgroup>
-                <optgroup label="Classification - YOLO11">
-                  <option value="yolo11-nano-cls">YOLO11 Nano - yolo11n-cls.pt</option>
-                  <option value="yolo11-small-cls">YOLO11 Small - yolo11s-cls.pt</option>
-                  <option value="yolo11-medium-cls">YOLO11 Medium - yolo11m-cls.pt</option>
-                  <option value="yolo11-large-cls">YOLO11 Large - yolo11l-cls.pt</option>
-                  <option value="yolo11-xlarge-cls">YOLO11 Extra large - yolo11x-cls.pt</option>
-                </optgroup>
-                <optgroup label="Classification - YOLO26">
-                  <option value="yolo26-nano-cls">YOLO26 Nano - yolo26n-cls.pt</option>
-                  <option value="yolo26-small-cls">YOLO26 Small - yolo26s-cls.pt</option>
-                  <option value="yolo26-medium-cls">YOLO26 Medium - yolo26m-cls.pt</option>
-                  <option value="yolo26-large-cls">YOLO26 Large - yolo26l-cls.pt</option>
-                  <option value="yolo26-xlarge-cls">YOLO26 Extra large - yolo26x-cls.pt</option>
-                </optgroup>
-              </select>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Base YOLO task, family, and checkpoint size. Choose detection, instance segmentation, or classification to match your dataset labels. Larger models can be more accurate but train slower and need more GPU memory.">Model task &amp; size</span>
+              <div class="model-selector">
+                <button id="model-selector-toggle" class="model-selector-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
+                  <span id="model-selector-value">YOLOv8 Nano - yolov8n.pt</span>
+                </button>
+                <select id="model-size" class="model-native-select" tabindex="-1" aria-hidden="true">
+                  <optgroup label="Detection - YOLOv8">
+                    <option value="nano">YOLOv8 Nano - yolov8n.pt</option>
+                    <option value="small">YOLOv8 Small - yolov8s.pt</option>
+                    <option value="medium">YOLOv8 Medium - yolov8m.pt</option>
+                    <option value="large">YOLOv8 Large - yolov8l.pt</option>
+                    <option value="xlarge">YOLOv8 Extra large - yolov8x.pt</option>
+                  </optgroup>
+                  <optgroup label="Detection - YOLO11">
+                    <option value="yolo11-nano">YOLO11 Nano - yolo11n.pt</option>
+                    <option value="yolo11-small">YOLO11 Small - yolo11s.pt</option>
+                    <option value="yolo11-medium">YOLO11 Medium - yolo11m.pt</option>
+                    <option value="yolo11-large">YOLO11 Large - yolo11l.pt</option>
+                    <option value="yolo11-xlarge">YOLO11 Extra large - yolo11x.pt</option>
+                  </optgroup>
+                  <optgroup label="Detection - YOLO26">
+                    <option value="yolo26-nano">YOLO26 Nano - yolo26n.pt</option>
+                    <option value="yolo26-small">YOLO26 Small - yolo26s.pt</option>
+                    <option value="yolo26-medium">YOLO26 Medium - yolo26m.pt</option>
+                    <option value="yolo26-large">YOLO26 Large - yolo26l.pt</option>
+                    <option value="yolo26-xlarge">YOLO26 Extra large - yolo26x.pt</option>
+                  </optgroup>
+                  <optgroup label="Instance Segmentation - YOLOv8">
+                    <option value="nano-seg">YOLOv8 Nano instance segmentation - yolov8n-seg.pt</option>
+                    <option value="small-seg">YOLOv8 Small instance segmentation - yolov8s-seg.pt</option>
+                    <option value="medium-seg">YOLOv8 Medium instance segmentation - yolov8m-seg.pt</option>
+                    <option value="large-seg">YOLOv8 Large instance segmentation - yolov8l-seg.pt</option>
+                    <option value="xlarge-seg">YOLOv8 Extra large instance segmentation - yolov8x-seg.pt</option>
+                  </optgroup>
+                  <optgroup label="Instance Segmentation - YOLO11">
+                    <option value="yolo11-nano-seg">YOLO11 Nano instance segmentation - yolo11n-seg.pt</option>
+                    <option value="yolo11-small-seg">YOLO11 Small instance segmentation - yolo11s-seg.pt</option>
+                    <option value="yolo11-medium-seg">YOLO11 Medium instance segmentation - yolo11m-seg.pt</option>
+                    <option value="yolo11-large-seg">YOLO11 Large instance segmentation - yolo11l-seg.pt</option>
+                    <option value="yolo11-xlarge-seg">YOLO11 Extra large instance segmentation - yolo11x-seg.pt</option>
+                  </optgroup>
+                  <optgroup label="Instance Segmentation - YOLO26">
+                    <option value="yolo26-nano-seg">YOLO26 Nano instance segmentation - yolo26n-seg.pt</option>
+                    <option value="yolo26-small-seg">YOLO26 Small instance segmentation - yolo26s-seg.pt</option>
+                    <option value="yolo26-medium-seg">YOLO26 Medium instance segmentation - yolo26m-seg.pt</option>
+                    <option value="yolo26-large-seg">YOLO26 Large instance segmentation - yolo26l-seg.pt</option>
+                    <option value="yolo26-xlarge-seg">YOLO26 Extra large instance segmentation - yolo26x-seg.pt</option>
+                  </optgroup>
+                  <optgroup label="Classification - YOLOv8">
+                    <option value="nano-cls">YOLOv8 Nano - yolov8n-cls.pt</option>
+                    <option value="small-cls">YOLOv8 Small - yolov8s-cls.pt</option>
+                    <option value="medium-cls">YOLOv8 Medium - yolov8m-cls.pt</option>
+                    <option value="large-cls">YOLOv8 Large - yolov8l-cls.pt</option>
+                    <option value="xlarge-cls">YOLOv8 Extra large - yolov8x-cls.pt</option>
+                  </optgroup>
+                  <optgroup label="Classification - YOLO11">
+                    <option value="yolo11-nano-cls">YOLO11 Nano - yolo11n-cls.pt</option>
+                    <option value="yolo11-small-cls">YOLO11 Small - yolo11s-cls.pt</option>
+                    <option value="yolo11-medium-cls">YOLO11 Medium - yolo11m-cls.pt</option>
+                    <option value="yolo11-large-cls">YOLO11 Large - yolo11l-cls.pt</option>
+                    <option value="yolo11-xlarge-cls">YOLO11 Extra large - yolo11x-cls.pt</option>
+                  </optgroup>
+                  <optgroup label="Classification - YOLO26">
+                    <option value="yolo26-nano-cls">YOLO26 Nano - yolo26n-cls.pt</option>
+                    <option value="yolo26-small-cls">YOLO26 Small - yolo26s-cls.pt</option>
+                    <option value="yolo26-medium-cls">YOLO26 Medium - yolo26m-cls.pt</option>
+                    <option value="yolo26-large-cls">YOLO26 Large - yolo26l-cls.pt</option>
+                    <option value="yolo26-xlarge-cls">YOLO26 Extra large - yolo26x-cls.pt</option>
+                  </optgroup>
+                </select>
+                <div id="model-selector-menu" class="model-selector-menu" hidden>
+                  <input id="model-search" type="search" placeholder="Search models" autocomplete="off" aria-label="Search model options">
+                  <div id="model-options" class="model-options" role="listbox" aria-label="Model options"></div>
+                </div>
+              </div>
             </label>
             <label>
               <span class="tooltip-label" tabindex="0" data-tooltip="Training device passed to Ultralytics. Use 0 for GPU 0, 0,1 for multiple GPUs, cpu for CPU, or leave blank for auto.">Device</span>

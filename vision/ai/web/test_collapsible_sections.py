@@ -88,9 +88,19 @@ class CollapsibleSectionTests(unittest.TestCase):
                 expected_options[f"{family}-{size_key}-seg"] = f"{family}{size_suffix}-seg.pt"
                 expected_options[f"{family}-{size_key}-cls"] = f"{family}{size_suffix}-cls.pt"
 
-        for task in ("Detection", "Segmentation", "Classification"):
+        for task in ("Detection", "Classification"):
             for family in ("YOLOv8", "YOLO11", "YOLO26"):
                 self.assertIn(f'optgroup label="{task} - {family}"', markup)
+        for family in ("YOLOv8", "YOLO11", "YOLO26"):
+            self.assertIn(f'optgroup label="Instance Segmentation - {family}"', markup)
+        self.assertIn("instance segmentation", markup)
+        self.assertNotIn("YOLOv5", markup)
+        self.assertNotIn("yolov5", markup)
+        self.assertIn('id="model-search"', markup)
+        self.assertIn('type="search"', markup)
+        self.assertIn('id="model-selector-toggle"', markup)
+        self.assertIn('id="model-selector-menu"', markup)
+        self.assertIn('id="model-options"', markup)
         for value, checkpoint in expected_options.items():
             self.assertIn(f'<option value="{value}">', markup)
             self.assertIn(checkpoint, markup)
@@ -130,7 +140,23 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("function taskForModelSize", script)
         self.assertIn("function modelSizeForTask", script)
         self.assertIn("function syncProjectWithModelTask", script)
-        self.assertIn('"model-size").addEventListener("change", syncProjectWithModelTask)', script)
+        self.assertIn("function filterModelOptions", script)
+        self.assertIn("function openModelSelector", script)
+        self.assertIn("function closeModelSelector", script)
+        self.assertIn("function chooseModelOption", script)
+        self.assertIn("function modelGroupParts", script)
+        self.assertIn('taskBadge.className = "model-task-badge"', script)
+        self.assertIn('taskBadge.dataset.task = task.toLowerCase().replace(/\\s+/g, "-")', script)
+        self.assertIn('familyLabel.className = "model-family-label"', script)
+        self.assertIn('"model-selector-toggle").addEventListener("click"', script)
+        self.assertIn('"model-search").addEventListener("input", filterModelOptions)', script)
+        self.assertIn('"model-size").addEventListener("change", () =>', script)
+        self.assertIn("syncProjectWithModelTask();", script)
+
+        styles = (WEB_DIR / "static" / "styles.css").read_text(encoding="utf-8")
+        self.assertIn(".model-task-badge[data-task=\"detection\"]", styles)
+        self.assertIn(".model-task-badge[data-task=\"instance-segmentation\"]", styles)
+        self.assertIn(".model-task-badge[data-task=\"classification\"]", styles)
 
     def test_previous_training_sessions_preserve_task_specific_project(self):
         script = APP_JS.read_text(encoding="utf-8")

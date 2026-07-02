@@ -235,6 +235,106 @@ function syncProjectWithModelTask() {
   scheduleTargetRefresh();
 }
 
+function selectedModelOption() {
+  return $("model-size").selectedOptions[0] || $("model-size").options[0];
+}
+
+function syncModelSelectorDisplay() {
+  const option = selectedModelOption();
+  if ($("model-selector-value") && option) {
+    $("model-selector-value").textContent = option.textContent;
+  }
+}
+
+function modelOptionSearchText(option) {
+  const groupLabel = option.closest("optgroup")?.label || "";
+  return `${groupLabel} ${option.textContent} ${option.value}`.toLowerCase();
+}
+
+function modelGroupParts(label) {
+  const parts = String(label || "").split(" - ");
+  return {
+    task: parts[0] || label,
+    family: parts.slice(1).join(" - "),
+  };
+}
+
+function closeModelSelector() {
+  $("model-selector-menu").hidden = true;
+  $("model-selector-toggle").setAttribute("aria-expanded", "false");
+}
+
+function openModelSelector() {
+  $("model-selector-menu").hidden = false;
+  $("model-selector-toggle").setAttribute("aria-expanded", "true");
+  filterModelOptions();
+  $("model-search").focus();
+}
+
+function chooseModelOption(value) {
+  const select = $("model-size");
+  if (select.value !== value) {
+    select.value = value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  } else {
+    syncModelSelectorDisplay();
+  }
+  closeModelSelector();
+  $("model-selector-toggle").focus();
+}
+
+function filterModelOptions() {
+  const search = $("model-search");
+  const select = $("model-size");
+  const optionsContainer = $("model-options");
+  const query = String(search?.value || "").trim().toLowerCase();
+  if (!search || !select || !optionsContainer) {
+    return;
+  }
+  optionsContainer.innerHTML = "";
+  let renderedCount = 0;
+  Array.from(select.querySelectorAll("optgroup")).forEach((group) => {
+    const matches = Array.from(group.querySelectorAll("option")).filter((option) => (
+      !query || modelOptionSearchText(option).includes(query)
+    ));
+    if (!matches.length) {
+      return;
+    }
+    const groupLabel = document.createElement("div");
+    groupLabel.className = "model-option-group";
+    const { task, family } = modelGroupParts(group.label);
+    const taskBadge = document.createElement("span");
+    taskBadge.className = "model-task-badge";
+    taskBadge.dataset.task = task.toLowerCase().replace(/\s+/g, "-");
+    taskBadge.textContent = task;
+    const familyLabel = document.createElement("span");
+    familyLabel.className = "model-family-label";
+    familyLabel.textContent = family;
+    groupLabel.append(taskBadge, familyLabel);
+    optionsContainer.appendChild(groupLabel);
+    matches.forEach((option) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "model-option";
+      button.setAttribute("role", "option");
+      button.setAttribute("aria-selected", String(option.selected));
+      button.classList.toggle("active", option.selected);
+      button.dataset.value = option.value;
+      button.textContent = option.textContent;
+      button.addEventListener("click", () => chooseModelOption(option.value));
+      optionsContainer.appendChild(button);
+      renderedCount += 1;
+    });
+  });
+  if (!renderedCount) {
+    const empty = document.createElement("div");
+    empty.className = "model-options-empty";
+    empty.textContent = "No matching models.";
+    optionsContainer.appendChild(empty);
+  }
+  syncModelSelectorDisplay();
+}
+
 function setMessage(text, isError = false) {
   const message = $("message");
   message.textContent = text;
@@ -590,6 +690,10 @@ function syncActionStates() {
   document.querySelectorAll(".training-panel input, .training-panel select, .advanced-panel input, .advanced-panel select").forEach((control) => {
     control.disabled = locked;
   });
+  $("model-selector-toggle").disabled = locked;
+  if (locked) {
+    closeModelSelector();
+  }
   $("resume").disabled = locked || !state.resumeAvailable;
   document.querySelectorAll("[data-preset], #reset-advanced").forEach((button) => {
     button.disabled = locked;
@@ -723,6 +827,9 @@ function setControlValue(id, value) {
     return;
   }
   element.value = value;
+  if (id === "model-size") {
+    filterModelOptions();
+  }
 }
 
 function applyControlValues(values) {
@@ -3720,7 +3827,28 @@ $("clear-dataset-prepared").addEventListener("click", () => {
   clearStorageTarget("dataset_prepared", { label: "prepared dataset" });
 });
 $("detect-classes").addEventListener("click", detectClasses);
-$("model-size").addEventListener("change", syncProjectWithModelTask);
+$("model-selector-toggle").addEventListener("click", () => {
+  if ($("model-selector-menu").hidden) {
+    openModelSelector();
+  } else {
+    closeModelSelector();
+  }
+});
+$("model-search").addEventListener("input", filterModelOptions);
+$("model-search").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    const firstOption = $("model-options").querySelector(".model-option");
+    if (firstOption) {
+      event.preventDefault();
+      chooseModelOption(firstOption.dataset.value);
+    }
+  }
+});
+$("model-size").addEventListener("change", () => {
+  syncModelSelectorDisplay();
+  filterModelOptions();
+  syncProjectWithModelTask();
+});
 $("start-training").addEventListener("click", startTraining);
 $("stop-training").addEventListener("click", stopTraining);
 $("refresh-logs").addEventListener("click", refreshLogs);
@@ -3804,10 +3932,14 @@ document.addEventListener("click", (event) => {
   if (!$("dataset-cleanup-menu").contains(event.target)) {
     closeDatasetCleanupMenu();
   }
+  if (!$("model-selector-menu").contains(event.target) && !$("model-selector-toggle").contains(event.target)) {
+    closeModelSelector();
+  }
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeDatasetCleanupMenu();
+    closeModelSelector();
   }
 });
 $("reset-advanced").addEventListener("click", () => {
@@ -3844,6 +3976,7 @@ try {
 loadConfig().catch((error) => setMessage(error.message, true));
 initializeTooltips();
 initializeCollapsiblePanels();
+filterModelOptions();
 updateFileSelection();
 updateSplitTotal();
 syncDatasetSourceControls();
