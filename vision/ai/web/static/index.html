@@ -469,25 +469,25 @@
               </label>
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Probability of combining four training images into a mosaic sample.">Mosaic</span>
-                <input id="mosaic" type="number" min="0" max="1" step="0.05" value="1.0">
+                <input id="mosaic" type="number" min="0" max="1" step="0.05" value="0">
               </label>
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Disable mosaic for the final N training epochs.">Close mosaic</span>
-                <input id="close-mosaic" type="number" min="0" value="10">
+                <input id="close-mosaic" type="number" min="0" value="0">
               </label>
             </div>
             <div class="grid three">
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="HSV hue augmentation gain.">HSV hue</span>
-                <input id="hsv-h" type="number" min="0" step="0.001" value="0.015">
+                <input id="hsv-h" type="number" min="0" step="0.001" value="0">
               </label>
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="HSV saturation augmentation gain.">HSV saturation</span>
-                <input id="hsv-s" type="number" min="0" step="0.05" value="0.7">
+                <input id="hsv-s" type="number" min="0" step="0.05" value="0">
               </label>
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="HSV brightness/value augmentation gain.">HSV value</span>
-                <input id="hsv-v" type="number" min="0" step="0.05" value="0.4">
+                <input id="hsv-v" type="number" min="0" step="0.05" value="0">
               </label>
             </div>
             <div class="grid three">
@@ -497,11 +497,11 @@
               </label>
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Maximum random image translation as a fraction of image size.">Translate</span>
-                <input id="translate" type="number" min="0" step="0.01" value="0.1">
+                <input id="translate" type="number" min="0" step="0.01" value="0.05">
               </label>
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Random scale gain used during geometric augmentation.">Scale</span>
-                <input id="scale" type="number" min="0" step="0.05" value="0.5">
+                <input id="scale" type="number" min="0" step="0.05" value="0.25">
               </label>
             </div>
             <div class="grid three">
@@ -521,7 +521,7 @@
             <div class="grid three">
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Horizontal flip probability.">Horizontal flip</span>
-                <input id="fliplr" type="number" min="0" max="1" step="0.05" value="0.5">
+                <input id="fliplr" type="number" min="0" max="1" step="0.05" value="0">
               </label>
               <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="BGR channel swap probability.">BGR swap</span>
