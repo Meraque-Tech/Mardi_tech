@@ -1490,6 +1490,45 @@ function metricText(value, suffix = "") {
   return `${value}${suffix}`;
 }
 
+function numberText(value, digits = 1) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+  return number.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  });
+}
+
+function millisecondsText(value) {
+  const text = numberText(value, 1);
+  return text === "N/A" ? text : `${text} ms/image`;
+}
+
+function durationText(seconds) {
+  const number = Number(seconds);
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+  if (number >= 60) {
+    const minutes = Math.floor(number / 60);
+    const remaining = number - (minutes * 60);
+    return `${minutes}m ${remaining.toFixed(1)}s`;
+  }
+  return `${number.toFixed(1)}s`;
+}
+
+function renderTestTiming(timing) {
+  const payload = timing || {};
+  $("test-timing-images").textContent = numberText(payload.image_count, 0);
+  $("test-timing-inference").textContent = millisecondsText(payload.inference_ms_per_image);
+  $("test-timing-preprocess").textContent = millisecondsText(payload.preprocess_ms_per_image);
+  $("test-timing-postprocess").textContent = millisecondsText(payload.postprocess_ms_per_image);
+  $("test-timing-eval-processing").textContent = millisecondsText(payload.evaluation_ms_per_image);
+  $("test-timing-total").textContent = durationText(payload.total_seconds);
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, "&amp;")
@@ -3513,6 +3552,7 @@ async function refreshTestResults() {
       $("test-metric-recall").textContent = "-";
       $("test-metric-map50").textContent = "-";
       $("test-metric-map").textContent = "-";
+      renderTestTiming({});
       renderTestClassMetrics([]);
       renderTestConfusionMatrices({});
       renderTestRocAuc({}, {});
@@ -3530,6 +3570,7 @@ async function refreshTestResults() {
     $("test-metric-recall").textContent = metricText(results.recall);
     $("test-metric-map50").textContent = metricText(results.map50);
     $("test-metric-map").textContent = metricText(results.map50_95);
+    renderTestTiming(results.timing);
     renderTestClassMetrics(results.per_class);
     renderTestConfusionMatrices(results.artifacts || {});
     renderTestRocAuc(results.roc_auc || {}, results.artifacts || {});

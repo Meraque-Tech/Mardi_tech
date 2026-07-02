@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 
 from train_yolov8 import IMAGE_EXTENSIONS, use_actual_confusion_matrix_axis_label
@@ -31,6 +32,61 @@ def rounded_metric(value, digits: int = 4):
         return round(float(value), digits)
     except (TypeError, ValueError):
         return None
+
+
+def synchronize_accelerator():
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+    except Exception:
+        pass
+
+
+def seconds_since(start: float | None, digits: int = 3):
+    if start is None:
+        return None
+    return rounded_metric(time.perf_counter() - start, digits)
+
+
+def milliseconds_per_image(seconds: float | None, image_count: int | None):
+    if seconds is None or not image_count:
+        return None
+    return rounded_metric((float(seconds) * 1000) / image_count, 3)
+
+
+def build_speed_payload(metrics, image_count: int | None, evaluation_seconds, roc_auc_seconds, total_seconds) -> dict:
+    speed = getattr(metrics, "speed", None)
+    if not isinstance(speed, dict):
+        speed = {}
+
+    preprocess_ms = rounded_metric(speed.get("preprocess"), 3)
+    inference_ms = rounded_metric(speed.get("inference"), 3)
+    postprocess_ms = rounded_metric(speed.get("postprocess"), 3)
+    total_model_ms = None
+    if any(value is not None for value in (preprocess_ms, inference_ms, postprocess_ms)):
+        total_model_ms = rounded_metric(
+            sum(value or 0 for value in (preprocess_ms, inference_ms, postprocess_ms)),
+            3,
+        )
+
+    return {
+        "image_count": image_count,
+        "preprocess_ms_per_image": preprocess_ms,
+        "inference_ms_per_image": inference_ms,
+        "postprocess_ms_per_image": postprocess_ms,
+        "model_pipeline_ms_per_image": total_model_ms,
+        "evaluation_seconds": rounded_metric(evaluation_seconds, 3),
+        "roc_auc_seconds": rounded_metric(roc_auc_seconds, 3),
+        "total_seconds": rounded_metric(total_seconds, 3),
+        "evaluation_ms_per_image": milliseconds_per_image(evaluation_seconds, image_count),
+        "total_ms_per_image": milliseconds_per_image(total_seconds, image_count),
+        "note": (
+            "Inference speed is Ultralytics' per-image model timing; processing times are "
+            "wall-clock averages for the test evaluation workflow."
+        ),
+    }
 
 
 def build_per_class_metrics(metrics) -> dict:
@@ -310,6 +366,7 @@ def parse_args():
 
 
 def main():
+    total_start = time.perf_counter()
     args = parse_args()
     weights_path = Path(args.weights).expanduser().resolve()
     data_path = Path(args.data).expanduser().resolve()
@@ -328,6 +385,8 @@ def main():
     report_progress(5, "initializing", "Loading weights and dataset config.")
     model = YOLO(str(weights_path))
     report_progress(15, "evaluating", f"Running evaluation on the {args.split} split.")
+    synchronize_accelerator()
+    evaluation_start = time.perf_counter()
     with use_actual_confusion_matrix_axis_label():
         metrics = model.val(
             data=str(data_path),
@@ -342,6 +401,8 @@ def main():
             exist_ok=args.exist_ok,
             verbose=True,
         )
+    synchronize_accelerator()
+    evaluation_seconds = seconds_since(evaluation_start)
 
     run_dir = Path(getattr(metrics, "save_dir", Path(args.project) / args.name)).expanduser().resolve()
     report_run_dir(run_dir)
@@ -355,6 +416,8 @@ def main():
             data_config = yaml.safe_load(data_path.read_text(encoding="utf-8")) or {}
         except Exception:
             data_config = {}
+
+    image_count = len(collect_split_images(resolve_dataset_entries(data_config, args.split))) if data_config else None
 
     payload = build_per_class_metrics(metrics)
     payload.update(
@@ -370,7 +433,11 @@ def main():
         }
     )
 
+    roc_auc_seconds = None
+    roc_auc_start = None
     try:
+        synchronize_accelerator()
+        roc_auc_start = time.perf_counter()
         payload["roc_auc"] = build_image_level_roc_auc(
             run_dir=run_dir,
             weights_path=weights_path,
@@ -388,6 +455,18 @@ def main():
             "classes": [],
             "note": f"ROC-AUC is unavailable: {exc}",
         }
+    finally:
+        synchronize_accelerator()
+        roc_auc_seconds = seconds_since(roc_auc_start)
+
+    total_seconds = seconds_since(total_start)
+    payload["timing"] = build_speed_payload(
+        metrics=metrics,
+        image_count=image_count,
+        evaluation_seconds=evaluation_seconds,
+        roc_auc_seconds=roc_auc_seconds,
+        total_seconds=total_seconds,
+    )
 
     output_path = run_dir / "test_metrics.json"
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -34,6 +34,40 @@ def _metric(value) -> str:
         return str(value)
 
 
+def _milliseconds(value) -> str:
+    number = _to_float(value)
+    if number is None:
+        return "N/A"
+    return f"{number:.1f} ms/image"
+
+
+def _seconds(value) -> str:
+    number = _to_float(value)
+    if number is None:
+        return "N/A"
+    if number >= 60:
+        minutes = int(number // 60)
+        seconds = number - (minutes * 60)
+        return f"{minutes}m {seconds:.1f}s"
+    return f"{number:.1f}s"
+
+
+def _test_timing_rows(timing: dict | None) -> list[list]:
+    timing = timing or {}
+    return [
+        ["Test images", _count(timing.get("image_count"))],
+        ["Inference time", _milliseconds(timing.get("inference_ms_per_image"))],
+        ["Preprocess time", _milliseconds(timing.get("preprocess_ms_per_image"))],
+        ["Postprocess time", _milliseconds(timing.get("postprocess_ms_per_image"))],
+        ["Model pipeline time", _milliseconds(timing.get("model_pipeline_ms_per_image"))],
+        ["Evaluation processing time", _milliseconds(timing.get("evaluation_ms_per_image"))],
+        ["Total processing time", _milliseconds(timing.get("total_ms_per_image"))],
+        ["Evaluation duration", _seconds(timing.get("evaluation_seconds"))],
+        ["ROC-AUC duration", _seconds(timing.get("roc_auc_seconds"))],
+        ["Total test duration", _seconds(timing.get("total_seconds"))],
+    ]
+
+
 def _metric_labels(metrics: dict | None) -> dict:
     labels = {
         "precision": "Precision",
@@ -1076,6 +1110,13 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
         ["Workers", parameters.get("workers")],
         ["Device", parameters.get("device")],
     ], widths=[45 * builder.mm, 130 * builder.mm])
+
+    builder.heading("Test Timing")
+    builder.table(
+        [["Metric", "Value"]] + _test_timing_rows(metrics.get("timing")),
+        widths=[75 * builder.mm, 100 * builder.mm],
+    )
+
     test_summary = context.get("dataset_summary") or {}
     test_split = (test_summary.get("splits") or {}).get("test") or {}
     if test_summary:
