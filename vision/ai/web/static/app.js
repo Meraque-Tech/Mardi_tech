@@ -57,6 +57,12 @@ const state = {
   inferenceWebRtcFailedJobId: "",
   inferenceWebRtcPeer: null,
   trainingSessions: [],
+  annotationQaRunning: false,
+  annotationQaStopping: false,
+  annotationQaJobId: "",
+  annotationQaPollTimer: null,
+  annotationQaPollRevision: 0,
+  annotationQaReport: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -654,7 +660,8 @@ function toggleDatasetCleanupMenu() {
 function syncActionStates() {
   const trainingLocked = state.running || state.isStarting || state.isStopping;
   const testLocked = state.testRunning || state.testStarting || state.testStopping;
-  const locked = trainingLocked || testLocked;
+  const qaLocked = state.annotationQaRunning || state.annotationQaStopping;
+  const locked = trainingLocked || testLocked || qaLocked;
   const preparing = state.isPreparing || state.isDetecting;
   const hasDataset = Boolean(state.datasetYaml);
   const canResume = state.resumeAvailable && $("resume").checked;
@@ -696,6 +703,7 @@ function syncActionStates() {
   $("stop-training").disabled = !state.running || state.isStopping;
   $("stop-training").textContent = state.isStopping ? "Stopping..." : "Stop";
   $("stop-training").setAttribute("aria-busy", String(state.isStopping));
+  syncAnnotationQaActionStates();
 
   document.querySelectorAll(".training-panel input, .training-panel select, .advanced-panel input, .advanced-panel select").forEach((control) => {
     control.disabled = locked;
@@ -1690,6 +1698,298 @@ function renderDatasetSummary(summary) {
       </div>
     </details>
   `;
+}
+
+function resetAnnotationQaForDataset() {
+  state.annotationQaJobId = "";
+  state.annotationQaReport = null;
+  state.annotationQaRunning = false;
+  state.annotationQaStopping = false;
+  window.clearTimeout(state.annotationQaPollTimer);
+  state.annotationQaPollTimer = null;
+  state.annotationQaPollRevision += 1;
+  $("annotation-qa-status").textContent = state.datasetYaml ? "Not run" : "Not available";
+  $("annotation-qa-detail").textContent = state.datasetYaml
+    ? "SAM QA is optional. Run it before training when you want an annotation quality check."
+    : "Prepare a dataset to enable optional SAM QA.";
+  $("annotation-qa-summary").innerHTML = "";
+  $("annotation-qa-issues").innerHTML = "";
+  setAnnotationQaProgress(false);
+  syncAnnotationQaActionStates();
+}
+
+function setAnnotationQaProgress(visible, job = {}) {
+  const progress = $("annotation-qa-progress");
+  progress.hidden = !visible;
+  progress.setAttribute("aria-busy", String(visible));
+  if (!visible) {
+    return;
+  }
+  const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
+  const stage = job.stage || "running";
+  $("annotation-qa-stage").textContent = stage.replace(/_/g, " ");
+  $("annotation-qa-percent").textContent = `${Math.round(percent)}%`;
+  const track = $("annotation-qa-track");
+  track.setAttribute("aria-valuenow", String(Math.round(percent)));
+  track.setAttribute("aria-valuetext", `${stage}: ${Math.round(percent)}%`);
+  track.querySelector("span").style.width = `${percent}%`;
+}
+
+function syncAnnotationQaActionStates() {
+  const hasDataset = Boolean(state.datasetYaml);
+  const trainingLocked = state.running || state.isStarting || state.isStopping;
+  const testLocked = state.testRunning || state.testStarting || state.testStopping;
+  const preparing = state.isPreparing || state.isDetecting;
+  const running = state.annotationQaRunning || state.annotationQaStopping;
+  $("run-annotation-qa").disabled = !hasDataset || preparing || trainingLocked || testLocked || running;
+  $("run-annotation-qa").textContent = state.annotationQaRunning ? "Running..." : "Run SAM QA";
+  $("run-annotation-qa").setAttribute("aria-busy", String(state.annotationQaRunning));
+  $("stop-annotation-qa").disabled = !state.annotationQaRunning || state.annotationQaStopping;
+  $("stop-annotation-qa").textContent = state.annotationQaStopping ? "Stopping..." : "Stop";
+  $("stop-annotation-qa").setAttribute("aria-busy", String(state.annotationQaStopping));
+  ["annotation-qa-model", "annotation-qa-scope", "annotation-qa-preset"].forEach((id) => {
+    $(id).disabled = !hasDataset || preparing || trainingLocked || testLocked || running;
+  });
+  const reportReady = Boolean(state.annotationQaJobId && state.annotationQaReport);
+  $("download-annotation-qa-csv").disabled = !reportReady;
+  $("download-annotation-qa-json").disabled = !reportReady;
+}
+
+function annotationQaStatusLabel(status) {
+  const labels = {
+    queued: "Queued",
+    running: "Running",
+    stopping: "Stopping",
+    stopped: "Stopped",
+    completed: "Complete",
+    failed: "Failed",
+  };
+  return labels[status] || "Not run";
+}
+
+function renderAnnotationQaSummary(summary = {}) {
+  const container = $("annotation-qa-summary");
+  if (!summary || !Object.keys(summary).length) {
+    container.innerHTML = "";
+    return;
+  }
+  container.innerHTML = `
+    <div class="qa-summary-grid">
+      <div><span>Images</span><strong>${summary.images_scanned || 0}</strong></div>
+      <div><span>Labels</span><strong>${summary.labels_checked || 0}</strong></div>
+      <div><span>High</span><strong>${summary.high || 0}</strong></div>
+      <div><span>Medium</span><strong>${summary.medium || 0}</strong></div>
+      <div><span>Low</span><strong>${summary.low || 0}</strong></div>
+    </div>
+  `;
+}
+
+function annotationQaPreviewUrl(issue) {
+  const preview = String(issue.preview || "");
+  if (!preview || !state.annotationQaJobId) {
+    return "";
+  }
+  const name = preview.split("/").pop();
+  return `/api/annotation-qa/preview/${encodeURIComponent(state.annotationQaJobId)}/${encodeURIComponent(name)}`;
+}
+
+function renderAnnotationQaIssues(issues = []) {
+  const container = $("annotation-qa-issues");
+  const visibleIssues = issues.slice(0, 50);
+  if (!visibleIssues.length) {
+    container.innerHTML = issues.length
+      ? ""
+      : '<p class="qa-empty">No annotation QA issues were flagged.</p>';
+    return;
+  }
+  const rows = visibleIssues.map((issue) => {
+    const previewUrl = annotationQaPreviewUrl(issue);
+    const imageName = escapeHtml(issue.image_name || "image");
+    const splitClass = escapeHtml(`${issue.split || ""} · ${issue.class_name || ""}`);
+    const issueType = escapeHtml(issue.issue_type || "");
+    const thumb = previewUrl
+      ? `<img src="${previewUrl}" alt="">`
+      : '<span class="qa-no-preview">No preview</span>';
+    return `
+      <tr>
+        <td class="qa-preview-cell">${thumb}</td>
+        <td>
+          <strong title="${imageName}">${imageName}</strong>
+          <small title="${splitClass}">${splitClass}</small>
+        </td>
+        <td><span class="qa-severity ${escapeHtml(issue.severity || "low")}">${escapeHtml(issue.severity || "low")}</span></td>
+        <td title="${issueType}">${issueType}</td>
+        <td>${metricText(issue.score)}</td>
+        <td>
+          <select data-qa-issue="${escapeHtml(issue.issue_id)}">
+            ${["unreviewed", "accepted", "false_positive", "needs_fix", "ignored"].map((status) => (
+              `<option value="${status}"${status === issue.review_status ? " selected" : ""}>${status.replace(/_/g, " ")}</option>`
+            )).join("")}
+          </select>
+        </td>
+      </tr>
+    `;
+  }).join("");
+  const truncated = issues.length > visibleIssues.length
+    ? `<p class="field-note">Showing first ${visibleIssues.length} of ${issues.length} issues. Download CSV for the full report.</p>`
+    : "";
+  container.innerHTML = `
+    <div class="qa-table-wrap">
+      <table class="qa-table">
+        <thead>
+          <tr>
+            <th>Preview</th>
+            <th>Image</th>
+            <th>Severity</th>
+            <th>Issue</th>
+            <th>Score</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${truncated}
+  `;
+  container.querySelectorAll("[data-qa-issue]").forEach((select) => {
+    select.addEventListener("change", () => markAnnotationQaIssue(select.dataset.qaIssue, select.value));
+  });
+}
+
+async function loadAnnotationQaResults(jobId) {
+  const report = await apiJson(`/api/annotation-qa/results/${encodeURIComponent(jobId)}`);
+  state.annotationQaReport = report;
+  renderAnnotationQaSummary(report.summary || {});
+  renderAnnotationQaIssues(Array.isArray(report.issues) ? report.issues : []);
+  syncAnnotationQaActionStates();
+}
+
+function renderAnnotationQaJob(job) {
+  state.annotationQaJobId = job.job_id || state.annotationQaJobId;
+  const status = job.status || "queued";
+  state.annotationQaRunning = status === "queued" || status === "running";
+  state.annotationQaStopping = status === "stopping";
+  $("annotation-qa-status").textContent = annotationQaStatusLabel(status);
+  $("annotation-qa-detail").textContent = job.detail || "";
+  $("annotation-qa-detail").title = job.detail || "";
+  setAnnotationQaProgress(state.annotationQaRunning || state.annotationQaStopping, job);
+  renderAnnotationQaSummary(job.summary || {
+    images_scanned: job.images_scanned,
+    labels_checked: job.labels_checked,
+    high: job.high,
+    medium: job.medium,
+    low: job.low,
+  });
+  syncActionStates();
+}
+
+function pollAnnotationQa(jobId) {
+  state.annotationQaPollRevision += 1;
+  const revision = state.annotationQaPollRevision;
+  window.clearTimeout(state.annotationQaPollTimer);
+  const poll = async () => {
+    try {
+      const job = await apiJson(`/api/annotation-qa/status/${encodeURIComponent(jobId)}`);
+      if (revision !== state.annotationQaPollRevision) {
+        return;
+      }
+      renderAnnotationQaJob(job);
+      if (["queued", "running", "stopping"].includes(job.status)) {
+        state.annotationQaPollTimer = window.setTimeout(poll, 900);
+        return;
+      }
+      state.annotationQaRunning = false;
+      state.annotationQaStopping = false;
+      setAnnotationQaProgress(false);
+      if (job.report_available) {
+        await loadAnnotationQaResults(jobId);
+      }
+      syncActionStates();
+    } catch (error) {
+      if (revision !== state.annotationQaPollRevision) {
+        return;
+      }
+      state.annotationQaRunning = false;
+      state.annotationQaStopping = false;
+      setAnnotationQaProgress(false);
+      $("annotation-qa-status").textContent = "Failed";
+      $("annotation-qa-detail").textContent = error.message;
+      syncActionStates();
+    }
+  };
+  poll();
+}
+
+async function runAnnotationQa() {
+  if (!state.datasetYaml || state.annotationQaRunning) {
+    return;
+  }
+  state.annotationQaReport = null;
+  $("annotation-qa-issues").innerHTML = "";
+  $("annotation-qa-summary").innerHTML = "";
+  try {
+    setMessage("Starting annotation QA...");
+    const job = await apiJson("/api/annotation-qa/start", {
+      method: "POST",
+      body: JSON.stringify({
+        dataset_yaml: state.datasetYaml,
+        model: $("annotation-qa-model").value,
+        scope: $("annotation-qa-scope").value,
+        preset: $("annotation-qa-preset").value,
+      }),
+    });
+    renderAnnotationQaJob(job);
+    pollAnnotationQa(job.job_id);
+  } catch (error) {
+    setMessage(error.message, true);
+    $("annotation-qa-status").textContent = "Failed";
+    $("annotation-qa-detail").textContent = error.message;
+    syncActionStates();
+  }
+}
+
+async function stopAnnotationQa() {
+  if (!state.annotationQaJobId || !state.annotationQaRunning) {
+    return;
+  }
+  state.annotationQaStopping = true;
+  syncActionStates();
+  try {
+    const job = await apiJson(`/api/annotation-qa/stop/${encodeURIComponent(state.annotationQaJobId)}`, {
+      method: "POST",
+      body: "{}",
+    });
+    renderAnnotationQaJob(job);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function markAnnotationQaIssue(issueId, status) {
+  if (!state.annotationQaJobId || !issueId) {
+    return;
+  }
+  try {
+    await apiJson(`/api/annotation-qa/mark/${encodeURIComponent(state.annotationQaJobId)}`, {
+      method: "POST",
+      body: JSON.stringify({ issue_id: issueId, status }),
+    });
+    if (state.annotationQaReport?.issues) {
+      const issue = state.annotationQaReport.issues.find((item) => item.issue_id === issueId);
+      if (issue) {
+        issue.review_status = status;
+      }
+    }
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+function downloadAnnotationQaReport(kind) {
+  if (!state.annotationQaJobId) {
+    return;
+  }
+  window.location.href = `/api/annotation-qa/download/${encodeURIComponent(state.annotationQaJobId)}/${kind}`;
 }
 
 const DEFAULT_METRIC_LABELS = {
@@ -3147,6 +3447,7 @@ async function prepareDataset() {
     state.datasetYaml = result.dataset_yaml;
     setClassNames(result.classes);
     renderDatasetSummary(result.summary);
+    resetAnnotationQaForDataset();
     setMessage(result.message);
     preparationSucceeded = true;
     updateDatasetPreparationProgress("Complete", 100, "Dataset preparation complete.");
@@ -3982,6 +4283,10 @@ document.querySelectorAll("[data-app-tab]").forEach((button) => {
 $("prepare-dataset").addEventListener("click", prepareDataset);
 $("download-dataset").addEventListener("click", downloadPreparedDataset);
 $("download-annotated-dataset").addEventListener("click", downloadAnnotatedDataset);
+$("run-annotation-qa").addEventListener("click", runAnnotationQa);
+$("stop-annotation-qa").addEventListener("click", stopAnnotationQa);
+$("download-annotation-qa-csv").addEventListener("click", () => downloadAnnotationQaReport("csv"));
+$("download-annotation-qa-json").addEventListener("click", () => downloadAnnotationQaReport("json"));
 $("dataset-cleanup-toggle").addEventListener("click", toggleDatasetCleanupMenu);
 $("clear-dataset-uploads").addEventListener("click", () => {
   closeDatasetCleanupMenu();
@@ -4151,6 +4456,7 @@ updateFileSelection();
 updateSplitTotal();
 syncDatasetSourceControls();
 syncInferenceControls();
+resetAnnotationQaForDataset();
 setActivePreset(null);
 updateCurrentRunDisplay();
 renderEpochProgress();

@@ -42,6 +42,7 @@ LOG_DIR = WEB_DIR / "logs"
 LOG_FILE = LOG_DIR / "current.log"
 TEST_LOG_FILE = LOG_DIR / "test-current.log"
 RUNS_ROOT = REPO_ROOT / "runs"
+ANNOTATION_QA_ROOT = RUNS_ROOT / "annotation_qa"
 DETECT_RUNS_ROOT = RUNS_ROOT / "detect"
 SEGMENT_RUNS_ROOT = RUNS_ROOT / "segment"
 SEMANTIC_RUNS_ROOT = RUNS_ROOT / "semantic"
@@ -142,6 +143,11 @@ SPLIT_METADATA_FILE = ".split_metadata.json"
 DATASET_SUMMARY_FILE = ".web_dataset_summary.json"
 TRAINING_REPORT_CONTEXT_FILE = "training_report_context.json"
 TEST_REPORT_CONTEXT_FILE = "test_report_context.json"
+ANNOTATION_QA_SUMMARY_FILE = "summary.json"
+ANNOTATION_QA_REPORT_JSON_FILE = "qa_report.json"
+ANNOTATION_QA_REPORT_CSV_FILE = "qa_report.csv"
+ANNOTATION_QA_REVIEW_FILE = "review_state.json"
+ANNOTATION_QA_MODEL_DEFAULT = os.getenv("SAM_QA_MODEL", "sam2.1_s.pt")
 
 app = FastAPI(title="YOLOv8 Training UI")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -162,6 +168,8 @@ inference_jobs: dict[str, dict] = {}
 inference_jobs_lock = threading.Lock()
 inference_peers: dict[str, set] = {}
 inference_peers_lock = threading.Lock()
+annotation_qa_jobs: dict[str, dict] = {}
+annotation_qa_jobs_lock = threading.Lock()
 gpu_status_cache: dict = {"checked_at": 0.0, "payload": None}
 gpu_status_lock = threading.Lock()
 
@@ -192,6 +200,20 @@ class RoboflowRequest(BaseModel):
 
 class DatasetDownloadRequest(BaseModel):
     dataset_yaml: str
+
+
+class AnnotationQaRequest(BaseModel):
+    dataset_yaml: str
+    model: str = ANNOTATION_QA_MODEL_DEFAULT
+    scope: str = "all"
+    preset: str = "balanced"
+    max_images: Optional[int] = Field(default=None, ge=1)
+    max_side: int = Field(default=1280, ge=320, le=4096)
+
+
+class AnnotationQaMarkRequest(BaseModel):
+    issue_id: str
+    status: str
 
 
 class TrainRequest(BaseModel):
@@ -2730,6 +2752,607 @@ def cached_dataset_summary(yaml_path: Path) -> dict:
     return summary
 
 
+def annotation_qa_job_id() -> str:
+    return f"{datetime.now(MYT).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+
+def normalize_annotation_qa_model_name(model: str) -> str:
+    value = str(model or "").strip() or ANNOTATION_QA_MODEL_DEFAULT
+    aliases = {
+        "sam2.1_hiera_tiny": "sam2.1_t.pt",
+        "sam2.1_hiera_tiny.pt": "sam2.1_t.pt",
+        "sam2.1_hiera_small": "sam2.1_s.pt",
+        "sam2.1_hiera_small.pt": "sam2.1_s.pt",
+        "sam2.1_hiera_base_plus": "sam2.1_b.pt",
+        "sam2.1_hiera_base_plus.pt": "sam2.1_b.pt",
+        "sam2.1_hiera_large": "sam2.1_l.pt",
+        "sam2.1_hiera_large.pt": "sam2.1_l.pt",
+    }
+    return aliases.get(value, value)
+
+
+def ensure_annotation_qa_path(path: Path):
+    qa_root = ANNOTATION_QA_ROOT.resolve()
+    try:
+        path.resolve().relative_to(qa_root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Annotation QA files can only be read from runs/annotation_qa.",
+        ) from exc
+
+
+def annotation_qa_payload(job: dict) -> dict:
+    hidden = {"stop_event", "thread"}
+    return {key: value for key, value in job.items() if key not in hidden}
+
+
+def update_annotation_qa_job(job_id: str, **updates):
+    with annotation_qa_jobs_lock:
+        job = annotation_qa_jobs.get(job_id)
+        if job is None:
+            return
+        job.update(updates)
+        job["updated_at"] = time.time()
+
+
+def annotation_qa_thresholds(preset: str) -> dict:
+    presets = {
+        "lenient": {
+            "bbox_iou": 0.4,
+            "center_shift": 0.3,
+            "mask_area_ratio_min": 0.08,
+            "loose_area_ratio": 0.35,
+            "tight_edge_count": 3,
+            "duplicate_iou": 0.9,
+        },
+        "strict": {
+            "bbox_iou": 0.65,
+            "center_shift": 0.15,
+            "mask_area_ratio_min": 0.2,
+            "loose_area_ratio": 0.6,
+            "tight_edge_count": 2,
+            "duplicate_iou": 0.8,
+        },
+    }
+    return presets.get(str(preset or "").lower(), {
+        "bbox_iou": 0.55,
+        "center_shift": 0.2,
+        "mask_area_ratio_min": 0.15,
+        "loose_area_ratio": 0.5,
+        "tight_edge_count": 2,
+        "duplicate_iou": 0.85,
+    })
+
+
+def annotation_qa_split_names(scope: str, payload: dict) -> list[str]:
+    normalized = str(scope or "val").lower()
+    available = [split for split in SPLIT_NAMES if payload.get(split)]
+    if normalized == "all":
+        return available
+    if normalized in SPLIT_NAMES and payload.get(normalized):
+        return [normalized]
+    if payload.get("val"):
+        return ["val"]
+    return available[:1]
+
+
+def yolo_label_path(image_path: Path, labels_path: Optional[Path]) -> Optional[Path]:
+    return labels_path / f"{image_path.stem}.txt" if labels_path else None
+
+
+def pixel_bbox_from_yolo(fields: list[str], width: int, height: int) -> Optional[tuple[int, int, int, int]]:
+    if len(fields) != 5:
+        return None
+    try:
+        _class_id = int(float(fields[0]))
+        x_center, y_center, box_width, box_height = [float(value) for value in fields[1:5]]
+    except ValueError:
+        return None
+    if box_width <= 0 or box_height <= 0:
+        return None
+    x1 = int(round((x_center - box_width / 2) * width))
+    y1 = int(round((y_center - box_height / 2) * height))
+    x2 = int(round((x_center + box_width / 2) * width))
+    y2 = int(round((y_center + box_height / 2) * height))
+    x1 = max(0, min(width - 1, x1))
+    y1 = max(0, min(height - 1, y1))
+    x2 = max(0, min(width, x2))
+    y2 = max(0, min(height, y2))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return x1, y1, x2, y2
+
+
+def bbox_area(box: tuple[int, int, int, int]) -> int:
+    return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+
+
+def bbox_iou(box_a: tuple[int, int, int, int], box_b: tuple[int, int, int, int]) -> float:
+    x1 = max(box_a[0], box_b[0])
+    y1 = max(box_a[1], box_b[1])
+    x2 = min(box_a[2], box_b[2])
+    y2 = min(box_a[3], box_b[3])
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    union = bbox_area(box_a) + bbox_area(box_b) - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def bbox_center_shift(box_a: tuple[int, int, int, int], box_b: tuple[int, int, int, int]) -> float:
+    ax = (box_a[0] + box_a[2]) / 2
+    ay = (box_a[1] + box_a[3]) / 2
+    bx = (box_b[0] + box_b[2]) / 2
+    by = (box_b[1] + box_b[3]) / 2
+    scale = max(1.0, box_a[2] - box_a[0], box_a[3] - box_a[1])
+    return math.hypot(ax - bx, ay - by) / scale
+
+
+def mask_bbox(mask) -> Optional[tuple[int, int, int, int]]:
+    import numpy as np
+
+    rows, cols = np.where(mask > 0)
+    if rows.size == 0 or cols.size == 0:
+        return None
+    return int(cols.min()), int(rows.min()), int(cols.max()) + 1, int(rows.max()) + 1
+
+
+def mask_to_uint8(mask, width: int, height: int):
+    import cv2
+    import numpy as np
+
+    array = np.asarray(mask)
+    if array.shape[:2] != (height, width):
+        array = cv2.resize(array.astype("float32"), (width, height), interpolation=cv2.INTER_NEAREST)
+    return (array > 0.5).astype("uint8")
+
+
+def annotation_issue(
+    job_id: str,
+    index: int,
+    image_path: Path,
+    split: str,
+    class_id: Optional[int],
+    class_name: str,
+    issue_type: str,
+    severity: str,
+    score: float,
+    message: str,
+    original_bbox: Optional[tuple[int, int, int, int]] = None,
+    sam_bbox: Optional[tuple[int, int, int, int]] = None,
+    metrics: Optional[dict] = None,
+    preview: str = "",
+) -> dict:
+    return {
+        "issue_id": f"{job_id}-{index:06d}",
+        "image": str(image_path),
+        "image_name": image_path.name,
+        "split": split,
+        "class_id": class_id,
+        "class_name": class_name,
+        "issue_type": issue_type,
+        "severity": severity,
+        "score": round(float(score), 4),
+        "message": message,
+        "original_bbox": list(original_bbox) if original_bbox else None,
+        "sam_bbox": list(sam_bbox) if sam_bbox else None,
+        "metrics": metrics or {},
+        "preview": preview,
+        "review_status": "unreviewed",
+    }
+
+
+def draw_annotation_qa_preview(
+    image_path: Path,
+    output_path: Path,
+    issue: dict,
+    mask=None,
+):
+    import cv2
+    import numpy as np
+
+    image = cv2.imread(str(image_path))
+    if image is None:
+        return
+    height, width = image.shape[:2]
+    if mask is not None:
+        mask_array = mask_to_uint8(mask, width, height)
+        overlay = image.copy()
+        overlay[mask_array > 0] = (255, 220, 70)
+        image = cv2.addWeighted(overlay, 0.35, image, 0.65, 0)
+    original = issue.get("original_bbox")
+    if original:
+        x1, y1, x2, y2 = [int(value) for value in original]
+        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 210, 255), 2)
+    sam_box = issue.get("sam_bbox")
+    if sam_box:
+        x1, y1, x2, y2 = [int(value) for value in sam_box]
+        cv2.rectangle(image, (x1, y1), (x2, y2), (255, 150, 0), 2)
+    caption = f"{issue['severity'].upper()} {issue['issue_type']} {issue['score']:.2f}"
+    cv2.rectangle(image, (8, 8), (min(width - 8, 16 + len(caption) * 9), 38), (20, 32, 40), -1)
+    cv2.putText(image, caption, (14, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(output_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 84])
+
+
+def annotation_qa_summary(issues: list[dict], images_scanned: int, labels_checked: int, model: str, scope: str, preset: str) -> dict:
+    severity_counts = {"high": 0, "medium": 0, "low": 0}
+    type_counts: dict[str, int] = {}
+    for issue in issues:
+        severity = issue.get("severity", "low")
+        severity_counts[severity] = severity_counts.get(severity, 0) + 1
+        issue_type = issue.get("issue_type", "unknown")
+        type_counts[issue_type] = type_counts.get(issue_type, 0) + 1
+    return {
+        "model": model,
+        "scope": scope,
+        "preset": preset,
+        "images_scanned": images_scanned,
+        "labels_checked": labels_checked,
+        "issues": len(issues),
+        "high": severity_counts.get("high", 0),
+        "medium": severity_counts.get("medium", 0),
+        "low": severity_counts.get("low", 0),
+        "issue_types": type_counts,
+        "completed_at": datetime.now(MYT).isoformat(),
+    }
+
+
+def write_annotation_qa_report(run_dir: Path, issues: list[dict], summary: dict):
+    write_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE, summary)
+    write_json_object(run_dir / ANNOTATION_QA_REPORT_JSON_FILE, {"summary": summary, "issues": issues})
+    write_json_object(run_dir / ANNOTATION_QA_REVIEW_FILE, {
+        issue["issue_id"]: issue.get("review_status", "unreviewed")
+        for issue in issues
+    })
+    csv_path = run_dir / ANNOTATION_QA_REPORT_CSV_FILE
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "issue_id", "image_name", "split", "class_id", "class_name", "issue_type",
+        "severity", "score", "message", "preview", "review_status",
+    ]
+    with csv_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fields)
+        writer.writeheader()
+        for issue in issues:
+            writer.writerow({field: issue.get(field, "") for field in fields})
+
+
+def load_sam_model(model_name: str):
+    try:
+        from ultralytics import SAM
+    except Exception as exc:
+        raise RuntimeError("Ultralytics SAM is not available in this environment.") from exc
+    return SAM(model_name)
+
+
+def sam_masks_for_image(model, image_path: Path, bboxes: list[tuple[int, int, int, int]], device: str):
+    if not bboxes:
+        return []
+    kwargs = {"source": str(image_path), "bboxes": [list(box) for box in bboxes], "verbose": False}
+    if device:
+        kwargs["device"] = device
+    results = model.predict(**kwargs)
+    if not results:
+        return []
+    masks = getattr(results[0], "masks", None)
+    data = getattr(masks, "data", None)
+    if data is None:
+        return []
+    try:
+        return [item.detach().cpu().numpy() for item in data]
+    except AttributeError:
+        return list(data)
+
+
+def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: threading.Event):
+    run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
+    ensure_annotation_qa_path(run_dir)
+    preview_dir = run_dir / "previews"
+    issues: list[dict] = []
+    issue_index = 0
+    labels_checked = 0
+    images_scanned = 0
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        yaml_path, dataset_root, payload = prepared_dataset_yaml(request_payload["dataset_yaml"])
+        class_names = normalize_yaml_names(payload.get("names"))
+        split_names = annotation_qa_split_names(request_payload.get("scope", "val"), payload)
+        if not split_names:
+            raise RuntimeError("No dataset split was available for annotation QA.")
+        split_contexts = []
+        for split in split_names:
+            images_path = split_image_folder(dataset_root, payload.get(split))
+            labels_path = label_folder_for_images(dataset_root, images_path)
+            images = image_files(images_path) if images_path and images_path.is_dir() else []
+            split_contexts.append((split, images_path, labels_path, images))
+        max_images = request_payload.get("max_images")
+        total_images = sum(len(images) for _split, _images_path, _labels_path, images in split_contexts)
+        if max_images:
+            total_images = min(total_images, int(max_images))
+        if total_images <= 0:
+            raise RuntimeError("No images were found for the selected QA scope.")
+
+        update_annotation_qa_job(
+            job_id,
+            status="running",
+            stage="loading_model",
+            percent=2,
+            detail=f"Loading {request_payload['model']}.",
+            total_images=total_images,
+            run_dir=str(run_dir),
+            report_available=False,
+        )
+        model = load_sam_model(request_payload["model"])
+        device = os.getenv("SAM_QA_DEVICE") or os.getenv("TRAINING_DEVICE") or ""
+        thresholds = annotation_qa_thresholds(request_payload.get("preset", "balanced"))
+        processed_limit = int(max_images) if max_images else None
+
+        for split, _images_path, labels_path, images in split_contexts:
+            for image_path in images:
+                if stop_event.is_set():
+                    raise InferenceStopped("Annotation QA was stopped.")
+                if processed_limit is not None and images_scanned >= processed_limit:
+                    break
+                images_scanned += 1
+                percent = 5 + int((images_scanned / max(1, total_images)) * 90)
+                update_annotation_qa_job(
+                    job_id,
+                    stage="scanning",
+                    percent=min(95, percent),
+                    detail=f"Scanning {images_scanned} of {total_images}: {image_path.name}",
+                    images_scanned=images_scanned,
+                    labels_checked=labels_checked,
+                    issues=len(issues),
+                )
+                import cv2
+
+                image = cv2.imread(str(image_path))
+                if image is None:
+                    issue_index += 1
+                    issues.append(annotation_issue(
+                        job_id, issue_index, image_path, split, None, "",
+                        "image_read_error", "high", 1.0, "Image could not be read.",
+                    ))
+                    continue
+                height, width = image.shape[:2]
+                label_path = yolo_label_path(image_path, labels_path)
+                if label_path is None or not label_path.is_file():
+                    continue
+                labels = []
+                for row_index, line in enumerate(label_path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+                    fields = line.strip().split()
+                    if not fields:
+                        continue
+                    try:
+                        class_id = int(float(fields[0]))
+                    except ValueError:
+                        issue_index += 1
+                        issues.append(annotation_issue(
+                            job_id, issue_index, image_path, split, None, "",
+                            "invalid_label", "high", 1.0, f"Invalid class id on row {row_index}.",
+                        ))
+                        continue
+                    class_name = class_names[class_id] if 0 <= class_id < len(class_names) else f"class_{class_id}"
+                    if len(fields) != 5:
+                        issue_index += 1
+                        issues.append(annotation_issue(
+                            job_id, issue_index, image_path, split, class_id, class_name,
+                            "unsupported_annotation", "low", 0.2,
+                            "V1 SAM QA checks YOLO detection boxes only.",
+                        ))
+                        continue
+                    box = pixel_bbox_from_yolo(fields, width, height)
+                    if box is None:
+                        issue_index += 1
+                        issues.append(annotation_issue(
+                            job_id, issue_index, image_path, split, class_id, class_name,
+                            "invalid_label", "high", 1.0, f"Invalid YOLO bbox on row {row_index}.",
+                        ))
+                        continue
+                    labels.append({"class_id": class_id, "class_name": class_name, "bbox": box})
+
+                for left in range(len(labels)):
+                    for right in range(left + 1, len(labels)):
+                        if labels[left]["class_id"] != labels[right]["class_id"]:
+                            continue
+                        overlap = bbox_iou(labels[left]["bbox"], labels[right]["bbox"])
+                        if overlap >= thresholds["duplicate_iou"]:
+                            issue_index += 1
+                            issue = annotation_issue(
+                                job_id, issue_index, image_path, split,
+                                labels[left]["class_id"], labels[left]["class_name"],
+                                "duplicate_box", "medium", overlap,
+                                "Two same-class boxes overlap heavily.",
+                                labels[left]["bbox"], labels[right]["bbox"], {"bbox_iou": overlap},
+                            )
+                            issues.append(issue)
+
+                boxes = [label["bbox"] for label in labels]
+                masks = sam_masks_for_image(model, image_path, boxes, device)
+                for label_index, label in enumerate(labels):
+                    labels_checked += 1
+                    box = label["bbox"]
+                    box_area = max(1, bbox_area(box))
+                    mask = masks[label_index] if label_index < len(masks) else None
+                    if mask is None:
+                        issue_index += 1
+                        issue = annotation_issue(
+                            job_id, issue_index, image_path, split,
+                            label["class_id"], label["class_name"],
+                            "empty_mask", "high", 1.0,
+                            "SAM did not return a mask for this box.",
+                            box,
+                        )
+                        issues.append(issue)
+                        continue
+                    mask_array = mask_to_uint8(mask, width, height)
+                    sam_box = mask_bbox(mask_array)
+                    if sam_box is None:
+                        issue_index += 1
+                        issue = annotation_issue(
+                            job_id, issue_index, image_path, split,
+                            label["class_id"], label["class_name"],
+                            "empty_mask", "high", 1.0,
+                            "SAM returned an empty mask for this box.",
+                            box,
+                        )
+                        issue["preview"] = f"previews/{issue['issue_id']}.jpg"
+                        draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, None)
+                        issues.append(issue)
+                        continue
+                    overlap = bbox_iou(box, sam_box)
+                    center_shift = bbox_center_shift(box, sam_box)
+                    mask_area = int(mask_array.sum())
+                    mask_area_ratio = mask_area / box_area
+                    sam_box_area_ratio = bbox_area(sam_box) / box_area
+                    metrics = {
+                        "bbox_iou": round(overlap, 4),
+                        "center_shift": round(center_shift, 4),
+                        "mask_area_ratio": round(mask_area_ratio, 4),
+                        "sam_bbox_area_ratio": round(sam_box_area_ratio, 4),
+                    }
+                    edge_margin_x = max(2, int((box[2] - box[0]) * 0.03))
+                    edge_margin_y = max(2, int((box[3] - box[1]) * 0.03))
+                    edge_hits = sum([
+                        abs(sam_box[0] - box[0]) <= edge_margin_x,
+                        abs(sam_box[2] - box[2]) <= edge_margin_x,
+                        abs(sam_box[1] - box[1]) <= edge_margin_y,
+                        abs(sam_box[3] - box[3]) <= edge_margin_y,
+                    ])
+                    candidates = []
+                    if mask_area_ratio < thresholds["mask_area_ratio_min"]:
+                        candidates.append(("low_mask_coverage", "high", 1 - mask_area_ratio, "SAM mask covers very little of the labeled box."))
+                    if overlap < thresholds["bbox_iou"]:
+                        severity = "high" if overlap < thresholds["bbox_iou"] * 0.65 else "medium"
+                        candidates.append(("low_box_agreement", severity, 1 - overlap, "SAM mask bbox disagrees with the YOLO box."))
+                    if center_shift > thresholds["center_shift"]:
+                        candidates.append(("shifted_box", "medium", center_shift, "SAM mask center is far from the YOLO box center."))
+                    if sam_box_area_ratio < thresholds["loose_area_ratio"]:
+                        candidates.append(("loose_box", "medium", 1 - sam_box_area_ratio, "YOLO box is much larger than the SAM mask bbox."))
+                    if edge_hits >= thresholds["tight_edge_count"] and mask_area_ratio > 0.35:
+                        candidates.append(("possibly_tight_box", "low", edge_hits / 4, "SAM mask touches multiple edges of the YOLO box."))
+
+                    if candidates:
+                        issue_type, severity, score, message = sorted(
+                            candidates,
+                            key=lambda item: {"high": 3, "medium": 2, "low": 1}[item[1]],
+                            reverse=True,
+                        )[0]
+                        issue_index += 1
+                        issue = annotation_issue(
+                            job_id, issue_index, image_path, split,
+                            label["class_id"], label["class_name"], issue_type, severity,
+                            score, message, box, sam_box, metrics,
+                        )
+                        issue["preview"] = f"previews/{issue['issue_id']}.jpg"
+                        draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask_array)
+                        issues.append(issue)
+            if processed_limit is not None and images_scanned >= processed_limit:
+                break
+
+        summary = annotation_qa_summary(
+            issues,
+            images_scanned,
+            labels_checked,
+            request_payload["model"],
+            request_payload.get("scope", "val"),
+            request_payload.get("preset", "balanced"),
+        )
+        summary.update({
+            "dataset_yaml": str(yaml_path),
+            "dataset_root": str(dataset_root),
+            "splits": split_names,
+        })
+        write_annotation_qa_report(run_dir, issues, summary)
+        update_annotation_qa_job(
+            job_id,
+            status="completed",
+            stage="completed",
+            percent=100,
+            detail=f"QA complete: {len(issues)} issues flagged.",
+            images_scanned=images_scanned,
+            labels_checked=labels_checked,
+            issues=len(issues),
+            high=summary["high"],
+            medium=summary["medium"],
+            low=summary["low"],
+            summary=summary,
+            report_available=True,
+        )
+    except InferenceStopped:
+        summary = annotation_qa_summary(
+            issues,
+            images_scanned,
+            labels_checked,
+            request_payload.get("model", ANNOTATION_QA_MODEL_DEFAULT),
+            request_payload.get("scope", "val"),
+            request_payload.get("preset", "balanced"),
+        )
+        write_annotation_qa_report(run_dir, issues, summary)
+        update_annotation_qa_job(
+            job_id,
+            status="stopped",
+            stage="stopped",
+            percent=0,
+            detail="Annotation QA stopped.",
+            images_scanned=images_scanned,
+            labels_checked=labels_checked,
+            issues=len(issues),
+            summary=summary,
+            report_available=True,
+        )
+    except Exception as exc:
+        update_annotation_qa_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            percent=0,
+            detail=str(exc),
+            error=str(exc),
+            images_scanned=images_scanned,
+            labels_checked=labels_checked,
+            issues=len(issues),
+            report_available=False,
+        )
+    finally:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
+def annotation_qa_job_from_disk(job_id: str) -> Optional[dict]:
+    run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
+    try:
+        ensure_annotation_qa_path(run_dir)
+    except HTTPException:
+        return None
+    report = read_json_object(run_dir / ANNOTATION_QA_REPORT_JSON_FILE)
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else read_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE)
+    if not summary:
+        return None
+    return {
+        "job_id": job_id,
+        "status": "completed",
+        "stage": "completed",
+        "percent": 100,
+        "detail": f"QA complete: {summary.get('issues', 0)} issues flagged.",
+        "run_dir": str(run_dir),
+        "images_scanned": summary.get("images_scanned", 0),
+        "labels_checked": summary.get("labels_checked", 0),
+        "issues": summary.get("issues", 0),
+        "high": summary.get("high", 0),
+        "medium": summary.get("medium", 0),
+        "low": summary.get("low", 0),
+        "summary": summary,
+        "report_available": True,
+        "created_at": run_dir.stat().st_mtime,
+        "updated_at": run_dir.stat().st_mtime,
+    }
+
+
 def persist_training_report_context(run_dir: Path):
     if training_run_info is None:
         return
@@ -3597,6 +4220,183 @@ def inference_result(job_id: str, download: bool = False):
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     filename = f"inference_{job_id}{path.suffix}" if download else path.name
     return FileResponse(path, media_type=media_type, filename=filename)
+
+
+@app.post("/api/annotation-qa/start")
+def start_annotation_qa(request: AnnotationQaRequest):
+    if training_process is not None and training_process.poll() is None:
+        raise HTTPException(status_code=409, detail="Training is running. Stop training before running annotation QA.")
+    if test_process is not None and test_process.poll() is None:
+        raise HTTPException(status_code=409, detail="Model testing is running. Stop testing before running annotation QA.")
+    with annotation_qa_jobs_lock:
+        active = next(
+            (
+                job
+                for job in annotation_qa_jobs.values()
+                if job.get("status") in {"queued", "running", "stopping"}
+            ),
+            None,
+        )
+    if active is not None:
+        raise HTTPException(status_code=409, detail="Annotation QA is already running.")
+
+    yaml_path, _dataset_root, _payload = prepared_dataset_yaml(request.dataset_yaml)
+    model = normalize_annotation_qa_model_name(request.model)
+    job_id = annotation_qa_job_id()
+    run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
+    ensure_annotation_qa_path(run_dir)
+    stop_event = threading.Event()
+    request_payload = {
+        "dataset_yaml": str(yaml_path),
+        "model": model,
+        "scope": request.scope,
+        "preset": request.preset,
+        "max_images": request.max_images,
+        "max_side": request.max_side,
+    }
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "stage": "queued",
+        "percent": 0,
+        "detail": "Annotation QA queued.",
+        "run_dir": str(run_dir),
+        "dataset_yaml": str(yaml_path),
+        "model": model,
+        "scope": request.scope,
+        "preset": request.preset,
+        "images_scanned": 0,
+        "total_images": 0,
+        "labels_checked": 0,
+        "issues": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "summary": {},
+        "report_available": False,
+        "stop_event": stop_event,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+    }
+    with annotation_qa_jobs_lock:
+        annotation_qa_jobs[job_id] = job
+    thread = threading.Thread(
+        target=run_annotation_qa_job,
+        args=(job_id, request_payload, stop_event),
+        daemon=True,
+    )
+    job["thread"] = thread
+    thread.start()
+    return annotation_qa_payload(job)
+
+
+@app.get("/api/annotation-qa/status/{job_id}")
+def annotation_qa_status(job_id: str):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Annotation QA job not found.")
+    with annotation_qa_jobs_lock:
+        job = annotation_qa_jobs.get(job_id)
+        if job is not None:
+            return annotation_qa_payload(dict(job))
+    job = annotation_qa_job_from_disk(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Annotation QA job not found.")
+    with annotation_qa_jobs_lock:
+        annotation_qa_jobs[job_id] = dict(job)
+    return annotation_qa_payload(job)
+
+
+@app.post("/api/annotation-qa/stop/{job_id}")
+def stop_annotation_qa(job_id: str):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Annotation QA job not found.")
+    with annotation_qa_jobs_lock:
+        job = annotation_qa_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Annotation QA job not found.")
+        event = job.get("stop_event")
+        if isinstance(event, threading.Event):
+            event.set()
+        job["status"] = "stopping"
+        job["stage"] = "stopping"
+        job["detail"] = "Stopping annotation QA..."
+        job["updated_at"] = time.time()
+        return annotation_qa_payload(dict(job))
+
+
+@app.get("/api/annotation-qa/results/{job_id}")
+def annotation_qa_results(job_id: str):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Annotation QA results not found.")
+    run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
+    ensure_annotation_qa_path(run_dir)
+    report_path = run_dir / ANNOTATION_QA_REPORT_JSON_FILE
+    if not report_path.is_file():
+        raise HTTPException(status_code=404, detail="Annotation QA results are not available yet.")
+    return FileResponse(report_path, media_type="application/json")
+
+
+@app.get("/api/annotation-qa/preview/{job_id}/{preview_name}")
+def annotation_qa_preview(job_id: str, preview_name: str):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Annotation QA preview not found.")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.jpg", preview_name):
+        raise HTTPException(status_code=404, detail="Annotation QA preview not found.")
+    preview_path = (ANNOTATION_QA_ROOT / job_id / "previews" / preview_name).resolve()
+    ensure_annotation_qa_path(preview_path)
+    if not preview_path.is_file():
+        raise HTTPException(status_code=404, detail="Annotation QA preview not found.")
+    return FileResponse(preview_path, media_type="image/jpeg")
+
+
+@app.get("/api/annotation-qa/download/{job_id}/{artifact}")
+def annotation_qa_download(job_id: str, artifact: str):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Annotation QA report not found.")
+    filenames = {
+        "json": ANNOTATION_QA_REPORT_JSON_FILE,
+        "csv": ANNOTATION_QA_REPORT_CSV_FILE,
+        "summary": ANNOTATION_QA_SUMMARY_FILE,
+    }
+    filename = filenames.get(artifact)
+    if filename is None:
+        raise HTTPException(status_code=404, detail="Annotation QA report not found.")
+    report_path = (ANNOTATION_QA_ROOT / job_id / filename).resolve()
+    ensure_annotation_qa_path(report_path)
+    if not report_path.is_file():
+        raise HTTPException(status_code=404, detail="Annotation QA report not found.")
+    media_type = "text/csv" if artifact == "csv" else "application/json"
+    return FileResponse(report_path, media_type=media_type, filename=filename)
+
+
+@app.post("/api/annotation-qa/mark/{job_id}")
+def mark_annotation_qa_issue(job_id: str, request: AnnotationQaMarkRequest):
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Annotation QA job not found.")
+    allowed = {"unreviewed", "accepted", "false_positive", "needs_fix", "ignored"}
+    status = str(request.status or "").strip()
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Unknown annotation QA review status.")
+    run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
+    ensure_annotation_qa_path(run_dir)
+    report_path = run_dir / ANNOTATION_QA_REPORT_JSON_FILE
+    report = read_json_object(report_path)
+    issues = report.get("issues")
+    if not isinstance(issues, list):
+        raise HTTPException(status_code=404, detail="Annotation QA results are not available.")
+    matched = False
+    for issue in issues:
+        if isinstance(issue, dict) and issue.get("issue_id") == request.issue_id:
+            issue["review_status"] = status
+            matched = True
+            break
+    if not matched:
+        raise HTTPException(status_code=404, detail="Annotation QA issue not found.")
+    write_json_object(report_path, report)
+    review = read_json_object(run_dir / ANNOTATION_QA_REVIEW_FILE)
+    review[request.issue_id] = status
+    write_json_object(run_dir / ANNOTATION_QA_REVIEW_FILE, review)
+    return {"issue_id": request.issue_id, "status": status}
 
 
 @app.get("/api/dataset/preparation/status")
@@ -4527,6 +5327,13 @@ def start_training(request: TrainRequest):
         raise HTTPException(status_code=409, detail="Training is already running.")
     if current_test_status()["running"]:
         raise HTTPException(status_code=409, detail="Model testing is running. Stop testing before training.")
+    with annotation_qa_jobs_lock:
+        annotation_qa_running = any(
+            job.get("status") in {"queued", "running", "stopping"}
+            for job in annotation_qa_jobs.values()
+        )
+    if annotation_qa_running:
+        raise HTTPException(status_code=409, detail="Annotation QA is running. Stop QA or wait before training.")
 
     dataset_yaml = Path(request.dataset_yaml).expanduser() if request.dataset_yaml else None
     if not request.resume and (dataset_yaml is None or not dataset_yaml.is_file()):

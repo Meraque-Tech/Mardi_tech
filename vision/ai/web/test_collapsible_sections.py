@@ -14,7 +14,16 @@ APP_PY = WEB_DIR / "app.py"
 APP_JS = WEB_DIR / "static" / "app.js"
 REPORT_GENERATOR = WEB_DIR / "report_generator.py"
 TRAIN_YOLOV8 = WEB_DIR.parent / "train" / "train_yolov8.py"
-EXPECTED_PANELS = {"dataset", "training", "gpu", "advanced", "logs", "results", "testing"}
+EXPECTED_PANELS = {
+    "dataset",
+    "annotation-qa",
+    "training",
+    "gpu",
+    "advanced",
+    "logs",
+    "results",
+    "testing",
+}
 
 
 class CollapsibleMarkupParser(HTMLParser):
@@ -122,6 +131,27 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIsNotNone(model_map)
         for value, checkpoint in expected_options.items():
             self.assertEqual(model_map[value], checkpoint)
+
+    def test_optional_sam_annotation_qa_controls_are_exposed(self):
+        markup = INDEX_HTML.read_text(encoding="utf-8")
+        script = APP_JS.read_text(encoding="utf-8")
+        app_source = APP_PY.read_text(encoding="utf-8")
+
+        for control_id in (
+            "run-annotation-qa",
+            "stop-annotation-qa",
+            "annotation-qa-model",
+            "annotation-qa-scope",
+            "annotation-qa-preset",
+            "annotation-qa-status",
+            "annotation-qa-issues",
+        ):
+            self.assertIn(f'id="{control_id}"', markup)
+        self.assertIn("sam2.1_s.pt", markup)
+        self.assertIn("function runAnnotationQa", script)
+        self.assertIn("function syncAnnotationQaActionStates", script)
+        self.assertIn("/api/annotation-qa/start", app_source)
+        self.assertIn("AnnotationQaRequest", app_source)
 
     def test_task_specific_project_defaults_are_exposed(self):
         app_module = ast.parse(APP_PY.read_text(encoding="utf-8"))

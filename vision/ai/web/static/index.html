@@ -201,6 +201,75 @@
         </div>
 
         <div class="workspace-side">
+          <section class="panel annotation-qa-panel collapsible-panel" id="annotation-qa-panel" data-panel-key="annotation-qa" data-default-expanded="true" aria-labelledby="annotation-qa-title">
+            <div class="panel-header">
+              <div class="panel-heading">
+                <button class="secondary compact section-toggle" type="button" data-panel-toggle="annotation-qa" aria-expanded="true" aria-label="Collapse Annotation QA section">
+                  <span aria-hidden="true">▾</span>
+                </button>
+                <h2 id="annotation-qa-title">Annotation QA</h2>
+              </div>
+              <div class="button-row">
+                <button id="run-annotation-qa" class="secondary" type="button" disabled>Run SAM QA</button>
+                <button id="stop-annotation-qa" class="danger" type="button" disabled>Stop</button>
+              </div>
+            </div>
+
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="SAM model used for optional annotation quality checks. SAM2.1 Small is the default for fast bbox review on local GPUs.">SAM model</span>
+                <select id="annotation-qa-model">
+                  <option value="sam2.1_s.pt">SAM2.1 Hiera Small - Recommended</option>
+                  <option value="sam2.1_t.pt">SAM2.1 Hiera Tiny - Fastest</option>
+                  <option value="sam2.1_b.pt">SAM2.1 Hiera Base+ - More accurate</option>
+                  <option value="sam2.1_l.pt">SAM2.1 Hiera Large - Heavy</option>
+                </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Dataset split to scan. All splits scans train, validation, and test when present; validation is a faster pre-training check.">Scope</span>
+                <select id="annotation-qa-scope">
+                  <option value="all">All splits</option>
+                  <option value="val">Validation</option>
+                  <option value="train">Train</option>
+                  <option value="test">Test</option>
+                </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Sensitivity preset for bbox-vs-SAM-mask disagreement. Balanced is the default.">Preset</span>
+                <select id="annotation-qa-preset">
+                  <option value="balanced">Balanced</option>
+                  <option value="lenient">Lenient</option>
+                  <option value="strict">Strict</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="annotation-qa-status-card" id="annotation-qa-status-card">
+              <div>
+                <span>Status</span>
+                <strong id="annotation-qa-status">Not run</strong>
+              </div>
+              <p id="annotation-qa-detail">Prepare a dataset to enable optional SAM QA.</p>
+            </div>
+
+            <div class="dataset-preparation-progress annotation-qa-progress" id="annotation-qa-progress" role="status" aria-live="polite" aria-busy="false" hidden>
+              <div class="dataset-preparation-header">
+                <strong id="annotation-qa-stage">Queued</strong>
+                <span id="annotation-qa-percent">0%</span>
+              </div>
+              <div id="annotation-qa-track" class="dataset-preparation-track" role="progressbar" aria-label="Annotation QA" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Queued: 0%">
+                <span></span>
+              </div>
+            </div>
+
+            <div class="annotation-qa-summary" id="annotation-qa-summary"></div>
+            <div class="button-row annotation-qa-downloads">
+              <button id="download-annotation-qa-csv" class="secondary compact" type="button" disabled>Download CSV</button>
+              <button id="download-annotation-qa-json" class="secondary compact" type="button" disabled>Download JSON</button>
+            </div>
+            <div class="annotation-qa-issues" id="annotation-qa-issues"></div>
+          </section>
+
           <div class="panel training-panel collapsible-panel" id="training-panel" data-panel-key="training" data-default-expanded="true">
           <div class="panel-header">
             <div class="panel-heading">
