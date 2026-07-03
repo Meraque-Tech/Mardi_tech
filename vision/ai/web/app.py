@@ -44,8 +44,9 @@ TEST_LOG_FILE = LOG_DIR / "test-current.log"
 RUNS_ROOT = REPO_ROOT / "runs"
 DETECT_RUNS_ROOT = RUNS_ROOT / "detect"
 SEGMENT_RUNS_ROOT = RUNS_ROOT / "segment"
+SEMANTIC_RUNS_ROOT = RUNS_ROOT / "semantic"
 CLASSIFY_RUNS_ROOT = RUNS_ROOT / "classify"
-TRAINING_RUNS_ROOTS = (DETECT_RUNS_ROOT, SEGMENT_RUNS_ROOT, CLASSIFY_RUNS_ROOT)
+TRAINING_RUNS_ROOTS = (DETECT_RUNS_ROOT, SEGMENT_RUNS_ROOT, SEMANTIC_RUNS_ROOT, CLASSIFY_RUNS_ROOT)
 TEST_RUNS_ROOT = RUNS_ROOT / "test"
 INFERENCE_SCRIPT = WEB_DIR / "infer_yolo.py"
 MYT = timezone(timedelta(hours=8), name="MYT")
@@ -101,6 +102,11 @@ MODEL_MAP = {
     "yolo26-medium-seg": "yolo26m-seg.pt",
     "yolo26-large-seg": "yolo26l-seg.pt",
     "yolo26-xlarge-seg": "yolo26x-seg.pt",
+    "yolo26-nano-sem": "yolo26n-sem.pt",
+    "yolo26-small-sem": "yolo26s-sem.pt",
+    "yolo26-medium-sem": "yolo26m-sem.pt",
+    "yolo26-large-sem": "yolo26l-sem.pt",
+    "yolo26-xlarge-sem": "yolo26x-sem.pt",
     "nano-cls": "yolov8n-cls.pt",
     "small-cls": "yolov8s-cls.pt",
     "medium-cls": "yolov8m-cls.pt",
@@ -120,6 +126,7 @@ MODEL_MAP = {
 TRAINING_PROJECT_DEFAULTS = {
     "detect": "runs/detect",
     "segment": "runs/segment",
+    "semantic": "runs/semantic",
     "classify": "runs/classify",
 }
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -374,6 +381,8 @@ def training_task_for_model_size(model_size: str) -> str:
     value = str(model_size or "")
     if value.endswith("-seg"):
         return "segment"
+    if value.endswith("-sem"):
+        return "semantic"
     if value.endswith("-cls"):
         return "classify"
     return "detect"
@@ -435,7 +444,7 @@ def ensure_inference_runs_path(path: Path):
             continue
     raise HTTPException(
         status_code=400,
-        detail="Inference weights can only be selected from runs/detect, runs/segment, or runs/classify.",
+        detail="Inference weights can only be selected from runs/detect, runs/segment, runs/semantic, or runs/classify.",
     )
 
 
@@ -651,6 +660,8 @@ def resolve_inference_weight_path(weight_path: str) -> Path:
 def task_for_runs_root(root: Path) -> str:
     if root == SEGMENT_RUNS_ROOT:
         return "segment"
+    if root == SEMANTIC_RUNS_ROOT:
+        return "semantic"
     if root == CLASSIFY_RUNS_ROOT:
         return "classify"
     return "detect"
@@ -2006,11 +2017,13 @@ def infer_task_from_results_columns(row: dict) -> str:
 def infer_run_task(run_dir: Path, row: Optional[dict] = None) -> str:
     context = load_training_report_context(run_dir)
     task = str(context.get("task") or context.get("hyperparameters", {}).get("task") or "").lower()
-    if task in {"detect", "segment", "classify"}:
+    if task in {"detect", "segment", "semantic", "classify"}:
         return task
     parts = {part.lower() for part in run_dir.parts}
     if "segment" in parts:
         return "segment"
+    if "semantic" in parts:
+        return "semantic"
     if "classify" in parts:
         return "classify"
     if row:

@@ -1140,6 +1140,11 @@ textarea:focus {
   color: #344b89;
 }
 
+.model-task-badge[data-task="semantic-segmentation"] {
+  background: #e7f0fb;
+  color: #1d5576;
+}
+
 .model-task-badge[data-task="classification"] {
   background: #fff4d6;
   color: #725515;

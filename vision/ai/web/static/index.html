@@ -217,7 +217,7 @@
 
           <div class="grid two">
             <label>
-              <span class="tooltip-label" tabindex="0" data-tooltip="Base YOLO task, family, and checkpoint size. Choose detection, instance segmentation, or classification to match your dataset labels. Larger models can be more accurate but train slower and need more GPU memory.">Model task &amp; size</span>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Base YOLO task, family, and checkpoint size. Choose detection, instance segmentation, semantic segmentation, or classification to match your dataset labels. Larger models can be more accurate but train slower and need more GPU memory.">Model task &amp; size</span>
               <div class="model-selector">
                 <button id="model-selector-toggle" class="model-selector-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
                   <span id="model-selector-value">YOLOv8 Nano - yolov8n.pt</span>
@@ -264,6 +264,13 @@
                     <option value="yolo26-medium-seg">YOLO26 Medium instance segmentation - yolo26m-seg.pt</option>
                     <option value="yolo26-large-seg">YOLO26 Large instance segmentation - yolo26l-seg.pt</option>
                     <option value="yolo26-xlarge-seg">YOLO26 Extra large instance segmentation - yolo26x-seg.pt</option>
+                  </optgroup>
+                  <optgroup label="Semantic Segmentation - YOLO26">
+                    <option value="yolo26-nano-sem">YOLO26 Nano semantic segmentation - yolo26n-sem.pt</option>
+                    <option value="yolo26-small-sem">YOLO26 Small semantic segmentation - yolo26s-sem.pt</option>
+                    <option value="yolo26-medium-sem">YOLO26 Medium semantic segmentation - yolo26m-sem.pt</option>
+                    <option value="yolo26-large-sem">YOLO26 Large semantic segmentation - yolo26l-sem.pt</option>
+                    <option value="yolo26-xlarge-sem">YOLO26 Extra large semantic segmentation - yolo26x-sem.pt</option>
                   </optgroup>
                   <optgroup label="Classification - YOLOv8">
                     <option value="nano-cls">YOLOv8 Nano - yolov8n-cls.pt</option>
@@ -331,7 +338,7 @@
 
           <div class="grid two">
             <label>
-              <span class="tooltip-label" tabindex="0" data-tooltip="Output directory for training runs. The default follows the selected task: runs/detect, runs/segment, or runs/classify.">Project</span>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Output directory for training runs. The default follows the selected task: runs/detect, runs/segment, runs/semantic, or runs/classify.">Project</span>
               <input id="project" type="text" value="runs/detect">
             </label>
             <label class="checkbox-row inline-check">

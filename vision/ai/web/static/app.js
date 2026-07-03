@@ -121,6 +121,7 @@ const CONTROL_DEFAULTS = {
 const TASK_PROJECT_DEFAULTS = {
   detect: "runs/detect",
   segment: "runs/segment",
+  semantic: "runs/semantic",
   classify: "runs/classify",
 };
 
@@ -195,6 +196,9 @@ function taskForModelSize(modelSize) {
   if (value.endsWith("-seg")) {
     return "segment";
   }
+  if (value.endsWith("-sem")) {
+    return "semantic";
+  }
   if (value.endsWith("-cls")) {
     return "classify";
   }
@@ -206,10 +210,16 @@ function defaultProjectForModelSize(modelSize) {
 }
 
 function modelSizeForTask(task, currentModelSize) {
-  const base = String(currentModelSize || CONTROL_DEFAULTS["model-size"])
-    .replace(/-(seg|cls)$/i, "");
+  let base = String(currentModelSize || CONTROL_DEFAULTS["model-size"])
+    .replace(/-(seg|sem|cls)$/i, "");
   if (task === "segment") {
     return `${base}-seg`;
+  }
+  if (task === "semantic") {
+    if (!base.startsWith("yolo26-")) {
+      base = "yolo26-nano";
+    }
+    return `${base}-sem`;
   }
   if (task === "classify") {
     return `${base}-cls`;
@@ -2217,7 +2227,7 @@ function renderInferenceWeights(weights) {
     option.value = "";
     option.textContent = "No weights found";
     select.appendChild(option);
-    $("inference-weights-status").textContent = "No .pt or .onnx weights were found under runs/detect, runs/segment, or runs/classify.";
+    $("inference-weights-status").textContent = "No .pt or .onnx weights were found under runs/detect, runs/segment, runs/semantic, or runs/classify.";
     syncInferenceControls();
     return;
   }
@@ -2310,6 +2320,7 @@ function inferenceTaskLabel(task) {
   const labels = {
     detect: "Detection",
     segment: "Segmentation",
+    semantic: "Semantic Segmentation",
     classify: "Classification",
     pose: "Pose",
     obb: "Oriented Detection",

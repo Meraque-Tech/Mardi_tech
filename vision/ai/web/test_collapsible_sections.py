@@ -87,13 +87,17 @@ class CollapsibleSectionTests(unittest.TestCase):
                 expected_options[f"{family}-{size_key}"] = f"{family}{size_suffix}.pt"
                 expected_options[f"{family}-{size_key}-seg"] = f"{family}{size_suffix}-seg.pt"
                 expected_options[f"{family}-{size_key}-cls"] = f"{family}{size_suffix}-cls.pt"
+                if family == "yolo26":
+                    expected_options[f"{family}-{size_key}-sem"] = f"{family}{size_suffix}-sem.pt"
 
         for task in ("Detection", "Classification"):
             for family in ("YOLOv8", "YOLO11", "YOLO26"):
                 self.assertIn(f'optgroup label="{task} - {family}"', markup)
         for family in ("YOLOv8", "YOLO11", "YOLO26"):
             self.assertIn(f'optgroup label="Instance Segmentation - {family}"', markup)
+        self.assertIn('optgroup label="Semantic Segmentation - YOLO26"', markup)
         self.assertIn("instance segmentation", markup)
+        self.assertIn("semantic segmentation", markup)
         self.assertNotIn("YOLOv5", markup)
         self.assertNotIn("yolov5", markup)
         self.assertIn('id="model-search"', markup)
@@ -133,6 +137,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertEqual(project_defaults, {
             "detect": "runs/detect",
             "segment": "runs/segment",
+            "semantic": "runs/semantic",
             "classify": "runs/classify",
         })
 
