@@ -1875,6 +1875,113 @@ function chartPoint(value) {
   return value === null || value === undefined || Number.isNaN(Number(value)) ? null : Number(value);
 }
 
+function chartTooltip() {
+  let tooltip = $("chart-tooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.id = "chart-tooltip";
+    tooltip.className = "chart-tooltip";
+    tooltip.setAttribute("role", "status");
+    document.body.appendChild(tooltip);
+  }
+  return tooltip;
+}
+
+function hideChartTooltip() {
+  const tooltip = $("chart-tooltip");
+  if (tooltip) {
+    tooltip.classList.remove("is-visible");
+  }
+  document.querySelectorAll(".chart-panel canvas").forEach((canvas) => {
+    canvas.classList.remove("has-hover-point");
+  });
+}
+
+function metricTooltipValue(value) {
+  if (Math.abs(value) >= 100) {
+    return value.toFixed(2);
+  }
+  if (Math.abs(value) >= 10) {
+    return value.toFixed(3);
+  }
+  return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function showChartTooltip(canvas, point, clientX, clientY) {
+  const tooltip = chartTooltip();
+  tooltip.innerHTML = `
+    <strong>Epoch ${point.epoch}</strong>
+    <span>${escapeHtml(point.label)}: ${metricTooltipValue(point.value)}</span>
+  `;
+  tooltip.classList.add("is-visible");
+
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const offset = 12;
+  let left = clientX + offset;
+  let top = clientY - tooltipRect.height - offset;
+  if (left + tooltipRect.width > window.innerWidth - 8) {
+    left = clientX - tooltipRect.width - offset;
+  }
+  if (top < 8) {
+    top = clientY + offset;
+  }
+  tooltip.style.left = `${Math.max(8, left)}px`;
+  tooltip.style.top = `${Math.min(window.innerHeight - tooltipRect.height - 8, top)}px`;
+
+  canvas.classList.add("has-hover-point");
+}
+
+function nearestChartPoint(canvas, event) {
+  const points = canvas._chartPoints || [];
+  if (!points.length) {
+    return null;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const hitRadius = 10;
+  let nearest = null;
+  points.forEach((point) => {
+    const distance = Math.hypot(point.x - x, point.y - y);
+    if (distance <= hitRadius && (!nearest || distance < nearest.distance)) {
+      nearest = { ...point, distance };
+    }
+  });
+  return nearest;
+}
+
+function handleChartPointerMove(event) {
+  const canvas = event.currentTarget;
+  const point = nearestChartPoint(canvas, event);
+  if (!point) {
+    hideChartTooltip();
+    return;
+  }
+  showChartTooltip(canvas, point, event.clientX, event.clientY);
+}
+
+function handleChartFocus(event) {
+  const canvas = event.currentTarget;
+  const point = (canvas._chartPoints || [])[0];
+  if (!point) {
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  showChartTooltip(canvas, point, rect.left + point.x, rect.top + point.y);
+}
+
+function initializeChartTooltips() {
+  document.querySelectorAll(".chart-panel canvas").forEach((canvas) => {
+    canvas.tabIndex = 0;
+    canvas.addEventListener("mousemove", handleChartPointerMove);
+    canvas.addEventListener("mouseleave", hideChartTooltip);
+    canvas.addEventListener("focus", handleChartFocus);
+    canvas.addEventListener("blur", hideChartTooltip);
+  });
+  window.addEventListener("scroll", hideChartTooltip, { passive: true });
+}
+
 function drawLineChart(canvasId, history, series) {
   const canvas = $(canvasId);
   const context = canvas.getContext("2d");
@@ -1884,6 +1991,7 @@ function drawLineChart(canvasId, history, series) {
   const height = Math.max(200, Math.floor(rect.height || canvas.height));
   canvas.width = Math.floor(width * scale);
   canvas.height = Math.floor(height * scale);
+  canvas._chartPoints = [];
   context.setTransform(scale, 0, 0, scale, 0, 0);
   context.clearRect(0, 0, width, height);
 
@@ -1971,9 +2079,18 @@ function drawLineChart(canvasId, history, series) {
     context.stroke();
 
     points.forEach((point) => {
+      const x = xFor(point.epoch);
+      const y = yFor(point.value);
+      canvas._chartPoints.push({
+        x,
+        y,
+        epoch: point.epoch,
+        value: point.value,
+        label: line.label,
+      });
       context.fillStyle = line.color;
       context.beginPath();
-      context.arc(xFor(point.epoch), yFor(point.value), 2.5, 0, Math.PI * 2);
+      context.arc(x, y, 2.5, 0, Math.PI * 2);
       context.fill();
     });
 
@@ -4027,6 +4144,7 @@ try {
 
 loadConfig().catch((error) => setMessage(error.message, true));
 initializeTooltips();
+initializeChartTooltips();
 initializeCollapsiblePanels();
 filterModelOptions();
 updateFileSelection();
