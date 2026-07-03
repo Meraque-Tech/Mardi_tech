@@ -466,8 +466,14 @@ function roboflowOverallPercent(stage, stagePercent, forceSplit) {
   };
   const preserveRanges = {
     validating_dataset: [70, 82],
+    reading_labels: [82, 87],
+    calculating_targets: [87, 89],
+    assigning: [89, 93],
+    finalizing_split: [93, 94],
+    copying: [94, 98],
+    rebuilding_split: [98, 99],
     normalizing_paths: [82, 85],
-    inspecting: [85, 100],
+    inspecting: [98, 100],
   };
   const commonRanges = {
     preparing_roboflow_version: [0, 5],
@@ -498,6 +504,7 @@ function startDatasetPreparationPolling(jobId, context = {}) {
     extracting_roboflow: "Extracting Roboflow ZIP",
     validating_dataset: "Validating dataset",
     normalizing_paths: "Normalizing dataset paths",
+    rebuilding_split: "Rebuilding local split",
     saving: "Saving upload",
     extracting: "Extracting ZIP",
     reading_labels: "Reading labels",
@@ -1793,16 +1800,8 @@ function annotationQaPreviewUrl(issue) {
   return `/api/annotation-qa/preview/${encodeURIComponent(state.annotationQaJobId)}/${encodeURIComponent(name)}`;
 }
 
-function renderAnnotationQaIssues(issues = []) {
-  const container = $("annotation-qa-issues");
-  const visibleIssues = issues.slice(0, 50);
-  if (!visibleIssues.length) {
-    container.innerHTML = issues.length
-      ? ""
-      : '<p class="qa-empty">No annotation QA issues were flagged.</p>';
-    return;
-  }
-  const rows = visibleIssues.map((issue) => {
+function annotationQaIssueRows(issues) {
+  return issues.map((issue) => {
     const previewUrl = annotationQaPreviewUrl(issue);
     const imageName = escapeHtml(issue.image_name || "image");
     const splitClass = escapeHtml(`${issue.split || ""} · ${issue.class_name || ""}`);
@@ -1817,7 +1816,6 @@ function renderAnnotationQaIssues(issues = []) {
           <strong title="${imageName}">${imageName}</strong>
           <small title="${splitClass}">${splitClass}</small>
         </td>
-        <td><span class="qa-severity ${escapeHtml(issue.severity || "low")}">${escapeHtml(issue.severity || "low")}</span></td>
         <td title="${issueType}">${issueType}</td>
         <td>${metricText(issue.score)}</td>
         <td>
@@ -1830,27 +1828,55 @@ function renderAnnotationQaIssues(issues = []) {
       </tr>
     `;
   }).join("");
+}
+
+function annotationQaIssueTable(issues, severity, limit = 30) {
+  const visibleIssues = issues.slice(0, limit);
+  const rows = annotationQaIssueRows(visibleIssues);
+  const title = `${severity.charAt(0).toUpperCase()}${severity.slice(1)} Severity`;
   const truncated = issues.length > visibleIssues.length
-    ? `<p class="field-note">Showing first ${visibleIssues.length} of ${issues.length} issues. Download CSV for the full report.</p>`
+    ? `<p class="field-note">Showing first ${visibleIssues.length} of ${issues.length} ${severity} issues. Download CSV for the full report.</p>`
     : "";
-  container.innerHTML = `
-    <div class="qa-table-wrap">
-      <table class="qa-table">
-        <thead>
-          <tr>
-            <th>Preview</th>
-            <th>Image</th>
-            <th>Severity</th>
-            <th>Issue</th>
-            <th>Score</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-    ${truncated}
+  return `
+    <section class="qa-severity-section ${severity}">
+      <div class="qa-severity-header">
+        <h3>${title}</h3>
+        <span>${issues.length}</span>
+      </div>
+      <div class="qa-table-wrap">
+        <table class="qa-table">
+          <thead>
+            <tr>
+              <th>Preview</th>
+              <th>Image</th>
+              <th>Issue</th>
+              <th>Score</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${truncated}
+    </section>
   `;
+}
+
+function renderAnnotationQaIssues(issues = []) {
+  const container = $("annotation-qa-issues");
+  if (!issues.length) {
+    container.innerHTML = '<p class="qa-empty">No annotation QA issues were flagged.</p>';
+    return;
+  }
+  const groups = {
+    high: issues.filter((issue) => issue.severity === "high"),
+    medium: issues.filter((issue) => issue.severity === "medium"),
+    low: issues.filter((issue) => issue.severity !== "high" && issue.severity !== "medium"),
+  };
+  container.innerHTML = ["high", "medium", "low"]
+    .filter((severity) => groups[severity].length)
+    .map((severity) => annotationQaIssueTable(groups[severity], severity))
+    .join("");
   container.querySelectorAll("[data-qa-issue]").forEach((select) => {
     select.addEventListener("change", () => markAnnotationQaIssue(select.dataset.qaIssue, select.value));
   });

@@ -2511,7 +2511,9 @@ def prepare_roboflow_download(
     dataset_root: Path,
     name: str,
     classes: list[str],
-) -> tuple[Path, bool]:
+    split: Optional[SplitConfig] = None,
+    progress_callback: Optional[DatasetProgressCallback] = None,
+) -> tuple[Path, str]:
     root = find_dataset_root(dataset_root)
     source_yaml = find_dataset_yaml(root)
 
@@ -2531,7 +2533,7 @@ def prepare_roboflow_download(
         test_path = split_image_folder(yaml_root, test_value)
         test_is_valid = not test_value or (test_path and test_path.is_dir())
         if has_image_files(train_path) and has_image_files(val_path) and test_is_valid:
-            return source_yaml, False
+            return source_yaml, "valid"
 
     layouts = split_dirs(root)
     if (
@@ -2541,7 +2543,19 @@ def prepare_roboflow_download(
         and has_image_files(layouts["val"]["images"])
     ):
         names = resolve_dataset_classes(root, classes)
-        return prepare_existing_split(root, name, names), True
+        return prepare_existing_split(root, name, names), "normalized"
+
+    train_layout = layouts.get("train")
+    if train_layout and has_image_files(train_layout["images"]):
+        yaml_path = prepare_dataset(
+            source=root,
+            name=name,
+            classes=classes,
+            split=split or SplitConfig(),
+            force_split=True,
+            progress_callback=progress_callback,
+        )
+        return yaml_path, "rebuilt"
 
     if source_yaml:
         train_value = payload.get("train") or "<missing>"
@@ -2563,7 +2577,7 @@ def prepare_roboflow_download(
         split=SplitConfig(),
         force_split=False,
     )
-    return yaml_path, False
+    return yaml_path, "valid"
 
 
 def resolve_test_split_source(
@@ -4977,24 +4991,41 @@ def roboflow_dataset(request: RoboflowRequest):
                 0,
                 "Validating the downloaded dataset paths and split folders.",
             )
-            yaml_path, normalized = prepare_roboflow_download(
+            split = SplitConfig(train=request.train, val=request.val, test=request.test)
+            yaml_path, preparation_action = prepare_roboflow_download(
                 dataset_root,
                 clean,
                 request.classes,
+                split,
+                progress_callback,
             )
-            if normalized:
+            if preparation_action == "normalized":
                 progress_callback(
                     "normalizing_paths",
                     1,
                     1,
                     "Normalized invalid export paths to the detected split folders.",
                 )
-            message = (
-                "Roboflow dataset is ready. Invalid export paths were normalized "
-                "to the detected train/validation/test folders."
-                if normalized
-                else "Roboflow dataset is ready."
-            )
+            elif preparation_action == "rebuilt":
+                progress_callback(
+                    "rebuilding_split",
+                    1,
+                    1,
+                    "Rebuilt a local train/validation/test split from the usable downloaded images.",
+                )
+            if preparation_action == "normalized":
+                message = (
+                    "Roboflow dataset is ready. Invalid export paths were normalized "
+                    "to the detected train/validation/test folders."
+                )
+            elif preparation_action == "rebuilt":
+                message = (
+                    "Roboflow dataset is ready. The downloaded export had invalid split paths, "
+                    f"so a local {request.train}/{request.val}/{request.test} split was rebuilt "
+                    "from the usable images."
+                )
+            else:
+                message = "Roboflow dataset is ready."
 
         response = dataset_response(
             yaml_path,

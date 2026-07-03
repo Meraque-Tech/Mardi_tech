@@ -1435,14 +1435,66 @@ textarea:focus {
   justify-content: flex-start;
 }
 
+.annotation-qa-issues {
+  display: grid;
+  gap: 14px;
+}
+
+.qa-severity-section {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.qa-severity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-left: 4px solid #86b7a8;
+  background: #f8fafb;
+}
+
+.qa-severity-section.high .qa-severity-header {
+  border-left-color: #d95f5f;
+}
+
+.qa-severity-section.medium .qa-severity-header {
+  border-left-color: #d8ad46;
+}
+
+.qa-severity-section.low .qa-severity-header {
+  border-left-color: #78b7a6;
+}
+
+.qa-severity-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.qa-severity-header span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #edf2f4;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .qa-table-wrap {
   width: 100%;
   max-width: 100%;
   max-height: 420px;
   overflow-x: auto;
   overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 7px;
 }
 
 .qa-table {
@@ -1491,26 +1543,21 @@ textarea:focus {
 
 .qa-table th:nth-child(3),
 .qa-table td:nth-child(3) {
-  width: 92px;
+  width: 150px;
 }
 
 .qa-table th:nth-child(4),
 .qa-table td:nth-child(4) {
-  width: 150px;
+  width: 64px;
 }
 
 .qa-table th:nth-child(5),
 .qa-table td:nth-child(5) {
-  width: 64px;
-}
-
-.qa-table th:nth-child(6),
-.qa-table td:nth-child(6) {
   width: 128px;
 }
 
 .qa-table td:nth-child(2) strong,
-.qa-table td:nth-child(4) {
+.qa-table td:nth-child(3) {
   display: block;
   max-width: 100%;
   overflow: hidden;

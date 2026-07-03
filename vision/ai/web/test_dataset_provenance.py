@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import yaml
+import pytest
+
 from vision.ai.web.dataset_provenance import roboflow_pre_augmentation_summary
 from vision.ai.web.report_generator import _add_dataset
 
@@ -73,6 +76,54 @@ def test_returns_no_provenance_without_roboflow_metadata(tmp_path: Path):
         tmp_path,
         exported_splits(80, 10, 10),
     ) == {}
+
+
+def test_rebuilds_roboflow_export_when_yaml_paths_are_invalid_but_train_exists(
+    tmp_path: Path,
+    monkeypatch,
+):
+    pytest.importorskip("fastapi")
+    from vision.ai.web import app as web_app
+
+    monkeypatch.setattr(web_app, "DATA_ROOT", tmp_path / "web_datasets")
+    source = tmp_path / "roboflow" / "pineapple_ai_system"
+    images = source / "train" / "images"
+    labels = source / "train" / "labels"
+    images.mkdir(parents=True)
+    labels.mkdir(parents=True)
+    (source / "data.yaml").write_text(
+        "\n".join([
+            "train: ../train/images",
+            "val: ../valid/images",
+            "test: ../test/images",
+            "names: ['flat_plant', 'no_plant', 'ok_plant']",
+        ]),
+        encoding="utf-8",
+    )
+    for index in range(10):
+        stem = f"image_{index:03d}"
+        (images / f"{stem}.jpg").write_bytes(b"not-a-real-jpeg")
+        (labels / f"{stem}.txt").write_text(
+            f"{index % 3} 0.5 0.5 0.2 0.2\n",
+            encoding="utf-8",
+        )
+
+    yaml_path, action = web_app.prepare_roboflow_download(
+        source,
+        "rebuilt_pineapple",
+        [],
+        web_app.SplitConfig(train=60, val=20, test=20),
+    )
+
+    assert action == "rebuilt"
+    payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    output_root = yaml_path.parent
+    assert payload["train"] == "images/train"
+    assert payload["val"] == "images/val"
+    assert payload["test"] == "images/test"
+    assert len(list((output_root / "images" / "train").glob("*.jpg"))) == 6
+    assert len(list((output_root / "images" / "val").glob("*.jpg"))) == 2
+    assert len(list((output_root / "images" / "test").glob("*.jpg"))) == 2
 
 
 class RecordingBuilder:
