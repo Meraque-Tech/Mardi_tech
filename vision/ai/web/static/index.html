@@ -1179,6 +1179,53 @@
 
     </main>
 
-    <script src="/static/app.js"></script>
+    <div class="qa-review-modal" id="qa-review-modal" hidden>
+      <div class="qa-review-backdrop" data-qa-review-close></div>
+      <section class="qa-review-dialog" role="dialog" aria-modal="true" aria-labelledby="qa-review-title">
+        <div class="qa-review-header">
+          <div>
+            <span id="qa-review-severity" class="qa-severity low">Low</span>
+            <h2 id="qa-review-title">Annotation QA Review</h2>
+            <p id="qa-review-subtitle"></p>
+          </div>
+          <button id="qa-review-close" class="secondary compact" type="button" aria-label="Close annotation QA review">Close</button>
+        </div>
+        <div class="qa-review-body">
+          <div class="qa-review-image-frame">
+            <img id="qa-review-image" alt="Annotation QA overlay preview">
+            <div id="qa-review-empty" class="qa-review-empty" hidden>No preview available for this issue.</div>
+          </div>
+          <aside class="qa-review-side">
+            <dl class="qa-review-details" id="qa-review-details"></dl>
+            <div class="qa-review-legend">
+              <span><i class="qa-legend-original"></i> YOLO box</span>
+              <span><i class="qa-legend-mask"></i> SAM mask</span>
+              <span><i class="qa-legend-sam"></i> SAM box</span>
+            </div>
+            <label>
+              Review status
+              <select id="qa-review-status">
+                <option value="unreviewed">unreviewed</option>
+                <option value="needs_fix">needs fix</option>
+                <option value="false_positive">false positive</option>
+                <option value="accepted">accepted</option>
+                <option value="ignored">ignored</option>
+              </select>
+            </label>
+            <div class="qa-review-actions">
+              <button id="qa-review-needs-fix" class="primary" type="button">Needs Fix</button>
+              <button id="qa-review-false-positive" class="secondary" type="button">False Positive</button>
+              <button id="qa-review-ignore" class="secondary" type="button">Ignore</button>
+            </div>
+            <div class="qa-review-nav">
+              <button id="qa-review-prev" class="secondary compact" type="button">Previous</button>
+              <button id="qa-review-next" class="secondary compact" type="button">Next</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
+
+    <script src="/static/app.js?v=annotation-qa-review-20260705"></script>
   </body>
 </html>

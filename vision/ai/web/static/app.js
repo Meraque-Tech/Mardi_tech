@@ -63,6 +63,7 @@ const state = {
   annotationQaPollTimer: null,
   annotationQaPollRevision: 0,
   annotationQaReport: null,
+  annotationQaActiveIssueId: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1806,12 +1807,17 @@ function annotationQaIssueRows(issues) {
     const imageName = escapeHtml(issue.image_name || "image");
     const splitClass = escapeHtml(`${issue.split || ""} · ${issue.class_name || ""}`);
     const issueType = escapeHtml(issue.issue_type || "");
+    const issueId = escapeHtml(issue.issue_id);
     const thumb = previewUrl
       ? `<img src="${previewUrl}" alt="">`
       : '<span class="qa-no-preview">No preview</span>';
     return `
-      <tr>
-        <td class="qa-preview-cell">${thumb}</td>
+      <tr class="qa-issue-row" data-qa-open="${issueId}">
+        <td class="qa-preview-cell">
+          <button class="qa-preview-button" type="button" data-qa-open="${issueId}" aria-label="Review ${imageName}">
+            ${thumb}
+          </button>
+        </td>
         <td>
           <strong title="${imageName}">${imageName}</strong>
           <small title="${splitClass}">${splitClass}</small>
@@ -1819,11 +1825,12 @@ function annotationQaIssueRows(issues) {
         <td title="${issueType}">${issueType}</td>
         <td>${metricText(issue.score)}</td>
         <td>
-          <select data-qa-issue="${escapeHtml(issue.issue_id)}">
+          <select data-qa-issue="${issueId}">
             ${["unreviewed", "accepted", "false_positive", "needs_fix", "ignored"].map((status) => (
               `<option value="${status}"${status === issue.review_status ? " selected" : ""}>${status.replace(/_/g, " ")}</option>`
             )).join("")}
           </select>
+          <button class="secondary compact qa-review-inline-button" type="button" data-qa-open="${issueId}">Review</button>
         </td>
       </tr>
     `;
@@ -1878,8 +1885,18 @@ function renderAnnotationQaIssues(issues = []) {
     .map((severity) => annotationQaIssueTable(groups[severity], severity))
     .join("");
   container.querySelectorAll("[data-qa-issue]").forEach((select) => {
+    select.addEventListener("click", (event) => event.stopPropagation());
     select.addEventListener("change", () => markAnnotationQaIssue(select.dataset.qaIssue, select.value));
   });
+  container.onclick = (event) => {
+    const trigger = event.target.closest("[data-qa-open]");
+    if (!trigger || !container.contains(trigger)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    openAnnotationQaReview(trigger.dataset.qaOpen);
+  };
 }
 
 async function loadAnnotationQaResults(jobId) {
@@ -2006,9 +2023,110 @@ async function markAnnotationQaIssue(issueId, status) {
         issue.review_status = status;
       }
     }
+    document.querySelectorAll(`[data-qa-issue="${CSS.escape(issueId)}"]`).forEach((select) => {
+      select.value = status;
+    });
+    if (state.annotationQaActiveIssueId === issueId && $("qa-review-status")) {
+      $("qa-review-status").value = status;
+    }
   } catch (error) {
     setMessage(error.message, true);
   }
+}
+
+function annotationQaIssuesList() {
+  return Array.isArray(state.annotationQaReport?.issues) ? state.annotationQaReport.issues : [];
+}
+
+function annotationQaIssueById(issueId) {
+  return annotationQaIssuesList().find((issue) => issue.issue_id === issueId) || null;
+}
+
+function bboxText(bbox) {
+  return Array.isArray(bbox) && bbox.length === 4 ? bbox.map((value) => Math.round(Number(value) || 0)).join(", ") : "none";
+}
+
+function metricsText(metrics = {}) {
+  const entries = Object.entries(metrics || {});
+  if (!entries.length) {
+    return "none";
+  }
+  return entries
+    .map(([key, value]) => `${key.replace(/_/g, " ")}: ${metricText(value)}`)
+    .join(" · ");
+}
+
+function renderAnnotationQaReview(issue) {
+  const previewUrl = annotationQaPreviewUrl(issue);
+  const severity = String(issue.severity || "low");
+  $("qa-review-severity").className = `qa-severity ${severity}`;
+  $("qa-review-severity").textContent = severity;
+  $("qa-review-title").textContent = issue.issue_type ? issue.issue_type.replace(/_/g, " ") : "Annotation QA Review";
+  $("qa-review-subtitle").textContent = `${issue.image_name || "image"} · ${issue.split || "split"} · ${issue.class_name || "class"}`;
+  $("qa-review-subtitle").title = $("qa-review-subtitle").textContent;
+  $("qa-review-status").value = issue.review_status || "unreviewed";
+
+  const image = $("qa-review-image");
+  const empty = $("qa-review-empty");
+  if (previewUrl) {
+    image.src = previewUrl;
+    image.hidden = false;
+    empty.hidden = true;
+  } else {
+    image.removeAttribute("src");
+    image.hidden = true;
+    empty.hidden = false;
+  }
+
+  $("qa-review-details").innerHTML = `
+    <div><dt>Score</dt><dd>${metricText(issue.score)}</dd></div>
+    <div><dt>Message</dt><dd>${escapeHtml(issue.message || issue.issue_type || "")}</dd></div>
+    <div><dt>YOLO box</dt><dd>${escapeHtml(bboxText(issue.original_bbox))}</dd></div>
+    <div><dt>SAM box</dt><dd>${escapeHtml(bboxText(issue.sam_bbox))}</dd></div>
+    <div><dt>Metrics</dt><dd>${escapeHtml(metricsText(issue.metrics))}</dd></div>
+  `;
+
+  const issues = annotationQaIssuesList();
+  const index = issues.findIndex((item) => item.issue_id === issue.issue_id);
+  $("qa-review-prev").disabled = index <= 0;
+  $("qa-review-next").disabled = index < 0 || index >= issues.length - 1;
+}
+
+function openAnnotationQaReview(issueId) {
+  if (!$("qa-review-modal")) {
+    setMessage("Refresh the page to load the annotation review UI.", true);
+    return;
+  }
+  const issue = annotationQaIssueById(issueId);
+  if (!issue) {
+    return;
+  }
+  state.annotationQaActiveIssueId = issueId;
+  renderAnnotationQaReview(issue);
+  $("qa-review-modal").hidden = false;
+  $("qa-review-status").focus();
+}
+
+function closeAnnotationQaReview() {
+  state.annotationQaActiveIssueId = "";
+  $("qa-review-modal").hidden = true;
+  $("qa-review-image").removeAttribute("src");
+}
+
+function stepAnnotationQaReview(direction) {
+  const issues = annotationQaIssuesList();
+  const index = issues.findIndex((issue) => issue.issue_id === state.annotationQaActiveIssueId);
+  const next = issues[index + direction];
+  if (next) {
+    openAnnotationQaReview(next.issue_id);
+  }
+}
+
+function setActiveAnnotationQaReviewStatus(status) {
+  if (!state.annotationQaActiveIssueId) {
+    return;
+  }
+  markAnnotationQaIssue(state.annotationQaActiveIssueId, status);
 }
 
 function downloadAnnotationQaReport(kind) {
@@ -4438,10 +4556,27 @@ document.addEventListener("click", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    if ($("qa-review-modal") && !$("qa-review-modal").hidden) {
+      closeAnnotationQaReview();
+    }
     closeDatasetCleanupMenu();
     closeModelSelector();
   }
 });
+if ($("qa-review-modal")) {
+  $("qa-review-close").addEventListener("click", closeAnnotationQaReview);
+  document.querySelectorAll("[data-qa-review-close]").forEach((element) => {
+    element.addEventListener("click", closeAnnotationQaReview);
+  });
+  $("qa-review-status").addEventListener("change", () => {
+    setActiveAnnotationQaReviewStatus($("qa-review-status").value);
+  });
+  $("qa-review-needs-fix").addEventListener("click", () => setActiveAnnotationQaReviewStatus("needs_fix"));
+  $("qa-review-false-positive").addEventListener("click", () => setActiveAnnotationQaReviewStatus("false_positive"));
+  $("qa-review-ignore").addEventListener("click", () => setActiveAnnotationQaReviewStatus("ignored"));
+  $("qa-review-prev").addEventListener("click", () => stepAnnotationQaReview(-1));
+  $("qa-review-next").addEventListener("click", () => stepAnnotationQaReview(1));
+}
 $("reset-advanced").addEventListener("click", () => {
   applyControlValues(CONTROL_DEFAULTS);
   setActivePreset(null);
