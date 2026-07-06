@@ -1769,6 +1769,24 @@ textarea:focus {
   border-radius: 2px;
 }
 
+.qa-review-pending-fix {
+  padding: 10px;
+  border: 1px solid #b9e2d8;
+  border-radius: 7px;
+  background: #edf9f5;
+  color: #14584c;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.qa-review-pending-fix.is-empty {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .qa-legend-original {
   border: 2px solid rgb(255, 210, 0);
 }

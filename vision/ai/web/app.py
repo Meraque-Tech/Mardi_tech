@@ -220,6 +220,7 @@ class AnnotationQaMarkRequest(BaseModel):
 class AnnotationQaFixRequest(BaseModel):
     issue_id: str
     fix: str = "sam_box"
+    class_id: Optional[int] = Field(default=None, ge=0)
 
 
 class TrainRequest(BaseModel):
@@ -2981,6 +2982,8 @@ def annotation_issue(
         "recommended_bbox": list(recommended_bbox) if recommended_bbox else None,
         "fix_type": "replace_box" if recommended_bbox else "",
         "accepted_fix": "",
+        "accepted_class_id": None,
+        "accepted_class_name": "",
         "label_row": label_row,
         "metrics": metrics or {},
         "preview": preview,
@@ -3056,7 +3059,7 @@ def write_annotation_qa_report(run_dir: Path, issues: list[dict], summary: dict)
     fields = [
         "issue_id", "image_name", "split", "class_id", "class_name", "issue_type",
         "severity", "score", "message", "preview", "review_status", "accepted_fix",
-        "applied", "corrected_label_path",
+        "accepted_class_id", "accepted_class_name", "applied", "corrected_label_path",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
@@ -3082,7 +3085,7 @@ def load_annotation_qa_report(run_dir: Path) -> dict:
     return report
 
 
-def set_annotation_qa_issue_fix(run_dir: Path, issue_id: str, fix: str) -> dict:
+def set_annotation_qa_issue_fix(run_dir: Path, issue_id: str, fix: str, class_id: Optional[int] = None) -> dict:
     report = load_annotation_qa_report(run_dir)
     issue = next(
         (item for item in report["issues"] if isinstance(item, dict) and item.get("issue_id") == issue_id),
@@ -3094,11 +3097,26 @@ def set_annotation_qa_issue_fix(run_dir: Path, issue_id: str, fix: str) -> dict:
     fix_value = str(fix or "").strip()
     if fix_value in {"", "none", "clear"}:
         issue["accepted_fix"] = ""
+        issue["accepted_class_id"] = None
+        issue["accepted_class_name"] = ""
     elif fix_value == "sam_box":
         if issue.get("fix_type") != "replace_box" or not issue.get("recommended_bbox"):
             raise HTTPException(status_code=400, detail="This issue does not have a SAM box recommendation.")
         issue["accepted_fix"] = "sam_box"
-        issue["review_status"] = "needs_fix"
+        issue["review_status"] = "fix_accepted"
+    elif fix_value == "class":
+        if class_id is None:
+            raise HTTPException(status_code=400, detail="Class fix requires a class id.")
+        summary = report.get("summary") or {}
+        dataset_yaml = summary.get("dataset_yaml")
+        if not dataset_yaml:
+            raise HTTPException(status_code=400, detail="Annotation QA report is missing dataset class metadata.")
+        class_names = read_yaml_class_names(Path(dataset_yaml))
+        if class_id < 0 or class_id >= len(class_names):
+            raise HTTPException(status_code=400, detail="Selected class is not in the dataset class list.")
+        issue["accepted_class_id"] = class_id
+        issue["accepted_class_name"] = class_names[class_id]
+        issue["review_status"] = "fix_accepted"
     else:
         raise HTTPException(status_code=400, detail="Unknown annotation QA fix.")
 
@@ -3126,9 +3144,11 @@ def issue_label_path_in_copy(issue: dict, dataset_root: Path, corrected_root: Pa
 
 
 def apply_annotation_qa_fix(issue: dict, dataset_root: Path, corrected_root: Path) -> dict:
-    if issue.get("accepted_fix") != "sam_box":
-        return {"applied": False, "reason": "No accepted SAM box fix."}
-    if issue.get("fix_type") != "replace_box" or not issue.get("recommended_bbox"):
+    has_box_fix = issue.get("accepted_fix") == "sam_box"
+    has_class_fix = issue.get("accepted_class_id") is not None
+    if not has_box_fix and not has_class_fix:
+        return {"applied": False, "reason": "No accepted fix."}
+    if has_box_fix and (issue.get("fix_type") != "replace_box" or not issue.get("recommended_bbox")):
         return {"applied": False, "reason": "Issue has no replaceable SAM box."}
     label_row = issue.get("label_row")
     if not isinstance(label_row, int) or label_row < 1:
@@ -3156,17 +3176,27 @@ def apply_annotation_qa_fix(issue: dict, dataset_root: Path, corrected_root: Pat
     if line_index >= len(lines):
         return {"applied": False, "reason": "Referenced label row no longer exists."}
 
+    original_row = lines[line_index]
+    original_fields = original_row.strip().split()
+    if len(original_fields) != 5:
+        return {"applied": False, "reason": "Referenced label row is not a YOLO detection box."}
+    corrected_class_id = issue.get("accepted_class_id") if has_class_fix else issue.get("class_id")
     try:
-        corrected_row = yolo_bbox_from_pixels(issue.get("class_id"), issue["recommended_bbox"], width, height)
+        if has_box_fix:
+            corrected_row = yolo_bbox_from_pixels(corrected_class_id, issue["recommended_bbox"], width, height)
+        else:
+            corrected_row = " ".join([str(int(float(corrected_class_id))), *original_fields[1:5]])
     except (TypeError, ValueError) as exc:
         return {"applied": False, "reason": str(exc)}
-    original_row = lines[line_index]
     lines[line_index] = corrected_row
     label_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     issue["applied"] = True
     issue["corrected_label_path"] = str(label_path)
     issue["original_yolo_row"] = original_row
     issue["corrected_yolo_row"] = corrected_row
+    if has_class_fix:
+        issue["class_id"] = issue.get("accepted_class_id")
+        issue["class_name"] = issue.get("accepted_class_name") or issue.get("class_name", "")
     return {"applied": True, "label_path": str(label_path)}
 
 
@@ -3194,10 +3224,13 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
     corrected_payload["path"] = "."
     corrected_yaml.write_text(yaml.safe_dump(corrected_payload, sort_keys=False), encoding="utf-8")
 
+    def issue_has_accepted_fix(item: dict) -> bool:
+        return item.get("accepted_fix") == "sam_box" or item.get("accepted_class_id") is not None
+
     applied = 0
     skipped = []
     for issue in report["issues"]:
-        if not isinstance(issue, dict) or issue.get("accepted_fix") != "sam_box":
+        if not isinstance(issue, dict) or not issue_has_accepted_fix(issue):
             continue
         result = apply_annotation_qa_fix(issue, dataset_root, corrected_root)
         if result.get("applied"):
@@ -3213,7 +3246,7 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
         "source_dataset_root": str(dataset_root),
         "corrected_dataset_yaml": str(corrected_yaml),
         "corrected_dataset_root": str(corrected_root),
-        "accepted_fixes": sum(1 for item in report["issues"] if isinstance(item, dict) and item.get("accepted_fix") == "sam_box"),
+        "accepted_fixes": sum(1 for item in report["issues"] if isinstance(item, dict) and issue_has_accepted_fix(item)),
         "applied_fixes": applied,
         "skipped_fixes": skipped,
         "applied_at": datetime.now(MYT).isoformat(),
@@ -4600,7 +4633,7 @@ def annotation_qa_download(job_id: str, artifact: str):
 def mark_annotation_qa_issue(job_id: str, request: AnnotationQaMarkRequest):
     if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
         raise HTTPException(status_code=404, detail="Annotation QA job not found.")
-    allowed = {"unreviewed", "accepted", "false_positive", "needs_fix", "ignored"}
+    allowed = {"unreviewed", "fix_accepted", "accepted", "false_positive", "needs_fix", "ignored"}
     status = str(request.status or "").strip()
     if status not in allowed:
         raise HTTPException(status_code=400, detail="Unknown annotation QA review status.")
@@ -4615,8 +4648,10 @@ def mark_annotation_qa_issue(job_id: str, request: AnnotationQaMarkRequest):
     for issue in issues:
         if isinstance(issue, dict) and issue.get("issue_id") == request.issue_id:
             issue["review_status"] = status
-            if status != "needs_fix":
+            if status != "fix_accepted":
                 issue["accepted_fix"] = ""
+                issue["accepted_class_id"] = None
+                issue["accepted_class_name"] = ""
             matched = True
             break
     if not matched:
@@ -4628,10 +4663,12 @@ def mark_annotation_qa_issue(job_id: str, request: AnnotationQaMarkRequest):
 @app.post("/api/annotation-qa/fix/{job_id}")
 def accept_annotation_qa_fix(job_id: str, request: AnnotationQaFixRequest):
     run_dir = annotation_qa_run_dir(job_id)
-    issue = set_annotation_qa_issue_fix(run_dir, request.issue_id, request.fix)
+    issue = set_annotation_qa_issue_fix(run_dir, request.issue_id, request.fix, request.class_id)
     return {
         "issue_id": request.issue_id,
         "accepted_fix": issue.get("accepted_fix", ""),
+        "accepted_class_id": issue.get("accepted_class_id"),
+        "accepted_class_name": issue.get("accepted_class_name", ""),
         "review_status": issue.get("review_status", "unreviewed"),
     }
 

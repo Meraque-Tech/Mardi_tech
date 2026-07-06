@@ -266,9 +266,10 @@
             <div class="button-row annotation-qa-downloads">
               <button id="download-annotation-qa-csv" class="secondary compact" type="button" disabled>Download CSV</button>
               <button id="download-annotation-qa-json" class="secondary compact" type="button" disabled>Download JSON</button>
-              <button id="apply-annotation-qa-fixes" class="secondary compact" type="button" disabled>Apply Accepted Fixes</button>
+              <button id="apply-annotation-qa-fixes" class="secondary compact" type="button" disabled>Create Corrected Dataset</button>
               <button id="download-corrected-dataset" class="secondary compact" type="button" disabled>Download Corrected Dataset</button>
             </div>
+            <p class="field-note" id="annotation-qa-fix-summary"></p>
             <div class="annotation-qa-issues" id="annotation-qa-issues"></div>
           </section>
 
@@ -1204,10 +1205,16 @@
               <span><i class="qa-legend-mask"></i> SAM mask</span>
               <span><i class="qa-legend-sam"></i> SAM box</span>
             </div>
+            <div class="qa-review-pending-fix" id="qa-review-pending-fix"></div>
             <label>
-              Review status
+              Corrected class
+              <select id="qa-review-class-fix"></select>
+            </label>
+            <label>
+              Triage status
               <select id="qa-review-status">
                 <option value="unreviewed">unreviewed</option>
+                <option value="fix_accepted">correction queued</option>
                 <option value="needs_fix">needs fix</option>
                 <option value="false_positive">false positive</option>
                 <option value="accepted">accepted</option>
@@ -1215,8 +1222,9 @@
               </select>
             </label>
             <div class="qa-review-actions">
-              <button id="qa-review-accept-sam" class="primary" type="button">Accept SAM Box</button>
-              <button id="qa-review-needs-fix" class="primary" type="button">Needs Fix</button>
+              <button id="qa-review-accept-sam" class="primary" type="button">Use SAM Box</button>
+              <button id="qa-review-accept-class" class="secondary" type="button">Use Selected Class</button>
+              <button id="qa-review-needs-fix" class="primary" type="button">Flag Manual Fix</button>
               <button id="qa-review-false-positive" class="secondary" type="button">False Positive</button>
               <button id="qa-review-ignore" class="secondary" type="button">Ignore</button>
             </div>
