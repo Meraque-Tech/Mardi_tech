@@ -1061,7 +1061,7 @@ def _add_training(
     include_conclusion: bool = True,
     include_appendix: bool = True,
 ):
-    builder.paragraph("YOLOv8 Model Training Report", "ReportTitle")
+    builder.paragraph("Model Training Report", "ReportTitle")
     builder.paragraph(
         f"Generated {_human_datetime_myt(datetime.now(MYT))}",
         "Small",
@@ -1188,7 +1188,7 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
 
 def generate_training_report(run_dir: Path, context: dict, metrics: dict) -> Path:
     output_path = run_dir / "training_report.pdf"
-    builder = _ReportBuilder(output_path, "YOLOv8 Training Report")
+    builder = _ReportBuilder(output_path, "Training Report")
     _add_training(builder, run_dir, context, metrics)
     builder.build()
     return output_path
@@ -1203,7 +1203,7 @@ def generate_combined_report(
     test_metrics: dict,
 ) -> Path:
     output_path = test_dir / "training_and_test_report.pdf"
-    builder = _ReportBuilder(output_path, "YOLOv8 Training and Test Report")
+    builder = _ReportBuilder(output_path, "Training and Test Report")
     _add_training(
         builder,
         training_dir,
