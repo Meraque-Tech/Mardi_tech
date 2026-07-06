@@ -2409,7 +2409,7 @@ function openAnnotationQaReview(issueId, severity = "") {
     : state.annotationQaReviewSeverity || annotationQaSeverityKey(issue);
   renderAnnotationQaReview(issue);
   $("qa-review-modal").hidden = false;
-  $("qa-review-status").focus();
+  $("qa-review-modal").querySelector(".qa-review-dialog")?.focus();
 }
 
 function closeAnnotationQaReview() {
@@ -2426,6 +2426,28 @@ function stepAnnotationQaReview(direction) {
   const next = issues[index + direction];
   if (next) {
     openAnnotationQaReview(next.issue_id, state.annotationQaReviewSeverity || annotationQaSeverityKey(next));
+  }
+}
+
+function handleAnnotationQaReviewKeydown(event) {
+  if (!$("qa-review-modal") || $("qa-review-modal").hidden || !state.annotationQaActiveIssueId) {
+    return;
+  }
+  const key = event.key.toLowerCase();
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable)) {
+    return;
+  }
+  if (key === "a" || event.key === "ArrowLeft") {
+    if (!$("qa-review-prev").disabled) {
+      event.preventDefault();
+      stepAnnotationQaReview(-1);
+    }
+  } else if (key === "d" || event.key === "ArrowRight") {
+    if (!$("qa-review-next").disabled) {
+      event.preventDefault();
+      stepAnnotationQaReview(1);
+    }
   }
 }
 
@@ -4864,6 +4886,7 @@ document.addEventListener("click", (event) => {
   }
 });
 document.addEventListener("keydown", (event) => {
+  handleAnnotationQaReviewKeydown(event);
   if (event.key === "Escape") {
     if ($("qa-review-modal") && !$("qa-review-modal").hidden) {
       closeAnnotationQaReview();
