@@ -147,6 +147,7 @@ ANNOTATION_QA_SUMMARY_FILE = "summary.json"
 ANNOTATION_QA_REPORT_JSON_FILE = "qa_report.json"
 ANNOTATION_QA_REPORT_CSV_FILE = "qa_report.csv"
 ANNOTATION_QA_REVIEW_FILE = "review_state.json"
+ANNOTATION_QA_FIX_SUMMARY_FILE = "fix_summary.json"
 ANNOTATION_QA_MODEL_DEFAULT = os.getenv("SAM_QA_MODEL", "sam2.1_s.pt")
 
 app = FastAPI(title="YOLOv8 Training UI")
@@ -214,6 +215,11 @@ class AnnotationQaRequest(BaseModel):
 class AnnotationQaMarkRequest(BaseModel):
     issue_id: str
     status: str
+
+
+class AnnotationQaFixRequest(BaseModel):
+    issue_id: str
+    fix: str = "sam_box"
 
 
 class TrainRequest(BaseModel):
@@ -2878,6 +2884,27 @@ def pixel_bbox_from_yolo(fields: list[str], width: int, height: int) -> Optional
     return x1, y1, x2, y2
 
 
+def yolo_bbox_from_pixels(class_id, box: list[int] | tuple[int, int, int, int], width: int, height: int) -> str:
+    x1, y1, x2, y2 = [float(value) for value in box]
+    x1 = max(0.0, min(float(width), x1))
+    y1 = max(0.0, min(float(height), y1))
+    x2 = max(0.0, min(float(width), x2))
+    y2 = max(0.0, min(float(height), y2))
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError("Corrected bounding box is empty.")
+    x_center = ((x1 + x2) / 2) / width
+    y_center = ((y1 + y2) / 2) / height
+    box_width = (x2 - x1) / width
+    box_height = (y2 - y1) / height
+    return " ".join([
+        str(int(float(class_id))),
+        f"{x_center:.6f}",
+        f"{y_center:.6f}",
+        f"{box_width:.6f}",
+        f"{box_height:.6f}",
+    ])
+
+
 def bbox_area(box: tuple[int, int, int, int]) -> int:
     return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
 
@@ -2935,6 +2962,8 @@ def annotation_issue(
     sam_bbox: Optional[tuple[int, int, int, int]] = None,
     metrics: Optional[dict] = None,
     preview: str = "",
+    label_row: Optional[int] = None,
+    recommended_bbox: Optional[tuple[int, int, int, int]] = None,
 ) -> dict:
     return {
         "issue_id": f"{job_id}-{index:06d}",
@@ -2949,6 +2978,10 @@ def annotation_issue(
         "message": message,
         "original_bbox": list(original_bbox) if original_bbox else None,
         "sam_bbox": list(sam_bbox) if sam_bbox else None,
+        "recommended_bbox": list(recommended_bbox) if recommended_bbox else None,
+        "fix_type": "replace_box" if recommended_bbox else "",
+        "accepted_fix": "",
+        "label_row": label_row,
         "metrics": metrics or {},
         "preview": preview,
         "review_status": "unreviewed",
@@ -3022,13 +3055,183 @@ def write_annotation_qa_report(run_dir: Path, issues: list[dict], summary: dict)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "issue_id", "image_name", "split", "class_id", "class_name", "issue_type",
-        "severity", "score", "message", "preview", "review_status",
+        "severity", "score", "message", "preview", "review_status", "accepted_fix",
+        "applied", "corrected_label_path",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader()
         for issue in issues:
             writer.writerow({field: issue.get(field, "") for field in fields})
+
+
+def annotation_qa_run_dir(job_id: str) -> Path:
+    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
+        raise HTTPException(status_code=404, detail="Annotation QA job not found.")
+    run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
+    ensure_annotation_qa_path(run_dir)
+    return run_dir
+
+
+def load_annotation_qa_report(run_dir: Path) -> dict:
+    report = read_json_object(run_dir / ANNOTATION_QA_REPORT_JSON_FILE)
+    if not isinstance(report.get("issues"), list):
+        raise HTTPException(status_code=404, detail="Annotation QA results are not available.")
+    if not isinstance(report.get("summary"), dict):
+        report["summary"] = read_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE)
+    return report
+
+
+def set_annotation_qa_issue_fix(run_dir: Path, issue_id: str, fix: str) -> dict:
+    report = load_annotation_qa_report(run_dir)
+    issue = next(
+        (item for item in report["issues"] if isinstance(item, dict) and item.get("issue_id") == issue_id),
+        None,
+    )
+    if issue is None:
+        raise HTTPException(status_code=404, detail="Annotation QA issue not found.")
+
+    fix_value = str(fix or "").strip()
+    if fix_value in {"", "none", "clear"}:
+        issue["accepted_fix"] = ""
+    elif fix_value == "sam_box":
+        if issue.get("fix_type") != "replace_box" or not issue.get("recommended_bbox"):
+            raise HTTPException(status_code=400, detail="This issue does not have a SAM box recommendation.")
+        issue["accepted_fix"] = "sam_box"
+        issue["review_status"] = "needs_fix"
+    else:
+        raise HTTPException(status_code=400, detail="Unknown annotation QA fix.")
+
+    write_annotation_qa_report(run_dir, report["issues"], report.get("summary") or {})
+    return issue
+
+
+def issue_label_path_in_copy(issue: dict, dataset_root: Path, corrected_root: Path) -> Path:
+    image_path = Path(str(issue.get("image", ""))).expanduser().resolve()
+    try:
+        relative_image = image_path.relative_to(dataset_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="QA issue image is outside the source dataset.") from exc
+
+    parts = list(relative_image.parts)
+    try:
+        images_index = parts.index("images")
+    except ValueError:
+        split = str(issue.get("split") or "").strip() or "train"
+        label_relative = Path("labels") / split / f"{image_path.stem}.txt"
+    else:
+        parts[images_index] = "labels"
+        label_relative = Path(*parts).with_suffix(".txt")
+    return corrected_root / label_relative
+
+
+def apply_annotation_qa_fix(issue: dict, dataset_root: Path, corrected_root: Path) -> dict:
+    if issue.get("accepted_fix") != "sam_box":
+        return {"applied": False, "reason": "No accepted SAM box fix."}
+    if issue.get("fix_type") != "replace_box" or not issue.get("recommended_bbox"):
+        return {"applied": False, "reason": "Issue has no replaceable SAM box."}
+    label_row = issue.get("label_row")
+    if not isinstance(label_row, int) or label_row < 1:
+        return {"applied": False, "reason": "Issue has no label row reference."}
+
+    label_path = issue_label_path_in_copy(issue, dataset_root, corrected_root)
+    if not label_path.is_file():
+        return {"applied": False, "reason": f"Copied label file not found: {label_path}"}
+    try:
+        relative_image = Path(str(issue.get("image"))).expanduser().resolve().relative_to(dataset_root)
+    except ValueError:
+        return {"applied": False, "reason": "Issue image is outside the source dataset."}
+    image_path = corrected_root / relative_image
+    try:
+        import cv2
+        image = cv2.imread(str(image_path))
+    except Exception:
+        image = None
+    if image is None:
+        return {"applied": False, "reason": f"Copied image could not be read: {image_path}"}
+    height, width = image.shape[:2]
+
+    lines = label_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    line_index = label_row - 1
+    if line_index >= len(lines):
+        return {"applied": False, "reason": "Referenced label row no longer exists."}
+
+    try:
+        corrected_row = yolo_bbox_from_pixels(issue.get("class_id"), issue["recommended_bbox"], width, height)
+    except (TypeError, ValueError) as exc:
+        return {"applied": False, "reason": str(exc)}
+    original_row = lines[line_index]
+    lines[line_index] = corrected_row
+    label_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    issue["applied"] = True
+    issue["corrected_label_path"] = str(label_path)
+    issue["original_yolo_row"] = original_row
+    issue["corrected_yolo_row"] = corrected_row
+    return {"applied": True, "label_path": str(label_path)}
+
+
+def apply_annotation_qa_fixes(job_id: str) -> dict:
+    run_dir = annotation_qa_run_dir(job_id)
+    report = load_annotation_qa_report(run_dir)
+    summary = report.get("summary") or {}
+    dataset_yaml = summary.get("dataset_yaml")
+    if not dataset_yaml:
+        raise HTTPException(status_code=400, detail="Annotation QA report is missing the source dataset YAML.")
+    yaml_path, dataset_root, portable_payload = prepared_dataset_yaml(dataset_yaml)
+
+    corrected_name = clean_name(f"{dataset_root.name}_qa_corrected_{job_id}", "qa_corrected_dataset")
+    corrected_root = (DATASET_PREPARED_ROOT / corrected_name).resolve()
+    try:
+        corrected_root.relative_to(DATA_ROOT.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Corrected dataset path escaped the data workspace.") from exc
+    if corrected_root.exists():
+        shutil.rmtree(corrected_root)
+    shutil.copytree(dataset_root, corrected_root, ignore=shutil.ignore_patterns(ANNOTATION_QA_FIX_SUMMARY_FILE))
+
+    corrected_yaml = corrected_root / "data.yaml"
+    corrected_payload = dict(portable_payload)
+    corrected_payload["path"] = "."
+    corrected_yaml.write_text(yaml.safe_dump(corrected_payload, sort_keys=False), encoding="utf-8")
+
+    applied = 0
+    skipped = []
+    for issue in report["issues"]:
+        if not isinstance(issue, dict) or issue.get("accepted_fix") != "sam_box":
+            continue
+        result = apply_annotation_qa_fix(issue, dataset_root, corrected_root)
+        if result.get("applied"):
+            applied += 1
+        else:
+            issue["applied"] = False
+            issue["apply_error"] = result.get("reason", "Fix was not applied.")
+            skipped.append({"issue_id": issue.get("issue_id"), "reason": issue["apply_error"]})
+
+    fix_summary = {
+        "job_id": job_id,
+        "source_dataset_yaml": str(yaml_path),
+        "source_dataset_root": str(dataset_root),
+        "corrected_dataset_yaml": str(corrected_yaml),
+        "corrected_dataset_root": str(corrected_root),
+        "accepted_fixes": sum(1 for item in report["issues"] if isinstance(item, dict) and item.get("accepted_fix") == "sam_box"),
+        "applied_fixes": applied,
+        "skipped_fixes": skipped,
+        "applied_at": datetime.now(MYT).isoformat(),
+    }
+    write_json_object(corrected_root / ANNOTATION_QA_FIX_SUMMARY_FILE, fix_summary)
+    write_json_object(run_dir / ANNOTATION_QA_FIX_SUMMARY_FILE, fix_summary)
+    report["summary"]["corrected_dataset_yaml"] = str(corrected_yaml)
+    report["summary"]["corrected_dataset_root"] = str(corrected_root)
+    report["summary"]["applied_fixes"] = applied
+    write_annotation_qa_report(run_dir, report["issues"], report["summary"])
+
+    response = dataset_response(
+        corrected_yaml,
+        f"Applied {applied} accepted SAM fix{'es' if applied != 1 else ''}. Training will use the corrected dataset copy.",
+    )
+    response.update(fix_summary)
+    response["download_available"] = True
+    return response
 
 
 def load_sam_model(model_name: str):
@@ -3163,7 +3366,12 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             "invalid_label", "high", 1.0, f"Invalid YOLO bbox on row {row_index}.",
                         ))
                         continue
-                    labels.append({"class_id": class_id, "class_name": class_name, "bbox": box})
+                    labels.append({
+                        "class_id": class_id,
+                        "class_name": class_name,
+                        "bbox": box,
+                        "row_index": row_index,
+                    })
 
                 for left in range(len(labels)):
                     for right in range(left + 1, len(labels)):
@@ -3178,6 +3386,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                                 "duplicate_box", "medium", overlap,
                                 "Two same-class boxes overlap heavily.",
                                 labels[left]["bbox"], labels[right]["bbox"], {"bbox_iou": overlap},
+                                label_row=labels[left].get("row_index"),
                             )
                             issues.append(issue)
 
@@ -3196,6 +3405,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             "empty_mask", "high", 1.0,
                             "SAM did not return a mask for this box.",
                             box,
+                            label_row=label.get("row_index"),
                         )
                         issues.append(issue)
                         continue
@@ -3209,6 +3419,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             "empty_mask", "high", 1.0,
                             "SAM returned an empty mask for this box.",
                             box,
+                            label_row=label.get("row_index"),
                         )
                         issue["preview"] = f"previews/{issue['issue_id']}.jpg"
                         draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, None)
@@ -3257,6 +3468,8 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             job_id, issue_index, image_path, split,
                             label["class_id"], label["class_name"], issue_type, severity,
                             score, message, box, sam_box, metrics,
+                            label_row=label.get("row_index"),
+                            recommended_bbox=sam_box,
                         )
                         issue["preview"] = f"previews/{issue['issue_id']}.jpg"
                         draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask_array)
@@ -4402,15 +4615,34 @@ def mark_annotation_qa_issue(job_id: str, request: AnnotationQaMarkRequest):
     for issue in issues:
         if isinstance(issue, dict) and issue.get("issue_id") == request.issue_id:
             issue["review_status"] = status
+            if status != "needs_fix":
+                issue["accepted_fix"] = ""
             matched = True
             break
     if not matched:
         raise HTTPException(status_code=404, detail="Annotation QA issue not found.")
-    write_json_object(report_path, report)
-    review = read_json_object(run_dir / ANNOTATION_QA_REVIEW_FILE)
-    review[request.issue_id] = status
-    write_json_object(run_dir / ANNOTATION_QA_REVIEW_FILE, review)
+    write_annotation_qa_report(run_dir, issues, report.get("summary") or read_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE))
     return {"issue_id": request.issue_id, "status": status}
+
+
+@app.post("/api/annotation-qa/fix/{job_id}")
+def accept_annotation_qa_fix(job_id: str, request: AnnotationQaFixRequest):
+    run_dir = annotation_qa_run_dir(job_id)
+    issue = set_annotation_qa_issue_fix(run_dir, request.issue_id, request.fix)
+    return {
+        "issue_id": request.issue_id,
+        "accepted_fix": issue.get("accepted_fix", ""),
+        "review_status": issue.get("review_status", "unreviewed"),
+    }
+
+
+@app.post("/api/annotation-qa/apply/{job_id}")
+def apply_annotation_qa_corrections(job_id: str):
+    if training_process is not None and training_process.poll() is None:
+        raise HTTPException(status_code=409, detail="Stop training before applying annotation fixes.")
+    if test_process is not None and test_process.poll() is None:
+        raise HTTPException(status_code=409, detail="Stop model testing before applying annotation fixes.")
+    return apply_annotation_qa_fixes(job_id)
 
 
 @app.get("/api/dataset/preparation/status")

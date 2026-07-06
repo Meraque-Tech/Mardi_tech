@@ -59,11 +59,13 @@ const state = {
   trainingSessions: [],
   annotationQaRunning: false,
   annotationQaStopping: false,
+  annotationQaApplyingFixes: false,
   annotationQaJobId: "",
   annotationQaPollTimer: null,
   annotationQaPollRevision: 0,
   annotationQaReport: null,
   annotationQaActiveIssueId: "",
+  annotationQaCorrectedDatasetYaml: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1713,6 +1715,8 @@ function resetAnnotationQaForDataset() {
   state.annotationQaReport = null;
   state.annotationQaRunning = false;
   state.annotationQaStopping = false;
+  state.annotationQaApplyingFixes = false;
+  state.annotationQaCorrectedDatasetYaml = "";
   window.clearTimeout(state.annotationQaPollTimer);
   state.annotationQaPollTimer = null;
   state.annotationQaPollRevision += 1;
@@ -1743,12 +1747,17 @@ function setAnnotationQaProgress(visible, job = {}) {
   track.querySelector("span").style.width = `${percent}%`;
 }
 
+function annotationQaAcceptedFixCount() {
+  const issues = Array.isArray(state.annotationQaReport?.issues) ? state.annotationQaReport.issues : [];
+  return issues.filter((issue) => issue.accepted_fix === "sam_box").length;
+}
+
 function syncAnnotationQaActionStates() {
   const hasDataset = Boolean(state.datasetYaml);
   const trainingLocked = state.running || state.isStarting || state.isStopping;
   const testLocked = state.testRunning || state.testStarting || state.testStopping;
   const preparing = state.isPreparing || state.isDetecting;
-  const running = state.annotationQaRunning || state.annotationQaStopping;
+  const running = state.annotationQaRunning || state.annotationQaStopping || state.annotationQaApplyingFixes;
   $("run-annotation-qa").disabled = !hasDataset || preparing || trainingLocked || testLocked || running;
   $("run-annotation-qa").textContent = state.annotationQaRunning ? "Running..." : "Run SAM QA";
   $("run-annotation-qa").setAttribute("aria-busy", String(state.annotationQaRunning));
@@ -1761,6 +1770,14 @@ function syncAnnotationQaActionStates() {
   const reportReady = Boolean(state.annotationQaJobId && state.annotationQaReport);
   $("download-annotation-qa-csv").disabled = !reportReady;
   $("download-annotation-qa-json").disabled = !reportReady;
+  $("apply-annotation-qa-fixes").disabled = !reportReady
+    || annotationQaAcceptedFixCount() === 0
+    || preparing
+    || trainingLocked
+    || testLocked
+    || running;
+  $("apply-annotation-qa-fixes").textContent = state.annotationQaApplyingFixes ? "Applying..." : "Apply Accepted Fixes";
+  $("download-corrected-dataset").disabled = !state.annotationQaCorrectedDatasetYaml || state.downloads.has("corrected_dataset");
 }
 
 function annotationQaStatusLabel(status) {
@@ -1902,6 +1919,7 @@ function renderAnnotationQaIssues(issues = []) {
 async function loadAnnotationQaResults(jobId) {
   const report = await apiJson(`/api/annotation-qa/results/${encodeURIComponent(jobId)}`);
   state.annotationQaReport = report;
+  state.annotationQaCorrectedDatasetYaml = report.summary?.corrected_dataset_yaml || state.annotationQaCorrectedDatasetYaml || "";
   renderAnnotationQaSummary(report.summary || {});
   renderAnnotationQaIssues(Array.isArray(report.issues) ? report.issues : []);
   syncAnnotationQaActionStates();
@@ -2021,6 +2039,9 @@ async function markAnnotationQaIssue(issueId, status) {
       const issue = state.annotationQaReport.issues.find((item) => item.issue_id === issueId);
       if (issue) {
         issue.review_status = status;
+        if (status !== "needs_fix") {
+          issue.accepted_fix = "";
+        }
       }
     }
     document.querySelectorAll(`[data-qa-issue="${CSS.escape(issueId)}"]`).forEach((select) => {
@@ -2031,6 +2052,83 @@ async function markAnnotationQaIssue(issueId, status) {
     }
   } catch (error) {
     setMessage(error.message, true);
+  }
+}
+
+async function acceptAnnotationQaSamBox(issueId) {
+  if (!state.annotationQaJobId || !issueId) {
+    return;
+  }
+  try {
+    const result = await apiJson(`/api/annotation-qa/fix/${encodeURIComponent(state.annotationQaJobId)}`, {
+      method: "POST",
+      body: JSON.stringify({ issue_id: issueId, fix: "sam_box" }),
+    });
+    if (state.annotationQaReport?.issues) {
+      const issue = state.annotationQaReport.issues.find((item) => item.issue_id === issueId);
+      if (issue) {
+        issue.accepted_fix = result.accepted_fix || "sam_box";
+        issue.review_status = result.review_status || "needs_fix";
+        if (state.annotationQaActiveIssueId === issueId) {
+          renderAnnotationQaReview(issue);
+        }
+      }
+    }
+    document.querySelectorAll(`[data-qa-issue="${CSS.escape(issueId)}"]`).forEach((select) => {
+      select.value = result.review_status || "needs_fix";
+    });
+    setMessage("SAM box accepted for this issue. Apply accepted fixes when you are ready to create the corrected dataset.");
+    syncAnnotationQaActionStates();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function applyAnnotationQaFixes() {
+  if (!state.annotationQaJobId || state.annotationQaApplyingFixes) {
+    return;
+  }
+  state.annotationQaApplyingFixes = true;
+  syncAnnotationQaActionStates();
+  setMessage("Applying accepted SAM fixes into a corrected dataset copy...");
+  try {
+    const result = await apiJson(`/api/annotation-qa/apply/${encodeURIComponent(state.annotationQaJobId)}`, {
+      method: "POST",
+      body: "{}",
+    });
+    state.datasetYaml = result.dataset_yaml;
+    state.annotationQaCorrectedDatasetYaml = result.dataset_yaml;
+    setClassNames(result.classes || []);
+    renderDatasetSummary(result.summary);
+    if (state.annotationQaReport?.summary) {
+      state.annotationQaReport.summary.corrected_dataset_yaml = result.dataset_yaml;
+      state.annotationQaReport.summary.corrected_dataset_root = result.corrected_dataset_root;
+      state.annotationQaReport.summary.applied_fixes = result.applied_fixes;
+    }
+    await loadAnnotationQaResults(state.annotationQaJobId);
+    setMessage(`${result.message} You can train or download this corrected dataset now.`);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.annotationQaApplyingFixes = false;
+    syncActionStates();
+  }
+}
+
+async function downloadCorrectedDataset() {
+  if (!state.annotationQaCorrectedDatasetYaml || state.downloads.has("corrected_dataset")) {
+    return;
+  }
+  state.downloads.add("corrected_dataset");
+  syncAnnotationQaActionStates();
+  const previousDatasetYaml = state.datasetYaml;
+  state.datasetYaml = state.annotationQaCorrectedDatasetYaml;
+  try {
+    await downloadPreparedDataset();
+  } finally {
+    state.datasetYaml = previousDatasetYaml || state.annotationQaCorrectedDatasetYaml;
+    state.downloads.delete("corrected_dataset");
+    syncAnnotationQaActionStates();
   }
 }
 
@@ -2054,6 +2152,10 @@ function metricsText(metrics = {}) {
   return entries
     .map(([key, value]) => `${key.replace(/_/g, " ")}: ${metricText(value)}`)
     .join(" · ");
+}
+
+function issueCanAcceptSamBox(issue) {
+  return issue?.fix_type === "replace_box" && Array.isArray(issue.recommended_bbox) && issue.recommended_bbox.length === 4;
 }
 
 function renderAnnotationQaReview(issue) {
@@ -2084,11 +2186,15 @@ function renderAnnotationQaReview(issue) {
   $("qa-review-details").innerHTML = `
     <div><dt>Score</dt><dd>${metricText(issue.score)}</dd></div>
     <div><dt>Class</dt><dd>${escapeHtml(classDetail)}</dd></div>
+    <div><dt>Recommended box</dt><dd>${escapeHtml(bboxText(issue.recommended_bbox))}</dd></div>
+    <div><dt>Accepted fix</dt><dd>${issue.accepted_fix === "sam_box" ? "SAM box" : "none"}</dd></div>
     <div><dt>Message</dt><dd>${escapeHtml(issue.message || issue.issue_type || "")}</dd></div>
     <div><dt>YOLO box</dt><dd>${escapeHtml(bboxText(issue.original_bbox))}</dd></div>
     <div><dt>SAM box</dt><dd>${escapeHtml(bboxText(issue.sam_bbox))}</dd></div>
     <div><dt>Metrics</dt><dd>${escapeHtml(metricsText(issue.metrics))}</dd></div>
   `;
+  $("qa-review-accept-sam").disabled = !issueCanAcceptSamBox(issue);
+  $("qa-review-accept-sam").textContent = issue.accepted_fix === "sam_box" ? "SAM Box Accepted" : "Accept SAM Box";
 
   const issues = annotationQaIssuesList();
   const index = issues.findIndex((item) => item.issue_id === issue.issue_id);
@@ -4435,6 +4541,8 @@ $("run-annotation-qa").addEventListener("click", runAnnotationQa);
 $("stop-annotation-qa").addEventListener("click", stopAnnotationQa);
 $("download-annotation-qa-csv").addEventListener("click", () => downloadAnnotationQaReport("csv"));
 $("download-annotation-qa-json").addEventListener("click", () => downloadAnnotationQaReport("json"));
+$("apply-annotation-qa-fixes").addEventListener("click", applyAnnotationQaFixes);
+$("download-corrected-dataset").addEventListener("click", downloadCorrectedDataset);
 $("dataset-cleanup-toggle").addEventListener("click", toggleDatasetCleanupMenu);
 $("clear-dataset-uploads").addEventListener("click", () => {
   closeDatasetCleanupMenu();
@@ -4574,6 +4682,11 @@ if ($("qa-review-modal")) {
   });
   $("qa-review-status").addEventListener("change", () => {
     setActiveAnnotationQaReviewStatus($("qa-review-status").value);
+  });
+  $("qa-review-accept-sam").addEventListener("click", () => {
+    if (state.annotationQaActiveIssueId) {
+      acceptAnnotationQaSamBox(state.annotationQaActiveIssueId);
+    }
   });
   $("qa-review-needs-fix").addEventListener("click", () => setActiveAnnotationQaReviewStatus("needs_fix"));
   $("qa-review-false-positive").addEventListener("click", () => setActiveAnnotationQaReviewStatus("false_positive"));

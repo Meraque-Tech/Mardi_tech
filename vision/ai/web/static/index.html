@@ -266,6 +266,8 @@
             <div class="button-row annotation-qa-downloads">
               <button id="download-annotation-qa-csv" class="secondary compact" type="button" disabled>Download CSV</button>
               <button id="download-annotation-qa-json" class="secondary compact" type="button" disabled>Download JSON</button>
+              <button id="apply-annotation-qa-fixes" class="secondary compact" type="button" disabled>Apply Accepted Fixes</button>
+              <button id="download-corrected-dataset" class="secondary compact" type="button" disabled>Download Corrected Dataset</button>
             </div>
             <div class="annotation-qa-issues" id="annotation-qa-issues"></div>
           </section>
@@ -1213,6 +1215,7 @@
               </select>
             </label>
             <div class="qa-review-actions">
+              <button id="qa-review-accept-sam" class="primary" type="button">Accept SAM Box</button>
               <button id="qa-review-needs-fix" class="primary" type="button">Needs Fix</button>
               <button id="qa-review-false-positive" class="secondary" type="button">False Positive</button>
               <button id="qa-review-ignore" class="secondary" type="button">Ignore</button>
