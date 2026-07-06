@@ -1199,35 +1199,47 @@
             <div id="qa-review-empty" class="qa-review-empty" hidden>No preview available for this issue.</div>
           </div>
           <aside class="qa-review-side">
-            <dl class="qa-review-details" id="qa-review-details"></dl>
+            <div class="qa-review-decision">
+              <span>Issue</span>
+              <strong id="qa-review-issue-summary"></strong>
+              <p id="qa-review-suggestion"></p>
+            </div>
             <div class="qa-review-legend">
               <span><i class="qa-legend-original"></i> YOLO box</span>
               <span><i class="qa-legend-mask"></i> SAM mask</span>
               <span><i class="qa-legend-sam"></i> SAM box</span>
             </div>
             <div class="qa-review-pending-fix" id="qa-review-pending-fix"></div>
-            <label>
-              Corrected class
-              <select id="qa-review-class-fix"></select>
-            </label>
-            <label>
-              Triage status
-              <select id="qa-review-status">
-                <option value="unreviewed">unreviewed</option>
-                <option value="fix_accepted">correction queued</option>
-                <option value="needs_fix">needs fix</option>
-                <option value="false_positive">false positive</option>
-                <option value="accepted">accepted</option>
-                <option value="ignored">ignored</option>
-              </select>
-            </label>
             <div class="qa-review-actions">
-              <button id="qa-review-accept-sam" class="primary" type="button">Use SAM Box</button>
-              <button id="qa-review-accept-class" class="secondary" type="button">Use Selected Class</button>
-              <button id="qa-review-needs-fix" class="primary" type="button">Flag Manual Fix</button>
+              <button id="qa-review-keep-yolo" class="primary" type="button">Keep YOLO box</button>
+              <button id="qa-review-accept-sam" class="primary" type="button">Replace with SAM box</button>
+              <button id="qa-review-needs-fix" class="primary" type="button">Send to manual fix</button>
               <button id="qa-review-false-positive" class="secondary" type="button">False Positive</button>
               <button id="qa-review-ignore" class="secondary" type="button">Ignore</button>
             </div>
+            <details class="qa-review-corrections">
+              <summary>Class and status</summary>
+              <label>
+                Corrected class
+                <select id="qa-review-class-fix"></select>
+              </label>
+              <button id="qa-review-accept-class" class="secondary compact" type="button">Use Selected Class</button>
+              <label>
+                Triage status
+                <select id="qa-review-status">
+                  <option value="unreviewed">unreviewed</option>
+                  <option value="fix_accepted">correction queued</option>
+                  <option value="needs_fix">manual fix</option>
+                  <option value="false_positive">false positive</option>
+                  <option value="accepted">YOLO kept</option>
+                  <option value="ignored">ignored</option>
+                </select>
+              </label>
+            </details>
+            <details class="qa-review-raw-details">
+              <summary>Details</summary>
+              <dl class="qa-review-details" id="qa-review-details"></dl>
+            </details>
             <div class="qa-review-nav">
               <button id="qa-review-prev" class="secondary compact" type="button">Previous</button>
               <button id="qa-review-next" class="secondary compact" type="button">Next</button>
@@ -1237,6 +1249,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=annotation-qa-review-keynav-20260706"></script>
+    <script src="/static/app.js?v=annotation-qa-review-simplified-20260706"></script>
   </body>
 </html>

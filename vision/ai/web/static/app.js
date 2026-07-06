@@ -1841,8 +1841,8 @@ function annotationQaReviewStatusLabel(status) {
   const labels = {
     unreviewed: "unreviewed",
     fix_accepted: "correction queued",
-    needs_fix: "needs fix",
-    accepted: "accepted",
+    needs_fix: "manual fix",
+    accepted: "YOLO kept",
     false_positive: "false positive",
     ignored: "ignored",
   };
@@ -2274,6 +2274,92 @@ function metricsText(metrics = {}) {
     .join(" · ");
 }
 
+function bboxArea(bbox) {
+  if (!Array.isArray(bbox) || bbox.length !== 4) {
+    return 0;
+  }
+  const [x1, y1, x2, y2] = bbox.map((value) => Number(value) || 0);
+  return Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+}
+
+function qaLevel(value, mediumAt, highAt) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "Unknown";
+  }
+  if (numeric >= highAt) {
+    return "High";
+  }
+  if (numeric >= mediumAt) {
+    return "Medium";
+  }
+  return "Low";
+}
+
+function annotationQaBoxDifferenceText(issue) {
+  const originalArea = bboxArea(issue.original_bbox);
+  const samArea = bboxArea(issue.sam_bbox || issue.recommended_bbox);
+  if (!originalArea || !samArea) {
+    return "Box difference: Unknown";
+  }
+  const ratio = samArea / originalArea;
+  if (ratio < 0.7) {
+    return "Box difference: SAM is smaller";
+  }
+  if (ratio > 1.3) {
+    return "Box difference: SAM is larger";
+  }
+  return "Box difference: Similar size";
+}
+
+function annotationQaReviewSummary(issue) {
+  const type = String(issue.issue_type || "");
+  const summaries = {
+    low_box_agreement: "YOLO and SAM boxes do not agree closely.",
+    loose_box: "YOLO box may include too much background.",
+    shifted_box: "SAM found the object center in a different place.",
+    low_mask_coverage: "SAM mask covers only a small part of the YOLO box.",
+    possibly_tight_box: "YOLO box may be too tight around the object.",
+    empty_mask: "SAM could not find a usable mask inside the box.",
+  };
+  return summaries[type] || issue.message || "Review this annotation.";
+}
+
+function annotationQaReviewSuggestion(issue) {
+  const type = String(issue.issue_type || "");
+  if (type === "low_box_agreement" || type === "loose_box") {
+    return "Check whether the yellow YOLO box includes too much background. Use the blue SAM box only if it fits the plant better.";
+  }
+  if (type === "shifted_box") {
+    return "Confirm which box is centered on the correct plant. Send it to manual fix if either box targets the wrong object.";
+  }
+  if (type === "low_mask_coverage" || type === "empty_mask") {
+    return "The SAM result is uncertain. Keep the YOLO box if it is correct, otherwise send this to manual fix.";
+  }
+  if (type === "possibly_tight_box") {
+    return "Check whether the yellow YOLO box cuts off part of the plant.";
+  }
+  return "Choose the annotation to keep, or send it to manual fix when neither box is reliable.";
+}
+
+function annotationQaMetricSummaryText(issue) {
+  const metrics = issue.metrics || {};
+  const parts = [];
+  if (metrics.bbox_iou !== null && metrics.bbox_iou !== undefined) {
+    parts.push(`Overlap: ${qaLevel(metrics.bbox_iou, 0.45, 0.75)}`);
+  }
+  parts.push(annotationQaBoxDifferenceText(issue));
+  if (metrics.center_shift !== null && metrics.center_shift !== undefined) {
+    const shift = Number(metrics.center_shift);
+    let label = "Unknown";
+    if (Number.isFinite(shift)) {
+      label = shift < 0.08 ? "Small" : shift < 0.18 ? "Medium" : "Large";
+    }
+    parts.push(`Center shift: ${label}`);
+  }
+  return parts.join(" · ");
+}
+
 function issueCanAcceptSamBox(issue) {
   return issue?.fix_type === "replace_box" && Array.isArray(issue.recommended_bbox) && issue.recommended_bbox.length === 4;
 }
@@ -2360,6 +2446,8 @@ function renderAnnotationQaReview(issue) {
   $("qa-review-subtitle").textContent = `${issue.image_name || "image"} · ${issue.split || "split"} · ${issue.class_name || "class"}`;
   $("qa-review-subtitle").title = $("qa-review-subtitle").textContent;
   $("qa-review-status").value = issue.review_status || "unreviewed";
+  $("qa-review-issue-summary").textContent = annotationQaReviewSummary(issue);
+  $("qa-review-suggestion").textContent = annotationQaReviewSuggestion(issue);
 
   const image = $("qa-review-image");
   const empty = $("qa-review-empty");
@@ -2374,19 +2462,21 @@ function renderAnnotationQaReview(issue) {
   }
 
   $("qa-review-details").innerHTML = `
+    <div><dt>Message</dt><dd>${escapeHtml(issue.message || issue.issue_type || "")}</dd></div>
+    <div><dt>Summary</dt><dd>${escapeHtml(annotationQaMetricSummaryText(issue))}</dd></div>
     <div><dt>Score</dt><dd>${metricText(issue.score)}</dd></div>
     <div><dt>Class</dt><dd>${escapeHtml(classDetail)}</dd></div>
-    <div><dt>Recommended box</dt><dd>${escapeHtml(bboxText(issue.recommended_bbox))}</dd></div>
-    <div><dt>Queued correction</dt><dd>${escapeHtml(acceptedFixText(issue))}</dd></div>
-    <div><dt>Message</dt><dd>${escapeHtml(issue.message || issue.issue_type || "")}</dd></div>
     <div><dt>YOLO box</dt><dd>${escapeHtml(bboxText(issue.original_bbox))}</dd></div>
     <div><dt>SAM box</dt><dd>${escapeHtml(bboxText(issue.sam_bbox))}</dd></div>
+    <div><dt>Recommended box</dt><dd>${escapeHtml(bboxText(issue.recommended_bbox))}</dd></div>
     <div><dt>Metrics</dt><dd>${escapeHtml(metricsText(issue.metrics))}</dd></div>
+    <div><dt>Queued correction</dt><dd>${escapeHtml(acceptedFixText(issue))}</dd></div>
   `;
   renderAnnotationQaPendingFix(issue);
   renderAnnotationQaClassSelector(issue);
+  $("qa-review-keep-yolo").textContent = issue.review_status === "accepted" ? "YOLO box kept" : "Keep YOLO box";
   $("qa-review-accept-sam").disabled = !issueCanAcceptSamBox(issue);
-  $("qa-review-accept-sam").textContent = issue.accepted_fix === "sam_box" ? "SAM Box Queued" : "Use SAM Box";
+  $("qa-review-accept-sam").textContent = issue.accepted_fix === "sam_box" ? "SAM box queued" : "Replace with SAM box";
 
   const issues = annotationQaReviewIssuesList(issue);
   const index = issues.findIndex((item) => item.issue_id === issue.issue_id);
@@ -4908,6 +4998,7 @@ if ($("qa-review-modal")) {
       acceptAnnotationQaSamBox(state.annotationQaActiveIssueId);
     }
   });
+  $("qa-review-keep-yolo").addEventListener("click", () => setActiveAnnotationQaReviewStatus("accepted"));
   $("qa-review-accept-class").addEventListener("click", () => {
     if (state.annotationQaActiveIssueId) {
       acceptAnnotationQaClassChange(state.annotationQaActiveIssueId);
