@@ -2059,6 +2059,9 @@ function metricsText(metrics = {}) {
 function renderAnnotationQaReview(issue) {
   const previewUrl = annotationQaPreviewUrl(issue);
   const severity = String(issue.severity || "low");
+  const hasClassId = issue.class_id !== null && issue.class_id !== undefined;
+  const classLabel = issue.class_name || (hasClassId ? `class_${issue.class_id}` : "unknown");
+  const classDetail = hasClassId ? `${classLabel} (ID ${issue.class_id})` : classLabel;
   $("qa-review-severity").className = `qa-severity ${severity}`;
   $("qa-review-severity").textContent = severity;
   $("qa-review-title").textContent = issue.issue_type ? issue.issue_type.replace(/_/g, " ") : "Annotation QA Review";
@@ -2080,6 +2083,7 @@ function renderAnnotationQaReview(issue) {
 
   $("qa-review-details").innerHTML = `
     <div><dt>Score</dt><dd>${metricText(issue.score)}</dd></div>
+    <div><dt>Class</dt><dd>${escapeHtml(classDetail)}</dd></div>
     <div><dt>Message</dt><dd>${escapeHtml(issue.message || issue.issue_type || "")}</dd></div>
     <div><dt>YOLO box</dt><dd>${escapeHtml(bboxText(issue.original_bbox))}</dd></div>
     <div><dt>SAM box</dt><dd>${escapeHtml(bboxText(issue.sam_bbox))}</dd></div>

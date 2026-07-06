@@ -1499,6 +1499,7 @@ textarea:focus {
 
 .qa-table {
   width: 100%;
+  min-width: 760px;
   border-collapse: collapse;
   font-size: 13px;
   table-layout: fixed;
@@ -1506,7 +1507,7 @@ textarea:focus {
 
 .qa-table th,
 .qa-table td {
-  padding: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: middle;
@@ -1533,7 +1534,7 @@ textarea:focus {
 }
 
 .qa-preview-cell {
-  width: 92px;
+  width: 104px;
 }
 
 .qa-issue-row {
@@ -1546,8 +1547,8 @@ textarea:focus {
 
 .qa-preview-button {
   display: block;
-  width: 76px;
-  height: 56px;
+  width: 84px;
+  height: 60px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -1562,27 +1563,32 @@ textarea:focus {
 
 .qa-review-inline-button {
   width: 100%;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .qa-table th:nth-child(1),
 .qa-table td:nth-child(1) {
-  width: 92px;
+  width: 104px;
+}
+
+.qa-table th:nth-child(2),
+.qa-table td:nth-child(2) {
+  width: 230px;
 }
 
 .qa-table th:nth-child(3),
 .qa-table td:nth-child(3) {
-  width: 150px;
+  width: 180px;
 }
 
 .qa-table th:nth-child(4),
 .qa-table td:nth-child(4) {
-  width: 64px;
+  width: 72px;
 }
 
 .qa-table th:nth-child(5),
 .qa-table td:nth-child(5) {
-  width: 128px;
+  width: 150px;
 }
 
 .qa-table td:nth-child(2) strong,
@@ -1597,8 +1603,8 @@ textarea:focus {
 .qa-preview-cell img,
 .qa-no-preview {
   display: block;
-  width: 76px;
-  height: 56px;
+  width: 84px;
+  height: 60px;
   border-radius: 6px;
   object-fit: cover;
 }
