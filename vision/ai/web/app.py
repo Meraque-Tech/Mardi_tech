@@ -138,6 +138,7 @@ WEB_TEST_PROGRESS_RE = re.compile(
     r"^WEB_TEST_PROGRESS\s+percent=(\d+)\s+stage=([A-Za-z0-9_-]+)(?:\s+detail=(.*))?$"
 )
 WEB_TEST_RUN_DIR_RE = re.compile(r"^WEB_TEST_RUN_DIR\s+path=(.+)$")
+TIMESTAMPED_RUN_SUFFIX_RE = re.compile(r"^(?P<base>.+)-\d{8}-\d{6}$")
 RUN_DIRECTORY_PREFIXES = ("Logging results to ", "Results saved to ")
 SPLIT_METADATA_FILE = ".split_metadata.json"
 DATASET_SUMMARY_FILE = ".web_dataset_summary.json"
@@ -419,6 +420,19 @@ def training_task_for_model_size(model_size: str) -> str:
 
 def default_project_for_training_task(task: str) -> str:
     return TRAINING_PROJECT_DEFAULTS.get(task, TRAINING_PROJECT_DEFAULTS["detect"])
+
+
+def timestamped_training_run_name(name: str, resume: bool = False, now: Optional[datetime] = None) -> str:
+    base_name = (name or "train").strip() or "train"
+    if resume:
+        return base_name
+
+    timestamp_source = now or datetime.now(MYT)
+    timestamp = timestamp_source.astimezone(MYT).strftime("%Y%m%d-%H%M%S")
+    match = TIMESTAMPED_RUN_SUFFIX_RE.match(base_name)
+    if match is not None:
+        base_name = match.group("base")
+    return f"{base_name}-{timestamp}"
 
 
 def is_known_training_project_default(project: str) -> bool:
@@ -5647,11 +5661,13 @@ def start_training(request: TrainRequest):
     if is_known_training_project_default(requested_project):
         requested_project = default_project_for_training_task(model_task)
     training_project_path = normalize_training_project_path(requested_project)
+    requested_name = (request.name or "train").strip() or "train"
+    run_name = timestamped_training_run_name(requested_name, resume=request.resume)
     resume_checkpoint = None
     resume_run_dir = None
     if request.resume:
         try:
-            resume_run_dir, _ = resolve_run_dir_details(requested_project, request.name)
+            resume_run_dir, _ = resolve_run_dir_details(requested_project, run_name)
         except HTTPException as exc:
             raise HTTPException(
                 status_code=400,
@@ -5670,6 +5686,8 @@ def start_training(request: TrainRequest):
     request_payload["task"] = model_task
     request_payload["model"] = model
     request_payload["project"] = str(training_project_path)
+    request_payload["requested_name"] = requested_name
+    request_payload["name"] = run_name
     report_context = {}
     if resume_run_dir:
         report_context = read_json_object(resume_run_dir / TRAINING_REPORT_CONTEXT_FILE)
@@ -5702,12 +5720,12 @@ def start_training(request: TrainRequest):
 
     training_run_info = {
         "requested_project": requested_project,
-        "requested_name": request.name,
+        "requested_name": requested_name,
         "project": str(training_project_path),
-        "name": request.name,
+        "name": run_name,
         "task": model_task,
         "model": model,
-        "expected_run_dir": str(training_project_path / request.name),
+        "expected_run_dir": str(training_project_path / run_name),
         "run_dir": str(resume_run_dir) if resume_run_dir else "",
         "resolution_type": "actual" if resume_run_dir else "pending",
         "current_epoch": 0,
@@ -5742,7 +5760,7 @@ def start_training(request: TrainRequest):
         "--activation", request.activation,
         "--seed", str(request.seed),
         "--project", str(training_project_path),
-        "--name", request.name,
+        "--name", run_name,
         "--disable-ultralytics-albumentations", str(request.disable_ultralytics_albumentations).lower(),
         "--mosaic", str(request.mosaic),
         "--close-mosaic", str(request.close_mosaic),

@@ -4191,6 +4191,9 @@ async function startTraining() {
     if (result.training_run?.requested_project) {
       $("project").value = result.training_run.requested_project;
     }
+    if (result.training_run?.name) {
+      $("run-name").value = result.training_run.name;
+    }
     updateCurrentRunDisplay({ ...(result.training_run || {}), running: true });
     pollStatus();
   } catch (error) {
