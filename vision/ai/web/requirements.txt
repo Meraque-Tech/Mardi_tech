@@ -5,7 +5,7 @@ python-multipart
 PyYAML
 roboflow
 ultralytics
-rfdetr
+rfdetr[train,loggers]
 onnx
 onnxruntime-gpu
 aiortc
