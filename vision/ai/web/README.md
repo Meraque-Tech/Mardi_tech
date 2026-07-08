@@ -308,9 +308,22 @@ batch        images per training step
 patience     early stopping patience
 save period  extra checkpoint interval; -1 keeps standard best.pt/last.pt
 project      output directory, default runs/detect
-run name     output run name, default train
-resume       continue from last.pt in the resolved project/run folder
+run name     base output run name; new runs append a MYT timestamp
+resume       continue from last.pt in the selected project/run folder
 ```
+
+For a new training run, the backend treats `Run name` as a base name and
+appends a Malaysia-time timestamp. For example, `train` becomes:
+
+```text
+train-YYYYMMDD-HHMMSS
+```
+
+If the field already ends with that timestamp pattern, the old suffix is
+replaced with a fresh timestamp. After training starts, the UI updates the
+`Run name` field to the resolved timestamped name. Resume mode keeps the
+selected run name unchanged so the backend can find the existing
+`weights/last.pt` checkpoint.
 
 Advanced controls:
 
@@ -418,17 +431,18 @@ metrics from YOLO validation.
 
 ## Outputs And Downloads
 
-Training outputs are saved under the selected project and run name. By default:
+Training outputs are saved under the selected project and resolved run name. By
+default, a new detection run is saved as:
 
 ```text
-runs/detect/train/
+runs/detect/train-YYYYMMDD-HHMMSS/
 ```
 
 Useful checkpoint files:
 
 ```text
-runs/detect/train/weights/best.pt
-runs/detect/train/weights/last.pt
+runs/detect/train-YYYYMMDD-HHMMSS/weights/best.pt
+runs/detect/train-YYYYMMDD-HHMMSS/weights/last.pt
 ```
 
 The UI can download:
@@ -450,7 +464,7 @@ from the most recent checkpoint.
 
 To resume from the selected project/run:
 
-1. Keep `Project` and `Run name` pointing at the previous run.
+1. Keep `Project` and `Run name` pointing at the previous timestamped run.
 2. Enable `Resume latest checkpoint`.
 3. Click `Start`.
 
@@ -466,7 +480,7 @@ Click `Stop` to send a stop signal to the running training process.
 After stopping, resume from the run's latest checkpoint when available:
 
 ```text
-runs/detect/train/weights/last.pt
+runs/detect/train-YYYYMMDD-HHMMSS/weights/last.pt
 ```
 
 ## Git-Ignored Runtime Files
