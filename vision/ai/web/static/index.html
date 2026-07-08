@@ -317,7 +317,7 @@
                     <option value="yolo26-xlarge">YOLO26 Extra large - yolo26x.pt</option>
                   </optgroup>
                   <optgroup label="Detection - RF-DETR">
-                    <option value="rfdetr-small">RF-DETR Small - rfdetr-small</option>
+                    <option value="rfdetr-nano">RF-DETR Nano - rfdetr-nano</option>
                   </optgroup>
                   <optgroup label="Instance Segmentation - YOLOv8">
                     <option value="nano-seg">YOLOv8 Nano instance segmentation - yolov8n-seg.pt</option>
@@ -486,7 +486,7 @@
                   <option value="8">8</option>
                 </select>
               </label>
-              <label>
+              <label data-ultralytics-only>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Optimizer used for weight updates. Auto lets Ultralytics choose based on model and training setup.">Optimizer</span>
                 <select id="optimizer">
                   <option value="auto">Auto</option>
@@ -512,7 +512,7 @@
                 <span class="tooltip-label" tabindex="0" data-tooltip="Initial learning rate. Smaller values fine-tune more gently; larger values learn faster but can destabilize.">Initial LR</span>
                 <input id="lr0" type="number" min="0" step="0.0001" value="0.001">
               </label>
-              <label>
+              <label data-ultralytics-only>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Final learning-rate factor. Final LR is lr0 multiplied by this value.">Final LR factor</span>
                 <input id="lrf" type="number" min="0" step="0.0001" value="0.01">
               </label>
@@ -530,7 +530,7 @@
                 <span class="tooltip-label" tabindex="0" data-tooltip="Warmup duration in epochs. Helps stabilize training at the beginning.">Warmup epochs</span>
                 <input id="warmup-epochs" type="number" min="0" step="0.1" value="3.0">
               </label>
-              <label>
+              <label data-ultralytics-only>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Freeze the first N layers for transfer learning. Leave blank to train all layers.">Freeze layers</span>
                 <input id="freeze" type="number" min="0" placeholder="blank">
               </label>
@@ -541,7 +541,7 @@
             </div>
             </div>
 
-            <div class="advanced-group">
+            <div class="advanced-group" data-ultralytics-only>
               <h3>Augmentation</h3>
             <p class="field-note">If unsure, keep the defaults.</p>
             <div class="grid three">
@@ -636,7 +636,7 @@
             </div>
             </div>
 
-            <div class="advanced-group">
+            <div class="advanced-group" data-ultralytics-only>
               <h3>Output</h3>
             <label class="checkbox-row inline-check">
               <input id="exist-ok" type="checkbox">
@@ -1040,6 +1040,13 @@
                 <label>
                   Weights file
                   <input id="inference-weight-file" type="file" accept=".pt,.onnx">
+                </label>
+                <label>
+                  Weights backend
+                  <select id="inference-upload-family">
+                    <option value="ultralytics" selected>Ultralytics YOLO</option>
+                    <option value="rfdetr">RF-DETR Nano</option>
+                  </select>
                 </label>
                 <p id="inference-weight-selection" class="file-selection">No weights file selected.</p>
                 <label class="checkbox-row" id="inference-convert-onnx-row" hidden>

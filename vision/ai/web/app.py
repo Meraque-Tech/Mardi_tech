@@ -134,6 +134,16 @@ TRAINING_PROJECT_DEFAULTS = {
     "semantic": "runs/semantic",
     "classify": "runs/classify",
 }
+RFDETR_DEFAULTS = {
+    "model_size": "rfdetr-nano",
+    "model": "rfdetr-nano",
+    "imgsz": 512,
+    "batch": 4,
+    "lr0": 1e-4,
+    "weight_decay": 1e-4,
+    "warmup_epochs": 0.0,
+    "cos_lr": False,
+}
 MODEL_REGISTRY = {
     key: {
         "family": "ultralytics",
@@ -147,10 +157,10 @@ MODEL_REGISTRY = {
     for key, value in MODEL_MAP.items()
 }
 MODEL_REGISTRY.update({
-    "rfdetr-small": {
+    "rfdetr-nano": {
         "family": "rfdetr",
         "task": "detect",
-        "model": "rfdetr-small",
+        "model": RFDETR_DEFAULTS["model"],
         "runner": RFDETR_TRAIN_SCRIPT,
         "project_default": TRAINING_PROJECT_DEFAULTS["rfdetr"],
     },
@@ -465,6 +475,14 @@ def default_project_for_model_size(model_size: str) -> str:
         "project_default",
         default_project_for_training_task(training_task_for_model_size(model_size)),
     )
+
+
+def rfdetr_training_value(request: TrainRequest, key: str):
+    request_value = getattr(request, key)
+    default_value = getattr(TrainRequest(), key)
+    if request_value == default_value:
+        return RFDETR_DEFAULTS[key]
+    return request_value
 
 
 def default_project_for_training_task(task: str) -> str:
@@ -4303,6 +4321,7 @@ def train_sessions():
 def run_inference(
     weight_source: str = Form("selected"),
     weight_path: str = Form(""),
+    weight_family: str = Form("auto"),
     convert_to_onnx: bool = Form(False),
     imgsz: int = Form(512),
     conf: float = Form(0.25),
@@ -4341,13 +4360,22 @@ def run_inference(
         weight_suffix = Path(weight_file.filename).suffix.lower()
         if weight_suffix not in INFERENCE_WEIGHT_EXTENSIONS:
             raise HTTPException(status_code=400, detail="Uploaded weights must be a .pt or .onnx file.")
+        normalized_family = str(weight_family or "ultralytics").strip().lower()
+        if normalized_family == "auto":
+            normalized_family = "ultralytics"
+        if normalized_family not in {"ultralytics", "rfdetr"}:
+            raise HTTPException(status_code=400, detail="Unknown inference weights backend.")
+        if normalized_family == "rfdetr" and weight_suffix != ".pt":
+            raise HTTPException(status_code=400, detail="Uploaded RF-DETR weights must be a .pt file.")
         if convert_to_onnx and weight_suffix != ".pt":
+            convert_to_onnx = False
+        if normalized_family == "rfdetr":
             convert_to_onnx = False
         weights_path = (INFERENCE_UPLOAD_ROOT / job_id / Path(weight_file.filename).name).resolve()
         ensure_inference_path(weights_path)
         save_upload(weight_file, weights_path, lambda *_args: None, "saving", "Saving inference weights")
         weights_label = f"uploaded {weights_path.name}{' -> ONNX' if convert_to_onnx else ''}"
-        inference_family = "ultralytics"
+        inference_family = normalized_family
     else:
         raise HTTPException(status_code=400, detail="Unknown inference weights source.")
 
@@ -5759,7 +5787,20 @@ def start_training(request: TrainRequest):
         if model_family == "ultralytics":
             model = str(resume_checkpoint)
 
+    training_values = {
+        "imgsz": request.imgsz,
+        "batch": request.batch,
+        "lr0": request.lr0,
+        "weight_decay": request.weight_decay,
+        "warmup_epochs": request.warmup_epochs,
+        "cos_lr": request.cos_lr,
+    }
+    if model_family == "rfdetr":
+        for key in training_values:
+            training_values[key] = rfdetr_training_value(request, key)
+
     request_payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    request_payload.update(training_values)
     request_payload["family"] = model_family
     request_payload["task"] = model_task
     request_payload["model"] = model
@@ -5834,14 +5875,14 @@ def start_training(request: TrainRequest):
         str(train_script),
         "--model", model,
         "--epochs", str(request.epochs),
-        "--imgsz", str(request.imgsz),
-        "--batch", str(request.batch),
+        "--imgsz", str(training_values["imgsz"]),
+        "--batch", str(training_values["batch"]),
         "--patience", str(request.patience),
         "--save-period", str(request.save_period),
         "--workers", str(request.workers),
-        "--lr0", str(request.lr0),
-        "--weight-decay", str(request.weight_decay),
-        "--warmup-epochs", str(request.warmup_epochs),
+        "--lr0", str(training_values["lr0"]),
+        "--weight-decay", str(training_values["weight_decay"]),
+        "--warmup-epochs", str(training_values["warmup_epochs"]),
         "--seed", str(request.seed),
         "--project", str(training_project_path),
         "--name", run_name,
@@ -5880,7 +5921,7 @@ def start_training(request: TrainRequest):
     device = request.device or os.getenv("TRAINING_DEVICE")
     if device:
         cmd.extend(["--device", device])
-    if request.cos_lr:
+    if training_values["cos_lr"]:
         cmd.append("--cos-lr")
     if model_family == "ultralytics" and request.freeze is not None:
         cmd.extend(["--freeze", str(request.freeze)])

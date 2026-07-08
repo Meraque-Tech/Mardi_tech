@@ -259,6 +259,416 @@ Add a concise assessment containing:
 - Image and object-instance counts per class
 - Underrepresented classes and their associated evaluation risk
 
+## Additional Object Detection Backend Plan
+
+### Objective
+
+Add compatibility for three additional object detection model families while
+keeping the current YOLO and RF-DETR workflows stable:
+
+1. YOLO-to-COCO converter
+2. D-FINE-N backend
+3. RT-DETRv2-S backend
+4. LW-DETR-T backend
+
+The web UI should continue to accept the current prepared YOLO detection
+dataset layout, then adapt it internally for backends that expect COCO-style
+annotations.
+
+```text
+Prepared YOLO dataset
+  data.yaml
+  train/images
+  train/labels
+  valid/images
+  valid/labels
+  test/images
+  test/labels
+
+→ backend-specific adapter
+→ backend-specific trainer
+→ normalized web UI run output
+```
+
+The first implementation should keep dataset preparation source-neutral and
+format-stable. Dataset preparation always produces the canonical YOLO dataset;
+the selected training backend decides at training time whether it can use YOLO
+directly or needs a COCO conversion.
+
+```text
+Roboflow / ZIP / Folder
+→ prepared YOLO dataset
+→ data.yaml + train/valid/test labels
+→ selected backend needs COCO
+→ backend converts YOLO labels to COCO JSON
+→ train D-FINE / RT-DETRv2 / LW-DETR
+```
+
+Roboflow-native COCO export can be considered later as an optimization, but the
+baseline compatibility path should rely on local YOLO-to-COCO conversion so
+uploaded ZIP and folder datasets work the same way as Roboflow datasets.
+
+All new backends should expose the same UI-facing run structure:
+
+```text
+runs/<family>/<run-name>/
+  weights/
+    best.pt
+    last.pt
+  results.csv
+  web_metrics.json
+  training_report_context.json
+```
+
+If a backend produces native `.pth` checkpoints, either copy/symlink the
+selected checkpoints into the normalized `weights/` directory or extend the UI
+to recognize `.pth` as a first-class trained-weight artifact.
+
+### 1. YOLO-to-COCO Converter
+
+Add a reusable converter, for example:
+
+```text
+vision/ai/train/yolo_to_coco.py
+```
+
+Responsibilities:
+
+- Read the prepared YOLO `data.yaml`.
+- Resolve train, validation, and test image/label directories.
+- Read class names from `names`.
+- Convert YOLO normalized boxes:
+
+```text
+class_id x_center y_center width height
+```
+
+to COCO boxes:
+
+```text
+[x_min, y_min, width_px, height_px]
+```
+
+- Preserve image dimensions, image IDs, annotation IDs, category IDs, and class
+  names.
+- Skip or report malformed labels without silently corrupting the dataset.
+- Emit a conversion summary with image counts, annotation counts, missing label
+  counts, malformed rows, and unknown class IDs.
+
+Recommended output layout:
+
+```text
+datasets/coco/<dataset-name>/
+  train2017/
+  val2017/
+  test2017/
+  annotations/
+    instances_train2017.json
+    instances_val2017.json
+    instances_test2017.json
+  conversion_summary.json
+```
+
+Validation checks:
+
+- Every COCO image entry points to an existing image.
+- Every bbox has positive width and height.
+- Category IDs are stable and match the original YOLO class IDs.
+- Empty-label images remain valid negative examples.
+
+### 2. D-FINE-N Backend
+
+Use the official D-FINE object detection repository:
+
+```text
+https://github.com/Peterande/D-FINE
+```
+
+Target model:
+
+```text
+D-FINE-N
+```
+
+Add a backend runner, for example:
+
+```text
+vision/ai/train/train_dfine.py
+```
+
+Responsibilities:
+
+- Accept common web UI training arguments:
+  - dataset path
+  - epochs
+  - image size
+  - batch size
+  - workers
+  - device
+  - project
+  - run name
+  - resume flag
+- Convert the prepared YOLO dataset to COCO using the shared converter.
+- Generate or patch a D-FINE custom config for the number of classes, dataset
+  paths, image size, batch size, workers, and output directory.
+- Launch D-FINE training with the official command pattern:
+
+```bash
+torchrun train.py \
+  -c configs/dfine/custom/dfine_hgnetv2_n_custom.yml \
+  --use-amp \
+  --seed <seed>
+```
+
+- Support tuning from pretrained weights when available.
+- Capture logs and emit web UI progress markers.
+- Normalize checkpoints into:
+
+```text
+runs/dfine/<run-name>/weights/best.pt
+runs/dfine/<run-name>/weights/last.pt
+```
+
+- Convert D-FINE logs/metrics into `results.csv` and `web_metrics.json`.
+
+UI integration:
+
+- Add model selector entry:
+
+```text
+Detection - D-FINE
+  D-FINE Nano - dfine-n
+```
+
+- Add model registry entry:
+
+```text
+family: dfine
+task: detect
+model: dfine-n
+runner: train_dfine.py
+project_default: runs/dfine
+dataset_format: coco
+```
+
+Inference/testing:
+
+- Add `vision/ai/web/infer_dfine.py`.
+- Route selected `runs/dfine/.../weights/best.pt` weights through the D-FINE
+  inference adapter.
+- Return the same inference JSON shape as YOLO/RF-DETR.
+
+Docker considerations:
+
+- Install D-FINE dependencies.
+- Decide whether the D-FINE repo is vendored under `third_party/`, cloned at
+  image build time, or installed as a package if packaging becomes available.
+
+### 3. RT-DETRv2-S Backend
+
+Use the official RT-DETR repository:
+
+```text
+https://github.com/lyuwenyu/RT-DETR
+```
+
+Target model:
+
+```text
+RT-DETRv2-S
+```
+
+This is different from Ultralytics RT-DETR-L/X support. Ultralytics support is
+not enough for RT-DETRv2-S specifically, so this should be treated as a
+separate backend family.
+
+Add a backend runner, for example:
+
+```text
+vision/ai/train/train_rtdetrv2.py
+```
+
+Responsibilities:
+
+- Accept common web UI training arguments.
+- Convert prepared YOLO datasets to COCO.
+- Generate or patch the RT-DETRv2-S config for:
+  - class count
+  - COCO annotation paths
+  - image folders
+  - batch size
+  - epoch count
+  - image size
+  - output directory
+  - pretrained checkpoint
+- Launch official RT-DETRv2 PyTorch training.
+- Capture logs and emit web UI progress markers.
+- Normalize checkpoints into:
+
+```text
+runs/rtdetrv2/<run-name>/weights/best.pt
+runs/rtdetrv2/<run-name>/weights/last.pt
+```
+
+- Convert validation metrics into the shared `results.csv` and
+  `web_metrics.json` format.
+
+UI integration:
+
+- Add model selector entry:
+
+```text
+Detection - RT-DETRv2
+  RT-DETRv2 Small - rtdetrv2-s
+```
+
+- Add model registry entry:
+
+```text
+family: rtdetrv2
+task: detect
+model: rtdetrv2-s
+runner: train_rtdetrv2.py
+project_default: runs/rtdetrv2
+dataset_format: coco
+```
+
+Inference/testing:
+
+- Add `vision/ai/web/infer_rtdetrv2.py`.
+- Support image/video inference and prepared test split evaluation.
+- Normalize predictions to the same UI inference result JSON shape.
+
+Docker considerations:
+
+- Install RT-DETR repo dependencies.
+- Confirm CUDA/PyTorch compatibility with the existing CUDA base image.
+- Decide how pretrained weights are downloaded/cached.
+
+### 4. LW-DETR-T Backend
+
+Use the official LW-DETR repository:
+
+```text
+https://github.com/Atten4Vis/LW-DETR
+```
+
+Target model:
+
+```text
+LW-DETR-tiny
+```
+
+Use `lwdetr-tiny` or `lwdetr-t` consistently in the UI, but document that this
+maps to the official LW-DETR tiny model.
+
+Add a backend runner, for example:
+
+```text
+vision/ai/train/train_lwdetr.py
+```
+
+Responsibilities:
+
+- Accept common web UI training arguments.
+- Convert the prepared YOLO dataset to COCO2017-style layout.
+- Generate or patch LW-DETR tiny training config/script arguments.
+- Launch LW-DETR training through the official scripts or equivalent Python
+  entrypoint.
+- Capture logs and emit web UI progress markers.
+- Normalize checkpoints into:
+
+```text
+runs/lwdetr/<run-name>/weights/best.pt
+runs/lwdetr/<run-name>/weights/last.pt
+```
+
+- Convert training/validation metrics into `results.csv` and
+  `web_metrics.json`.
+
+UI integration:
+
+- Add model selector entry:
+
+```text
+Detection - LW-DETR
+  LW-DETR Tiny - lwdetr-tiny
+```
+
+- Add model registry entry:
+
+```text
+family: lwdetr
+task: detect
+model: lwdetr-tiny
+runner: train_lwdetr.py
+project_default: runs/lwdetr
+dataset_format: coco
+```
+
+Inference/testing:
+
+- Add `vision/ai/web/infer_lwdetr.py`.
+- Support image/video inference and prepared test split evaluation.
+- Normalize predictions to the common inference JSON shape.
+
+Docker considerations:
+
+- LW-DETR is likely the most Docker-heavy backend.
+- Add compiler/build tooling if CUDA operators must be compiled.
+- Confirm compatibility with the existing CUDA runtime image. If build tools are
+  required, consider changing the training image from a runtime CUDA image to a
+  devel CUDA image or using a multi-stage build.
+- Cache compiled operators and pretrained weights where practical.
+
+### Shared Backend Integration Tasks
+
+Update backend registry and run discovery:
+
+- Add project defaults:
+
+```text
+runs/dfine
+runs/rtdetrv2
+runs/lwdetr
+```
+
+- Include the new roots in training session discovery.
+- Include the new roots in inference weight discovery.
+- Track `family` in `training_report_context.json`.
+
+Update metrics/reporting:
+
+- Add family-aware metric readers.
+- Keep the report generator consuming the normalized metric shape rather than
+  backend-specific files.
+- Include backend family and native model name in generated reports.
+
+Update inference routing:
+
+- Route selected weights by `family`.
+- Keep uploaded weights defaulting to Ultralytics unless a user-facing selector
+  is added for uploaded weight family.
+
+Update tests:
+
+- Add converter unit tests with small synthetic YOLO datasets.
+- Add model registry tests for each backend entry.
+- Add run discovery tests for the new `runs/<family>` roots.
+- Add metrics parser tests with sample backend logs/results.
+- Add inference routing tests that verify family-specific adapters are selected.
+
+### Recommended Implementation Order
+
+1. Add and test the YOLO-to-COCO converter.
+2. Add D-FINE-N backend.
+3. Add RT-DETRv2-S backend.
+4. Add LW-DETR-T backend.
+
+This order keeps the first milestone focused on reusable dataset conversion,
+then adds the clearest custom-dataset backend before moving to the heavier
+RT-DETRv2 and LW-DETR integrations.
+
 ### 4. Training Configuration
 
 Keep only the settings needed to understand the experiment in the main report:

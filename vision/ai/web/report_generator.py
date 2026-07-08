@@ -379,23 +379,40 @@ def _label_quality_rows(summary: dict) -> list[list]:
 def _short_config_rows(context: dict, run_dir: Path) -> list[list]:
     hyperparameters = context.get("hyperparameters") or _load_yaml(run_dir / "args.yaml")
     rows = [["Setting", "Value"]]
-    settings = (
-        ("Epochs", "epochs"),
-        ("Image size", "imgsz"),
-        ("Batch size", "batch"),
-        ("Optimizer", "optimizer"),
-        ("Initial LR", "lr0"),
-        ("Final LR factor", "lrf"),
-        ("Cosine LR", "cos_lr"),
-        ("Early-stopping patience", "patience"),
-        ("Transfer-learning checkpoint", "model"),
-        ("Random seed", "seed"),
-        ("Deterministic mode", "deterministic"),
-    )
+    family = str(context.get("family") or hyperparameters.get("family") or "").lower()
+    if family == "rfdetr":
+        settings = (
+            ("Epochs", "epochs"),
+            ("Image size", "imgsz"),
+            ("Batch size", "batch"),
+            ("Initial LR", "lr0"),
+            ("Weight decay", "weight_decay"),
+            ("Warmup epochs", "warmup_epochs"),
+            ("Cosine LR", "cos_lr"),
+            ("Early-stopping patience", "patience"),
+            ("Transfer-learning checkpoint", "model"),
+            ("Random seed", "seed"),
+        )
+    else:
+        settings = (
+            ("Epochs", "epochs"),
+            ("Image size", "imgsz"),
+            ("Batch size", "batch"),
+            ("Optimizer", "optimizer"),
+            ("Initial LR", "lr0"),
+            ("Final LR factor", "lrf"),
+            ("Cosine LR", "cos_lr"),
+            ("Early-stopping patience", "patience"),
+            ("Transfer-learning checkpoint", "model"),
+            ("Random seed", "seed"),
+            ("Deterministic mode", "deterministic"),
+        )
     for label, key in settings:
         value = _first_present(hyperparameters.get(key), context.get(key))
         if _nonempty(value):
             rows.append([label, value])
+    if family == "rfdetr":
+        return rows
     augmentation_keys = ("mosaic", "mixup", "copy_paste", "degrees", "translate", "scale", "fliplr", "flipud", "hsv_h", "hsv_s", "hsv_v")
     augmentation = [
         f"{key}={hyperparameters[key]}"

@@ -132,6 +132,34 @@ class CollapsibleSectionTests(unittest.TestCase):
         for value, checkpoint in expected_options.items():
             self.assertEqual(model_map[value], checkpoint)
 
+    def test_rfdetr_nano_backend_is_exposed_with_backend_specific_controls(self):
+        markup = INDEX_HTML.read_text(encoding="utf-8")
+        script = APP_JS.read_text(encoding="utf-8")
+        app_source = APP_PY.read_text(encoding="utf-8")
+        train_source = (WEB_DIR.parent / "train" / "train_rfdetr.py").read_text(encoding="utf-8")
+        infer_source = (WEB_DIR / "infer_rfdetr.py").read_text(encoding="utf-8")
+
+        self.assertIn('optgroup label="Detection - RF-DETR"', markup)
+        self.assertIn('<option value="rfdetr-nano">RF-DETR Nano - rfdetr-nano</option>', markup)
+        self.assertNotIn('option value="rfdetr-small"', markup)
+        self.assertIn('"rfdetr-nano": {', app_source)
+        self.assertIn('"model": "rfdetr-nano"', app_source)
+        self.assertIn('default="rfdetr-nano"', train_source)
+        self.assertIn('or "rfdetr-nano"', infer_source)
+
+        self.assertIn('const RFDETR_DEFAULTS = {', script)
+        self.assertIn('lr0: 0.0001', script)
+        self.assertIn('"weight-decay": 0.0001', script)
+        self.assertIn('"warmup-epochs": 0', script)
+        self.assertIn('return RFDETR_MODEL_SIZE;', script)
+        self.assertIn('data-ultralytics-only', markup)
+        self.assertIn('function syncModelFamilyControls', script)
+        self.assertIn('document.querySelectorAll("[data-ultralytics-only]")', script)
+
+        self.assertIn('weight_family: str = Form("auto")', app_source)
+        self.assertIn('id="inference-upload-family"', markup)
+        self.assertIn('form.append("weight_family"', script)
+
     def test_optional_sam_annotation_qa_controls_are_exposed(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
@@ -452,6 +480,14 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("--auto-augment", app_source)
         self.assertIn("get_training_augmentations(config)", train_source)
         self.assertIn("nullcontext()", train_source)
+
+    def test_rfdetr_report_config_uses_backend_specific_rows(self):
+        source = REPORT_GENERATOR.read_text(encoding="utf-8")
+
+        self.assertIn('family == "rfdetr"', source)
+        self.assertIn('("Weight decay", "weight_decay")', source)
+        self.assertIn('("Warmup epochs", "warmup_epochs")', source)
+        self.assertIn('if family == "rfdetr":\n        return rows', source)
 
 
 if __name__ == "__main__":

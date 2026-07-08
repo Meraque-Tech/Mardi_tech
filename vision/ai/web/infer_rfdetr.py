@@ -104,10 +104,10 @@ def model_id_from_run(weights_path: Path) -> str:
         context.get("model")
         or context.get("hyperparameters", {}).get("model")
         or context.get("hyperparameters", {}).get("model_size")
-        or "rfdetr-small"
+        or "rfdetr-nano"
     )
     model_id = str(model_id).strip().lower()
-    return model_id if model_id in MODEL_CLASSES else "rfdetr-small"
+    return model_id if model_id in MODEL_CLASSES else "rfdetr-nano"
 
 
 def class_names_from_run(weights_path: Path) -> list[str]:

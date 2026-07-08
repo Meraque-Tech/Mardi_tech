@@ -128,6 +128,16 @@ const CONTROL_DEFAULTS = {
   ...AUGMENTATION_DEFAULTS,
 };
 
+const RFDETR_MODEL_SIZE = "rfdetr-nano";
+const RFDETR_DEFAULTS = {
+  imgsz: 512,
+  batch: 4,
+  lr0: 0.0001,
+  "weight-decay": 0.0001,
+  "warmup-epochs": 0,
+  "cos-lr": false,
+};
+
 const TASK_PROJECT_DEFAULTS = {
   detect: "runs/detect",
   rfdetr: "runs/rfdetr",
@@ -225,7 +235,7 @@ function defaultProjectForModelSize(modelSize) {
 
 function modelSizeForTask(task, currentModelSize) {
   if (task === "rfdetr") {
-    return "rfdetr-small";
+    return RFDETR_MODEL_SIZE;
   }
   let base = String(currentModelSize || CONTROL_DEFAULTS["model-size"])
     .replace(/-(seg|sem|cls)$/i, "");
@@ -263,17 +273,23 @@ function syncProjectWithModelTask() {
 }
 
 function applyModelFamilyDefaults() {
-  if ($("model-size").value !== "rfdetr-small") {
+  if (taskForModelSize($("model-size").value) !== "rfdetr") {
     return;
   }
-  const imgsz = $("imgsz");
-  if (imgsz && ["", "640"].includes(String(imgsz.value || ""))) {
-    imgsz.value = "512";
-  }
-  const batch = $("batch");
-  if (batch && Number(batch.value) > 8) {
-    batch.value = "4";
-  }
+  Object.entries(RFDETR_DEFAULTS).forEach(([id, value]) => setControlValue(id, value));
+}
+
+function syncModelFamilyControls() {
+  const trainingLocked = state.running || state.isStarting || state.isStopping;
+  const locked = trainingLocked || state.testRunning || state.testStarting || state.testStopping
+    || state.annotationQaRunning || state.annotationQaStopping;
+  const isRfdetr = taskForModelSize($("model-size").value) === "rfdetr";
+  document.querySelectorAll("[data-ultralytics-only]").forEach((element) => {
+    element.hidden = isRfdetr;
+    element.querySelectorAll("input, select, textarea, button").forEach((control) => {
+      control.disabled = locked || isRfdetr;
+    });
+  });
 }
 
 function selectedModelOption() {
@@ -748,6 +764,7 @@ function syncActionStates() {
   document.querySelectorAll("[data-preset], #reset-advanced").forEach((button) => {
     button.disabled = locked;
   });
+  syncModelFamilyControls();
 
   if (state.isPreparing) {
     setStatusPhase("preparing");
@@ -884,10 +901,12 @@ function setControlValue(id, value) {
 
 function applyControlValues(values) {
   Object.entries(values).forEach(([id, value]) => setControlValue(id, value));
+  applyModelFamilyDefaults();
   if (Object.hasOwn(values, "model-size")) {
     syncProjectWithModelTask();
   }
   updateCurrentRunDisplay();
+  syncModelFamilyControls();
   syncActionStates();
   if (Object.hasOwn(values, "project") || Object.hasOwn(values, "run-name") || Object.hasOwn(values, "model-size")) {
     scheduleTargetRefresh();
@@ -3195,10 +3214,13 @@ function syncInferenceControls() {
   const hasSelectedWeight = $("inference-weight-select").value !== "";
   const uploadedWeight = $("inference-weight-file").files[0];
   const uploadedSuffix = inferenceWeightSuffix(uploadedWeight);
-  const hasUploadedWeight = uploadedSuffix === ".pt" || uploadedSuffix === ".onnx";
-  $("inference-convert-onnx-row").hidden = source !== "upload" || uploadedSuffix !== ".pt";
-  $("inference-convert-onnx").disabled = source !== "upload" || uploadedSuffix !== ".pt";
-  if (uploadedSuffix !== ".pt") {
+  const uploadFamily = $("inference-upload-family").value;
+  const hasUploadedWeight = uploadFamily === "rfdetr"
+    ? uploadedSuffix === ".pt"
+    : uploadedSuffix === ".pt" || uploadedSuffix === ".onnx";
+  $("inference-convert-onnx-row").hidden = source !== "upload" || uploadedSuffix !== ".pt" || uploadFamily === "rfdetr";
+  $("inference-convert-onnx").disabled = source !== "upload" || uploadedSuffix !== ".pt" || uploadFamily === "rfdetr";
+  if (uploadedSuffix !== ".pt" || uploadFamily === "rfdetr") {
     $("inference-convert-onnx").checked = false;
   }
   const hasMedia = Boolean($("inference-media-file").files[0]);
@@ -3228,7 +3250,7 @@ function renderInferenceWeights(weights) {
     option.value = "";
     option.textContent = "No weights found";
     select.appendChild(option);
-    $("inference-weights-status").textContent = "No .pt or .onnx weights were found under runs/detect, runs/segment, runs/semantic, or runs/classify.";
+    $("inference-weights-status").textContent = "No .pt or .onnx weights were found under runs/detect, runs/rfdetr, runs/segment, runs/semantic, or runs/classify.";
     syncInferenceControls();
     return;
   }
@@ -3748,19 +3770,23 @@ async function runInference() {
   }
   if (source === "upload") {
     const suffix = inferenceWeightSuffix($("inference-weight-file").files[0]);
-    if (![".pt", ".onnx"].includes(suffix)) {
-      setInferenceMessage("Uploaded weights must be a .pt or .onnx file.", true);
+    const uploadFamily = $("inference-upload-family").value;
+    const supportedSuffixes = uploadFamily === "rfdetr" ? [".pt"] : [".pt", ".onnx"];
+    if (!supportedSuffixes.includes(suffix)) {
+      setInferenceMessage(uploadFamily === "rfdetr" ? "Uploaded RF-DETR weights must be a .pt file." : "Uploaded weights must be a .pt or .onnx file.", true);
       return;
     }
   }
 
   const convertToOnnx = source === "upload"
     && inferenceWeightSuffix($("inference-weight-file").files[0]) === ".pt"
+    && $("inference-upload-family").value !== "rfdetr"
     && $("inference-convert-onnx").checked;
 
   const form = new FormData();
   form.append("weight_source", source);
   form.append("weight_path", $("inference-weight-select").value);
+  form.append("weight_family", source === "upload" ? $("inference-upload-family").value : "auto");
   form.append("convert_to_onnx", convertToOnnx ? "true" : "false");
   form.append("imgsz", $("inference-imgsz").value || "512");
   form.append("conf", $("inference-conf").value || "0.25");
@@ -4909,6 +4935,7 @@ $("model-search").addEventListener("keydown", (event) => {
 });
 $("model-size").addEventListener("change", () => {
   applyModelFamilyDefaults();
+  syncModelFamilyControls();
   syncModelSelectorDisplay();
   filterModelOptions();
   syncProjectWithModelTask();
@@ -4960,6 +4987,7 @@ $("test-dataset-folder").addEventListener("change", updateFileSelection);
 $("inference-weight-file").addEventListener("change", updateFileSelection);
 $("inference-media-file").addEventListener("change", updateFileSelection);
 $("inference-weight-select").addEventListener("change", syncInferenceControls);
+$("inference-upload-family").addEventListener("change", syncInferenceControls);
 $("inference-convert-onnx").addEventListener("change", syncInferenceControls);
 ["upload-force-split", "folder-force-split", "roboflow-force-split"].forEach((id) => {
   $(id).addEventListener("change", syncDatasetSourceControls);
@@ -5070,6 +5098,7 @@ try {
   // The guide still works when browser storage is unavailable.
 }
 
+syncModelFamilyControls();
 loadConfig().catch((error) => setMessage(error.message, true));
 initializeTooltips();
 initializeChartTooltips();

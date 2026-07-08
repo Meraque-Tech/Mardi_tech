@@ -27,7 +27,7 @@ MODEL_CLASSES = {
 def parse_args():
     parser = argparse.ArgumentParser(description="Train an RF-DETR detection model.")
     parser.add_argument("--data", required=True, help="Path to YOLO data.yaml or dataset directory.")
-    parser.add_argument("--model", default="rfdetr-small", choices=sorted(MODEL_CLASSES))
+    parser.add_argument("--model", default="rfdetr-nano", choices=sorted(MODEL_CLASSES))
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--imgsz", type=int, default=512)
     parser.add_argument("--batch", type=int, default=4)
