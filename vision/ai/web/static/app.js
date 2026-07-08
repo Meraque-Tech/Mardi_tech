@@ -130,6 +130,7 @@ const CONTROL_DEFAULTS = {
 
 const TASK_PROJECT_DEFAULTS = {
   detect: "runs/detect",
+  rfdetr: "runs/rfdetr",
   segment: "runs/segment",
   semantic: "runs/semantic",
   classify: "runs/classify",
@@ -203,6 +204,9 @@ const TRAINING_PRESETS = {
 
 function taskForModelSize(modelSize) {
   const value = String(modelSize || "");
+  if (value.startsWith("rfdetr-")) {
+    return "rfdetr";
+  }
   if (value.endsWith("-seg")) {
     return "segment";
   }
@@ -220,6 +224,9 @@ function defaultProjectForModelSize(modelSize) {
 }
 
 function modelSizeForTask(task, currentModelSize) {
+  if (task === "rfdetr") {
+    return "rfdetr-small";
+  }
   let base = String(currentModelSize || CONTROL_DEFAULTS["model-size"])
     .replace(/-(seg|sem|cls)$/i, "");
   if (task === "segment") {
@@ -253,6 +260,20 @@ function syncProjectWithModelTask() {
   project.value = defaultProjectForModelSize($("model-size").value);
   updateCurrentRunDisplay();
   scheduleTargetRefresh();
+}
+
+function applyModelFamilyDefaults() {
+  if ($("model-size").value !== "rfdetr-small") {
+    return;
+  }
+  const imgsz = $("imgsz");
+  if (imgsz && ["", "640"].includes(String(imgsz.value || ""))) {
+    imgsz.value = "512";
+  }
+  const batch = $("batch");
+  if (batch && Number(batch.value) > 8) {
+    batch.value = "4";
+  }
 }
 
 function selectedModelOption() {
@@ -4887,6 +4908,7 @@ $("model-search").addEventListener("keydown", (event) => {
   }
 });
 $("model-size").addEventListener("change", () => {
+  applyModelFamilyDefaults();
   syncModelSelectorDisplay();
   filterModelOptions();
   syncProjectWithModelTask();

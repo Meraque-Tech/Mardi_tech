@@ -30,12 +30,14 @@ from pydantic import BaseModel, Field
 
 from .dataset_provenance import roboflow_pre_augmentation_summary
 from .infer_yolo import InferenceStopped, run_yolo_inference
+from .infer_rfdetr import run_rfdetr_inference
 from .stratified_split import SPLIT_NAMES, stratified_split
 
 
 WEB_DIR = Path(__file__).resolve().parent
 REPO_ROOT = WEB_DIR.parents[2]
 TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_yolov8.py"
+RFDETR_TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_rfdetr.py"
 TEST_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "test_yolov8.py"
 STATIC_DIR = WEB_DIR / "static"
 LOG_DIR = WEB_DIR / "logs"
@@ -44,10 +46,11 @@ TEST_LOG_FILE = LOG_DIR / "test-current.log"
 RUNS_ROOT = REPO_ROOT / "runs"
 ANNOTATION_QA_ROOT = RUNS_ROOT / "annotation_qa"
 DETECT_RUNS_ROOT = RUNS_ROOT / "detect"
+RFDETR_RUNS_ROOT = RUNS_ROOT / "rfdetr"
 SEGMENT_RUNS_ROOT = RUNS_ROOT / "segment"
 SEMANTIC_RUNS_ROOT = RUNS_ROOT / "semantic"
 CLASSIFY_RUNS_ROOT = RUNS_ROOT / "classify"
-TRAINING_RUNS_ROOTS = (DETECT_RUNS_ROOT, SEGMENT_RUNS_ROOT, SEMANTIC_RUNS_ROOT, CLASSIFY_RUNS_ROOT)
+TRAINING_RUNS_ROOTS = (DETECT_RUNS_ROOT, RFDETR_RUNS_ROOT, SEGMENT_RUNS_ROOT, SEMANTIC_RUNS_ROOT, CLASSIFY_RUNS_ROOT)
 TEST_RUNS_ROOT = RUNS_ROOT / "test"
 INFERENCE_SCRIPT = WEB_DIR / "infer_yolo.py"
 MYT = timezone(timedelta(hours=8), name="MYT")
@@ -126,10 +129,32 @@ MODEL_MAP = {
 }
 TRAINING_PROJECT_DEFAULTS = {
     "detect": "runs/detect",
+    "rfdetr": "runs/rfdetr",
     "segment": "runs/segment",
     "semantic": "runs/semantic",
     "classify": "runs/classify",
 }
+MODEL_REGISTRY = {
+    key: {
+        "family": "ultralytics",
+        "task": training_task if (training_task := (
+            "segment" if key.endswith("-seg") else "semantic" if key.endswith("-sem") else "classify" if key.endswith("-cls") else "detect"
+        )) else "detect",
+        "model": value,
+        "runner": TRAIN_SCRIPT,
+        "project_default": TRAINING_PROJECT_DEFAULTS[training_task],
+    }
+    for key, value in MODEL_MAP.items()
+}
+MODEL_REGISTRY.update({
+    "rfdetr-small": {
+        "family": "rfdetr",
+        "task": "detect",
+        "model": "rfdetr-small",
+        "runner": RFDETR_TRAIN_SCRIPT,
+        "project_default": TRAINING_PROJECT_DEFAULTS["rfdetr"],
+    },
+})
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
 PROGRESS_LINE_RE = re.compile(r":\s*\d+%\s+.*\b\d+/\d+\b")
@@ -407,7 +432,20 @@ def resolve_project_path(project: str) -> Path:
     return project_path.resolve()
 
 
+def model_spec_for_size(model_size: str) -> dict:
+    return MODEL_REGISTRY.get(str(model_size or ""), {
+        "family": "ultralytics",
+        "task": training_task_for_model_size(model_size),
+        "model": MODEL_MAP.get(model_size, ""),
+        "runner": TRAIN_SCRIPT,
+        "project_default": TRAINING_PROJECT_DEFAULTS["detect"],
+    })
+
+
 def training_task_for_model_size(model_size: str) -> str:
+    spec = MODEL_REGISTRY.get(str(model_size or ""))
+    if spec:
+        return spec["task"]
     value = str(model_size or "")
     if value.endswith("-seg"):
         return "segment"
@@ -416,6 +454,17 @@ def training_task_for_model_size(model_size: str) -> str:
     if value.endswith("-cls"):
         return "classify"
     return "detect"
+
+
+def training_family_for_model_size(model_size: str) -> str:
+    return model_spec_for_size(model_size).get("family", "ultralytics")
+
+
+def default_project_for_model_size(model_size: str) -> str:
+    return model_spec_for_size(model_size).get(
+        "project_default",
+        default_project_for_training_task(training_task_for_model_size(model_size)),
+    )
 
 
 def default_project_for_training_task(task: str) -> str:
@@ -700,7 +749,18 @@ def resolve_inference_weight_path(weight_path: str) -> Path:
     return candidate
 
 
+def family_for_weight_path(weights_path: Path) -> str:
+    parts = {part.lower() for part in weights_path.parts}
+    if "rfdetr" in parts:
+        return "rfdetr"
+    context = read_json_object(weights_path.parent.parent / TRAINING_REPORT_CONTEXT_FILE)
+    family = str(context.get("family") or context.get("hyperparameters", {}).get("family") or "").lower()
+    return family if family in {"rfdetr", "ultralytics"} else "ultralytics"
+
+
 def task_for_runs_root(root: Path) -> str:
+    if root == RFDETR_RUNS_ROOT:
+        return "detect"
     if root == SEGMENT_RUNS_ROOT:
         return "segment"
     if root == SEMANTIC_RUNS_ROOT:
@@ -710,12 +770,17 @@ def task_for_runs_root(root: Path) -> str:
     return "detect"
 
 
+def family_for_runs_root(root: Path) -> str:
+    return "rfdetr" if root == RFDETR_RUNS_ROOT else "ultralytics"
+
+
 def available_inference_weights() -> list[dict]:
     weights = []
     for root in TRAINING_RUNS_ROOTS:
         if not root.is_dir():
             continue
         task = task_for_runs_root(root)
+        family = family_for_runs_root(root)
         candidates = [
             path
             for path in root.rglob("weights/*")
@@ -735,6 +800,7 @@ def available_inference_weights() -> list[dict]:
             weights.append({
                 "label": f"{task}/{run_label}/{path.name}",
                 "path": relative_to_repo(path),
+                "family": family,
                 "task": task,
                 "run": run_label,
                 "weight": path.stem,
@@ -810,12 +876,15 @@ def available_training_sessions() -> list[dict]:
             file_times = [item.stat().st_mtime for item in path.rglob("*") if item.is_file()]
             modified_at = max(file_times, default=path.stat().st_mtime)
             project_path = path.parent
+            task = task_for_runs_root(root)
+            family = family_for_runs_root(root)
             sessions.append({
                 "label": relative_to_repo(path),
                 "name": path.name,
                 "project": relative_to_repo(project_path),
                 "run_dir": relative_to_repo(path),
-                "task": root.name,
+                "family": family,
+                "task": task,
                 "modified_at": modified_at,
                 "has_results": (path / "results.csv").is_file(),
                 "has_best": (path / "weights" / "best.pt").is_file(),
@@ -1067,7 +1136,8 @@ def run_inference_job(
 ):
     log_path = result_path.with_name("inference.log")
     started = time.time()
-    log_path.write_text("Starting in-process Python Ultralytics inference.\n", encoding="utf-8")
+    inference_family = str(inference_request.pop("family", "ultralytics") or "ultralytics")
+    log_path.write_text(f"Starting in-process Python {inference_family} inference.\n", encoding="utf-8")
 
     def handle_progress(progress: dict):
         update_inference_job(
@@ -1126,7 +1196,8 @@ def run_inference_job(
                     elapsed_ms=round((time.time() - started) * 1000, 2),
                 )
 
-        payload = run_yolo_inference(
+        inference_runner = run_rfdetr_inference if inference_family == "rfdetr" else run_yolo_inference
+        payload = inference_runner(
             **inference_request,
             progress_callback=handle_progress,
             preview_callback=handle_preview,
@@ -4261,6 +4332,7 @@ def run_inference(
 
     if weight_source == "selected":
         weights_path = resolve_inference_weight_path(weight_path)
+        inference_family = family_for_weight_path(weights_path)
         weights_label = relative_to_repo(weights_path)
         convert_to_onnx = False
     elif weight_source == "upload":
@@ -4275,6 +4347,7 @@ def run_inference(
         ensure_inference_path(weights_path)
         save_upload(weight_file, weights_path, lambda *_args: None, "saving", "Saving inference weights")
         weights_label = f"uploaded {weights_path.name}{' -> ONNX' if convert_to_onnx else ''}"
+        inference_family = "ultralytics"
     else:
         raise HTTPException(status_code=400, detail="Unknown inference weights source.")
 
@@ -4307,6 +4380,7 @@ def run_inference(
         "show_conf": show_conf,
         "show_masks": show_masks,
         "convert_to_onnx": convert_to_onnx,
+        "family": inference_family,
     }
     stop_event = threading.Event()
     preview_condition = threading.Condition()
@@ -5653,13 +5727,15 @@ def start_training(request: TrainRequest):
     if not request.resume and (dataset_yaml is None or not dataset_yaml.is_file()):
         raise HTTPException(status_code=400, detail="Prepare a valid dataset before starting a new training run.")
 
-    model = MODEL_MAP.get(request.model_size)
-    if not model:
+    model_spec = MODEL_REGISTRY.get(request.model_size)
+    if not model_spec:
         raise HTTPException(status_code=400, detail=f"Unknown model size: {request.model_size}")
-    model_task = training_task_for_model_size(request.model_size)
+    model = model_spec["model"]
+    model_family = model_spec["family"]
+    model_task = model_spec["task"]
     requested_project = request.project
     if is_known_training_project_default(requested_project):
-        requested_project = default_project_for_training_task(model_task)
+        requested_project = default_project_for_model_size(request.model_size)
     training_project_path = normalize_training_project_path(requested_project)
     requested_name = (request.name or "train").strip() or "train"
     run_name = timestamped_training_run_name(requested_name, resume=request.resume)
@@ -5680,9 +5756,11 @@ def start_training(request: TrainRequest):
                 status_code=400,
                 detail=f"Cannot resume: last.pt was not found in {resume_run_dir}.",
             )
-        model = str(resume_checkpoint)
+        if model_family == "ultralytics":
+            model = str(resume_checkpoint)
 
     request_payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    request_payload["family"] = model_family
     request_payload["task"] = model_task
     request_payload["model"] = model
     request_payload["project"] = str(training_project_path)
@@ -5691,6 +5769,8 @@ def start_training(request: TrainRequest):
     report_context = {}
     if resume_run_dir:
         report_context = read_json_object(resume_run_dir / TRAINING_REPORT_CONTEXT_FILE)
+        if model_family == "rfdetr" and dataset_yaml is None and report_context.get("dataset_yaml"):
+            dataset_yaml = Path(str(report_context["dataset_yaml"])).expanduser()
     if not report_context:
         report_dataset_yaml = dataset_yaml
         if report_dataset_yaml is not None:
@@ -5701,6 +5781,7 @@ def start_training(request: TrainRequest):
             "dataset_summary": cached_dataset_summary(report_dataset_yaml) if report_dataset_yaml else {},
             "hyperparameters": request_payload,
             "task": model_task,
+            "family": model_family,
             "model": model,
             "pretrained": True,
             "device": request.device or os.getenv("TRAINING_DEVICE") or "auto",
@@ -5708,12 +5789,14 @@ def start_training(request: TrainRequest):
                 "python": platform.python_version(),
                 "platform": platform.platform(),
                 "ultralytics": installed_version("ultralytics"),
+                "rfdetr": installed_version("rfdetr"),
                 "torch": installed_version("torch"),
                 "gpus": gpu_status().get("gpus", []),
             },
         }
     report_context["last_started_at"] = datetime.now(MYT).isoformat()
     report_context["task"] = model_task
+    report_context["family"] = model_family
     report_context["model"] = model
     report_context["hyperparameters"] = request_payload
     report_context["resume"] = bool(request.resume)
@@ -5723,6 +5806,7 @@ def start_training(request: TrainRequest):
         "requested_name": requested_name,
         "project": str(training_project_path),
         "name": run_name,
+        "family": model_family,
         "task": model_task,
         "model": model,
         "expected_run_dir": str(training_project_path / run_name),
@@ -5741,9 +5825,13 @@ def start_training(request: TrainRequest):
     timestamp = datetime.now(MYT).strftime("%Y%m%d-%H%M%S")
     training_log_file = LOG_DIR / f"train-{timestamp}.log"
 
+    train_script = Path(model_spec["runner"])
+    if not train_script.is_file():
+        raise HTTPException(status_code=500, detail=f"Training script is missing: {train_script}")
+
     cmd = [
         TRAINING_PYTHON,
-        str(TRAIN_SCRIPT),
+        str(train_script),
         "--model", model,
         "--epochs", str(request.epochs),
         "--imgsz", str(request.imgsz),
@@ -5751,39 +5839,42 @@ def start_training(request: TrainRequest):
         "--patience", str(request.patience),
         "--save-period", str(request.save_period),
         "--workers", str(request.workers),
-        "--optimizer", request.optimizer,
         "--lr0", str(request.lr0),
-        "--lrf", str(request.lrf),
         "--weight-decay", str(request.weight_decay),
         "--warmup-epochs", str(request.warmup_epochs),
-        "--pretrained", "true",
-        "--activation", request.activation,
         "--seed", str(request.seed),
         "--project", str(training_project_path),
         "--name", run_name,
-        "--disable-ultralytics-albumentations", str(request.disable_ultralytics_albumentations).lower(),
-        "--mosaic", str(request.mosaic),
-        "--close-mosaic", str(request.close_mosaic),
-        "--hsv-h", str(request.hsv_h),
-        "--hsv-s", str(request.hsv_s),
-        "--hsv-v", str(request.hsv_v),
-        "--degrees", str(request.degrees),
-        "--translate", str(request.translate),
-        "--scale", str(request.scale),
-        "--shear", str(request.shear),
-        "--perspective", str(request.perspective),
-        "--flipud", str(request.flipud),
-        "--fliplr", str(request.fliplr),
-        "--bgr", str(request.bgr),
-        "--mixup", str(request.mixup),
-        "--cutmix", str(request.cutmix),
-        "--copy-paste", str(request.copy_paste),
-        "--erasing", str(request.erasing),
     ]
-    if request.auto_augment:
-        cmd.extend(["--auto-augment", request.auto_augment])
+    if model_family == "ultralytics":
+        cmd.extend([
+            "--optimizer", request.optimizer,
+            "--lrf", str(request.lrf),
+            "--pretrained", "true",
+            "--activation", request.activation,
+            "--disable-ultralytics-albumentations", str(request.disable_ultralytics_albumentations).lower(),
+            "--mosaic", str(request.mosaic),
+            "--close-mosaic", str(request.close_mosaic),
+            "--hsv-h", str(request.hsv_h),
+            "--hsv-s", str(request.hsv_s),
+            "--hsv-v", str(request.hsv_v),
+            "--degrees", str(request.degrees),
+            "--translate", str(request.translate),
+            "--scale", str(request.scale),
+            "--shear", str(request.shear),
+            "--perspective", str(request.perspective),
+            "--flipud", str(request.flipud),
+            "--fliplr", str(request.fliplr),
+            "--bgr", str(request.bgr),
+            "--mixup", str(request.mixup),
+            "--cutmix", str(request.cutmix),
+            "--copy-paste", str(request.copy_paste),
+            "--erasing", str(request.erasing),
+        ])
+        if request.auto_augment:
+            cmd.extend(["--auto-augment", request.auto_augment])
 
-    if dataset_yaml is not None and not request.resume:
+    if dataset_yaml is not None and (not request.resume or model_family == "rfdetr"):
         cmd.extend(["--data", str(dataset_yaml)])
 
     device = request.device or os.getenv("TRAINING_DEVICE")
@@ -5791,9 +5882,9 @@ def start_training(request: TrainRequest):
         cmd.extend(["--device", device])
     if request.cos_lr:
         cmd.append("--cos-lr")
-    if request.freeze is not None:
+    if model_family == "ultralytics" and request.freeze is not None:
         cmd.extend(["--freeze", str(request.freeze)])
-    if request.exist_ok:
+    if model_family == "ultralytics" and request.exist_ok:
         cmd.append("--exist-ok")
     if request.resume:
         cmd.append("--resume")

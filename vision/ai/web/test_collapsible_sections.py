@@ -166,6 +166,7 @@ class CollapsibleSectionTests(unittest.TestCase):
 
         self.assertEqual(project_defaults, {
             "detect": "runs/detect",
+            "rfdetr": "runs/rfdetr",
             "segment": "runs/segment",
             "semantic": "runs/semantic",
             "classify": "runs/classify",
