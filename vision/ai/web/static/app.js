@@ -138,6 +138,87 @@ const RFDETR_DEFAULTS = {
   "cos-lr": false,
 };
 
+const MODEL_TASKS = [
+  { id: "detect", label: "Detection", badge: "detection", summary: "Bounding-box object detection." },
+  { id: "segment", label: "Instance Segmentation", badge: "instance-segmentation", summary: "Object masks and boxes." },
+  { id: "semantic", label: "Semantic Segmentation", badge: "semantic-segmentation", summary: "Pixel-level class maps." },
+  { id: "classify", label: "Classification", badge: "classification", summary: "One label per image." },
+];
+
+const MODEL_FAMILIES = [
+  { id: "yolov8", label: "YOLOv8", backend: "ultralytics", tasks: ["detect", "segment", "classify"], summary: "Stable Ultralytics baseline." },
+  { id: "yolo11", label: "YOLO11", backend: "ultralytics", tasks: ["detect", "segment", "classify"], summary: "Newer Ultralytics YOLO family." },
+  { id: "yolo26", label: "YOLO26", backend: "ultralytics", tasks: ["detect", "segment", "semantic", "classify"], summary: "Ultralytics family with semantic segmentation options." },
+  { id: "rfdetr", label: "RF-DETR", backend: "rfdetr", tasks: ["detect"], summary: "Transformer detector; Nano is enabled for now." },
+];
+
+const MODEL_SIZES = [
+  { id: "nano", label: "Nano", code: "n", summary: "Lowest VRAM and fastest training." },
+  { id: "small", label: "Small", code: "s", summary: "Balanced speed and accuracy." },
+  { id: "medium", label: "Medium", code: "m", summary: "More capacity, higher VRAM." },
+  { id: "large", label: "Large", code: "l", summary: "High capacity, slower training." },
+  { id: "xlarge", label: "Extra large", code: "x", summary: "Largest YOLO option." },
+];
+
+const MODEL_TASK_BY_ID = Object.fromEntries(MODEL_TASKS.map((task) => [task.id, task]));
+const MODEL_FAMILY_BY_ID = Object.fromEntries(MODEL_FAMILIES.map((family) => [family.id, family]));
+const MODEL_SIZE_BY_ID = Object.fromEntries(MODEL_SIZES.map((size) => [size.id, size]));
+
+function yoloModelValue(familyId, taskId, sizeId) {
+  const familyPrefix = familyId === "yolov8" ? "" : `${familyId}-`;
+  const taskSuffix = taskId === "segment" ? "-seg" : taskId === "semantic" ? "-sem" : taskId === "classify" ? "-cls" : "";
+  return `${familyPrefix}${sizeId}${taskSuffix}`;
+}
+
+function yoloCheckpoint(familyId, taskId, sizeId) {
+  const familyPrefix = familyId === "yolov8" ? "yolov8" : familyId;
+  const taskSuffix = taskId === "segment" ? "-seg" : taskId === "semantic" ? "-sem" : taskId === "classify" ? "-cls" : "";
+  return `${familyPrefix}${MODEL_SIZE_BY_ID[sizeId].code}${taskSuffix}.pt`;
+}
+
+function yoloModelLabel(familyId, taskId, sizeId) {
+  const family = MODEL_FAMILY_BY_ID[familyId].label;
+  const size = MODEL_SIZE_BY_ID[sizeId].label;
+  const task = MODEL_TASK_BY_ID[taskId].label.toLowerCase();
+  return taskId === "detect" || taskId === "classify"
+    ? `${family} ${size}`
+    : `${family} ${size} ${task}`;
+}
+
+function buildYoloModelCatalog() {
+  return MODEL_FAMILIES
+    .filter((family) => family.backend === "ultralytics")
+    .flatMap((family) => family.tasks.flatMap((taskId) => MODEL_SIZES.map((size) => ({
+      value: yoloModelValue(family.id, taskId, size.id),
+      task: taskId,
+      projectTask: taskId,
+      family: family.id,
+      size: size.id,
+      backend: family.backend,
+      label: yoloModelLabel(family.id, taskId, size.id),
+      checkpoint: yoloCheckpoint(family.id, taskId, size.id),
+      summary: `${MODEL_TASK_BY_ID[taskId].summary} ${MODEL_SIZE_BY_ID[size.id].summary}`,
+      compatibility: "Ultralytics training controls and runtime augmentations are available.",
+    }))));
+}
+
+const MODEL_CATALOG = [
+  ...buildYoloModelCatalog(),
+  {
+    value: RFDETR_MODEL_SIZE,
+    task: "detect",
+    projectTask: "rfdetr",
+    family: "rfdetr",
+    size: "nano",
+    backend: "rfdetr",
+    label: "RF-DETR Nano",
+    checkpoint: RFDETR_MODEL_SIZE,
+    summary: "Transformer object detector. Lowest RF-DETR VRAM option.",
+    compatibility: "Detection only. YOLO-format datasets are supported. RF-DETR training defaults are applied.",
+  },
+];
+const MODEL_BY_VALUE = Object.fromEntries(MODEL_CATALOG.map((model) => [model.value, model]));
+
 const TASK_PROJECT_DEFAULTS = {
   detect: "runs/detect",
   rfdetr: "runs/rfdetr",
@@ -214,6 +295,10 @@ const TRAINING_PRESETS = {
 
 function taskForModelSize(modelSize) {
   const value = String(modelSize || "");
+  const model = MODEL_BY_VALUE[value];
+  if (model) {
+    return model.projectTask;
+  }
   if (value.startsWith("rfdetr-")) {
     return "rfdetr";
   }
@@ -292,28 +377,92 @@ function syncModelFamilyControls() {
   });
 }
 
-function selectedModelOption() {
-  return $("model-size").selectedOptions[0] || $("model-size").options[0];
+function selectedModelSpec() {
+  return MODEL_BY_VALUE[$("model-size").value] || MODEL_BY_VALUE[CONTROL_DEFAULTS["model-size"]] || MODEL_CATALOG[0];
 }
 
 function syncModelSelectorDisplay() {
-  const option = selectedModelOption();
-  if ($("model-selector-value") && option) {
-    $("model-selector-value").textContent = option.textContent;
+  const model = selectedModelSpec();
+  if ($("model-selector-value") && model) {
+    $("model-selector-value").textContent = `${model.label} - ${model.checkpoint}`;
+  }
+  if ($("selected-model-summary") && model) {
+    $("selected-model-summary").textContent = model.compatibility;
+  }
+  if ($("model-compatibility") && model) {
+    $("model-compatibility").textContent = model.compatibility;
   }
 }
 
-function modelOptionSearchText(option) {
-  const groupLabel = option.closest("optgroup")?.label || "";
-  return `${groupLabel} ${option.textContent} ${option.value}`.toLowerCase();
+function modelOptionSearchText(model) {
+  const task = MODEL_TASK_BY_ID[model.task]?.label || "";
+  const family = MODEL_FAMILY_BY_ID[model.family]?.label || "";
+  const size = MODEL_SIZE_BY_ID[model.size]?.label || "";
+  return `${task} ${family} ${size} ${model.label} ${model.checkpoint} ${model.value} ${model.summary}`.toLowerCase();
 }
 
-function modelGroupParts(label) {
-  const parts = String(label || "").split(" - ");
-  return {
-    task: parts[0] || label,
-    family: parts.slice(1).join(" - "),
-  };
+function renderSelectOptions(select, options, selectedValue) {
+  if (!select) {
+    return;
+  }
+  select.innerHTML = "";
+  options.forEach((option) => {
+    const element = document.createElement("option");
+    element.value = option.id;
+    element.textContent = option.label;
+    select.appendChild(element);
+  });
+  if (options.some((option) => option.id === selectedValue)) {
+    select.value = selectedValue;
+  } else if (options.length) {
+    select.value = options[0].id;
+  }
+}
+
+function availableModelFamilies(taskId) {
+  return MODEL_FAMILIES.filter((family) => MODEL_CATALOG.some((model) => (
+    model.task === taskId && model.family === family.id
+  )));
+}
+
+function guidedModelValue(taskId, familyId) {
+  const currentSize = selectedModelSpec()?.size;
+  const matchingModels = MODEL_CATALOG.filter((model) => (
+    model.task === taskId && model.family === familyId
+  ));
+  return (
+    matchingModels.find((model) => model.size === currentSize)?.value
+    || matchingModels[0]?.value
+    || ""
+  );
+}
+
+function syncGuidedControlsFromModel() {
+  const current = selectedModelSpec();
+  const taskSelect = $("model-task");
+  const familySelect = $("model-family");
+  if (!taskSelect || !familySelect || !current) {
+    return;
+  }
+  renderSelectOptions(taskSelect, MODEL_TASKS, current.task);
+  const families = availableModelFamilies(taskSelect.value);
+  renderSelectOptions(familySelect, families, current.family);
+}
+
+function chooseGuidedModel() {
+  const taskSelect = $("model-task");
+  const familySelect = $("model-family");
+  if (!taskSelect || !familySelect) {
+    return;
+  }
+  const families = availableModelFamilies(taskSelect.value);
+  if (!families.some((family) => family.id === familySelect.value)) {
+    renderSelectOptions(familySelect, families, families[0]?.id || "");
+  }
+  const value = guidedModelValue(taskSelect.value, familySelect.value);
+  if (value) {
+    chooseModelOption(value, { close: false, focusToggle: false });
+  }
 }
 
 function closeModelSelector() {
@@ -328,62 +477,71 @@ function openModelSelector() {
   $("model-search").focus();
 }
 
-function chooseModelOption(value) {
+function chooseModelOption(value, { close = true, focusToggle = true } = {}) {
   const select = $("model-size");
   if (select.value !== value) {
     select.value = value;
     select.dispatchEvent(new Event("change", { bubbles: true }));
   } else {
     syncModelSelectorDisplay();
+    syncGuidedControlsFromModel();
+    filterModelOptions();
   }
-  closeModelSelector();
-  $("model-selector-toggle").focus();
+  if (close) {
+    closeModelSelector();
+  }
+  if (focusToggle) {
+    $("model-selector-toggle").focus();
+  }
 }
 
 function filterModelOptions() {
   const search = $("model-search");
-  const select = $("model-size");
   const optionsContainer = $("model-options");
   const query = String(search?.value || "").trim().toLowerCase();
-  if (!search || !select || !optionsContainer) {
+  if (!search || !optionsContainer) {
     return;
   }
+  syncGuidedControlsFromModel();
+  const taskId = $("model-task").value;
+  const familyId = $("model-family").value;
   optionsContainer.innerHTML = "";
-  let renderedCount = 0;
-  Array.from(select.querySelectorAll("optgroup")).forEach((group) => {
-    const matches = Array.from(group.querySelectorAll("option")).filter((option) => (
-      !query || modelOptionSearchText(option).includes(query)
-    ));
-    if (!matches.length) {
-      return;
-    }
-    const groupLabel = document.createElement("div");
-    groupLabel.className = "model-option-group";
-    const { task, family } = modelGroupParts(group.label);
+  const matches = MODEL_CATALOG.filter((model) => (
+    query
+      ? modelOptionSearchText(model).includes(query)
+      : model.task === taskId && model.family === familyId
+  ));
+  matches.forEach((model) => {
+    const task = MODEL_TASK_BY_ID[model.task];
+    const family = MODEL_FAMILY_BY_ID[model.family];
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "model-option";
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(model.value === $("model-size").value));
+    button.classList.toggle("active", model.value === $("model-size").value);
+    button.dataset.value = model.value;
+
+    const header = document.createElement("span");
+    header.className = "model-option-header";
     const taskBadge = document.createElement("span");
     taskBadge.className = "model-task-badge";
-    taskBadge.dataset.task = task.toLowerCase().replace(/\s+/g, "-");
-    taskBadge.textContent = task;
+    taskBadge.dataset.task = task.badge;
+    taskBadge.textContent = task.label;
     const familyLabel = document.createElement("span");
     familyLabel.className = "model-family-label";
-    familyLabel.textContent = family;
-    groupLabel.append(taskBadge, familyLabel);
-    optionsContainer.appendChild(groupLabel);
-    matches.forEach((option) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "model-option";
-      button.setAttribute("role", "option");
-      button.setAttribute("aria-selected", String(option.selected));
-      button.classList.toggle("active", option.selected);
-      button.dataset.value = option.value;
-      button.textContent = option.textContent;
-      button.addEventListener("click", () => chooseModelOption(option.value));
-      optionsContainer.appendChild(button);
-      renderedCount += 1;
-    });
+    familyLabel.textContent = family.label;
+    header.append(taskBadge, familyLabel);
+
+    const title = document.createElement("span");
+    title.className = "model-option-title";
+    title.textContent = `${model.label} - ${model.checkpoint}`;
+
+    button.append(header, title);
+    button.addEventListener("click", () => chooseModelOption(model.value));
+    optionsContainer.appendChild(button);
   });
-  if (!renderedCount) {
+  if (!matches.length) {
     const empty = document.createElement("div");
     empty.className = "model-options-empty";
     empty.textContent = "No matching models.";
@@ -4933,10 +5091,14 @@ $("model-search").addEventListener("keydown", (event) => {
     }
   }
 });
+["model-task", "model-family"].forEach((id) => {
+  $(id).addEventListener("change", chooseGuidedModel);
+});
 $("model-size").addEventListener("change", () => {
   applyModelFamilyDefaults();
   syncModelFamilyControls();
   syncModelSelectorDisplay();
+  syncGuidedControlsFromModel();
   filterModelOptions();
   syncProjectWithModelTask();
 });
@@ -5098,6 +5260,9 @@ try {
   // The guide still works when browser storage is unavailable.
 }
 
+syncGuidedControlsFromModel();
+syncModelSelectorDisplay();
+filterModelOptions();
 syncModelFamilyControls();
 loadConfig().catch((error) => setMessage(error.message, true));
 initializeTooltips();

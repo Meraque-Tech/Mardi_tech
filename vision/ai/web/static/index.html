@@ -287,9 +287,9 @@
             </div>
           </div>
 
-          <div class="grid two">
+          <div class="grid two training-primary-grid">
             <label>
-              <span class="tooltip-label" tabindex="0" data-tooltip="Base YOLO task, family, and checkpoint size. Choose detection, instance segmentation, semantic segmentation, or classification to match your dataset labels. Larger models can be more accurate but train slower and need more GPU memory.">Model task &amp; size</span>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Choose the task, model family, and checkpoint size that match your dataset labels. Larger models can be more accurate but train slower and need more GPU memory.">Model task &amp; size</span>
               <div class="model-selector">
                 <button id="model-selector-toggle" class="model-selector-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
                   <span id="model-selector-value">YOLOv8 Nano - yolov8n.pt</span>
@@ -370,13 +370,25 @@
                   </optgroup>
                 </select>
                 <div id="model-selector-menu" class="model-selector-menu" hidden>
+                  <div class="model-guided-controls">
+                    <div class="model-guide-field">
+                      <span>Task</span>
+                      <select id="model-task"></select>
+                    </div>
+                    <div class="model-guide-field">
+                      <span>Family</span>
+                      <select id="model-family"></select>
+                    </div>
+                  </div>
+                  <p id="model-compatibility" class="model-compatibility"></p>
                   <input id="model-search" type="search" placeholder="Search models" autocomplete="off" aria-label="Search model options">
                   <div id="model-options" class="model-options" role="listbox" aria-label="Model options"></div>
                 </div>
+                <p id="selected-model-summary" class="model-selection-summary"></p>
               </div>
             </label>
             <label>
-              <span class="tooltip-label" tabindex="0" data-tooltip="Training device passed to Ultralytics. Use 0 for GPU 0, 0,1 for multiple GPUs, cpu for CPU, or leave blank for auto.">Device</span>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Training device passed to the selected backend. Use 0 for GPU 0, 0,1 for multiple GPUs, cpu for CPU, or leave blank for auto.">Device</span>
               <input id="device" type="text" placeholder="0, cpu, or blank for auto">
             </label>
           </div>

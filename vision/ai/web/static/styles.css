@@ -708,6 +708,7 @@ button[aria-pressed="true"] {
   display: grid;
   gap: 12px;
   margin-top: 12px;
+  min-width: 0;
 }
 
 .grid.two {
@@ -722,9 +723,30 @@ button[aria-pressed="true"] {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.training-primary-grid {
+  align-items: start;
+}
+
+.training-primary-grid > label {
+  grid-template-rows: 18px auto;
+  align-content: start;
+}
+
+.training-primary-grid .tooltip-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+}
+
+.training-primary-grid #device,
+.training-primary-grid .model-selector-toggle {
+  min-height: 38px;
+}
+
 label {
   display: grid;
   gap: 6px;
+  min-width: 0;
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
@@ -1029,6 +1051,7 @@ textarea:focus {
 
 .model-selector {
   position: relative;
+  min-width: 0;
 }
 
 .model-native-select {
@@ -1055,6 +1078,7 @@ textarea:focus {
   color: var(--text);
   font-weight: 500;
   text-align: left;
+  min-width: 0;
 }
 
 .model-selector-toggle::after {
@@ -1079,6 +1103,7 @@ textarea:focus {
 
 #model-selector-value {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1089,23 +1114,63 @@ textarea:focus {
   z-index: 40;
   top: calc(100% + 6px);
   left: 0;
-  right: 0;
+  right: auto;
+  width: min(540px, calc(100vw - 48px));
+  max-width: none;
   display: grid;
-  gap: 8px;
-  padding: 8px;
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: #fff;
   box-shadow: 0 14px 34px rgba(16, 24, 32, 0.16);
+  overflow: hidden;
 }
 
 .model-selector-menu[hidden] {
   display: none;
 }
 
+.model-guided-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.model-guide-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.model-guided-controls select {
+  min-height: 34px;
+  font-size: 13px;
+}
+
+.model-compatibility,
+.model-selection-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.model-selection-summary {
+  margin-top: 6px;
+}
+
 .model-options {
-  max-height: 280px;
+  min-width: 0;
+  max-height: min(300px, 42vh);
+  display: grid;
+  gap: 8px;
   overflow-y: auto;
+  padding-right: 10px;
 }
 
 .model-option-group {
@@ -1156,26 +1221,98 @@ textarea:focus {
 
 .model-option {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
   justify-content: flex-start;
-  min-height: 34px;
-  padding: 7px 8px;
-  border-color: transparent;
-  background: transparent;
+  justify-items: stretch;
+  align-content: center;
+  align-items: start;
+  min-height: 72px;
+  padding: 13px 12px;
+  border-color: var(--line);
+  background: #fff;
   color: var(--text);
   font-weight: 500;
   text-align: left;
+  white-space: normal;
+  height: auto;
 }
 
 .model-option:hover,
 .model-option.active {
+  border-color: #b7ded4;
   background: #eef3f1;
   color: var(--accent-strong);
+}
+
+.model-option-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.2;
+}
+
+.model-option-title,
+.model-option-meta,
+.model-option-summary {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.25;
+}
+
+.model-option-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.model-option-meta,
+.model-option-summary {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .model-options-empty {
   padding: 12px 8px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.training-panel .model-options {
+  max-height: min(260px, 36vh);
+}
+
+@media (max-width: 900px) {
+  .model-selector-menu {
+    position: static;
+    width: 100%;
+    max-width: 100%;
+    margin-top: 8px;
+  }
+
+  .model-guided-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .model-options {
+    max-height: min(260px, 36vh);
+  }
+}
+
+@media (max-width: 620px) {
+  .model-guided-controls {
+    grid-template-columns: 1fr;
+  }
 }
 
 .checkbox-row {
