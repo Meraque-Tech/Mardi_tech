@@ -629,10 +629,24 @@ def parse_rfdetr_log_metrics(log_path: Path | None) -> dict:
         }
 
     return {
-        "overall": overall_rows,
+        "overall": dedupe_metric_rows_by_epoch(overall_rows),
         "per_class": list(per_class_by_name.values()),
         "source": "rfdetr_log" if overall_rows or per_class_by_name else None,
     }
+
+
+def dedupe_metric_rows_by_epoch(rows: list[dict]) -> list[dict]:
+    by_epoch = {}
+    for row in rows:
+        try:
+            epoch = int(row.get("epoch") or 0)
+        except (TypeError, ValueError):
+            epoch = 0
+        if epoch <= 0:
+            epoch = len(by_epoch) + 1
+            row = {**row, "epoch": epoch}
+        by_epoch[epoch] = row
+    return [by_epoch[epoch] for epoch in sorted(by_epoch)]
 
 
 def normalize_csv_metric_rows(rows: list[dict]) -> list[dict]:

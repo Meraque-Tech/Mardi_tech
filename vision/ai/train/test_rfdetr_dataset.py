@@ -137,9 +137,8 @@ Val (Epoch 1/3) — Per-class Metrics
     }
 
     parsed = parse_rfdetr_log_metrics(log_path)
-    assert len(parsed["overall"]) == 2
-    assert parsed["overall"][0]["map50"] == 0.0821
-    assert parsed["overall"][-1]["map50"] == 0.7122
+    assert len(parsed["overall"]) == 1
+    assert parsed["overall"][0]["map50"] == 0.7122
     assert parsed["per_class"][0]["class_name"] == "ok_plant"
 
     (run_dir / "results.csv").write_text(
@@ -160,7 +159,7 @@ Val (Epoch 1/3) — Per-class Metrics
     assert source == "rfdetr_log"
     rows = (run_dir / "results.csv").read_text(encoding="utf-8")
     assert "metrics/mAP50(B)" in rows
-    assert "0.0821" in rows
+    assert "0.0821" not in rows
     assert "0.7122" in rows
     assert "2.5" in rows
     assert "2.25" in rows
