@@ -146,6 +146,39 @@ docker compose -f docker-compose.train_web.yml restart
 
 Rebuild only when dependencies, the Dockerfile, or image-level setup changes.
 
+### Baked Pretrained Weights
+
+The CUDA image bakes a small default set of pretrained weights during build so
+new training machines can start common jobs without a first-run model download:
+
+```text
+rf-detr-nano.pth
+yolo26n.pt
+yolo26s.pt
+yolov8n.pt
+yolov8s.pt
+yolo11n.pt
+yolo11s.pt
+yolov8n-seg.pt
+yolo26n-seg.pt
+sam2.1_s.pt
+sam2.1_t.pt
+```
+
+The files are stored outside `/app` because `/app` is bind-mounted from the
+host at runtime:
+
+```text
+/home/appuser/.roboflow/models/
+/home/appuser/.cache/ultralytics/weights/
+```
+
+Disable the bake when building a smaller image:
+
+```bash
+BAKE_PRETRAINED_WEIGHTS=0 docker compose -f docker-compose.train_web.yml build
+```
+
 ## Dataset Options
 
 The UI supports three dataset sources.

@@ -13,6 +13,9 @@ WEB_DIR = Path(__file__).parent
 APP_PY = WEB_DIR / "app.py"
 APP_JS = WEB_DIR / "static" / "app.js"
 REPORT_GENERATOR = WEB_DIR / "report_generator.py"
+DOCKERFILE_CUDA = WEB_DIR / "Dockerfile.cuda"
+TRAIN_WEB_COMPOSE = WEB_DIR / "docker-compose.train_web.yml"
+BAKE_WEIGHTS_SCRIPT = WEB_DIR / "scripts" / "bake_pretrained_weights.py"
 TRAIN_YOLOV8 = WEB_DIR.parent / "train" / "train_yolov8.py"
 EXPECTED_PANELS = {
     "dataset",
@@ -180,6 +183,37 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("Running epoch", script)
         self.assertIn("finished validation", script)
         self.assertNotIn("`${completed} ${completed === 1 ? \"epoch\" : \"epochs\"} completed.`", script)
+
+    def test_docker_image_bakes_default_pretrained_weights(self):
+        dockerfile = DOCKERFILE_CUDA.read_text(encoding="utf-8")
+        compose = TRAIN_WEB_COMPOSE.read_text(encoding="utf-8")
+        bake_script = BAKE_WEIGHTS_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("ARG BAKE_PRETRAINED_WEIGHTS=1", dockerfile)
+        self.assertIn("python3 /app/vision/ai/web/scripts/bake_pretrained_weights.py", dockerfile)
+        self.assertIn("YOLO_CONFIG_DIR=/home/appuser/.config/Ultralytics", dockerfile)
+        self.assertIn("ULTRALYTICS_WEIGHTS_DIR=/home/appuser/.cache/ultralytics/weights", dockerfile)
+        self.assertIn("RFDETR_CACHE_DIR=/home/appuser/.roboflow/models", dockerfile)
+
+        self.assertIn('BAKE_PRETRAINED_WEIGHTS: "${BAKE_PRETRAINED_WEIGHTS:-1}"', compose)
+        self.assertIn("YOLO_CONFIG_DIR: /home/appuser/.config/Ultralytics", compose)
+        self.assertIn("ULTRALYTICS_WEIGHTS_DIR: /home/appuser/.cache/ultralytics/weights", compose)
+        self.assertIn("RFDETR_CACHE_DIR: /home/appuser/.roboflow/models", compose)
+
+        for weight_name in (
+            "rf-detr-nano.pth",
+            "yolo26n.pt",
+            "yolo26s.pt",
+            "yolov8n.pt",
+            "yolov8s.pt",
+            "yolo11n.pt",
+            "yolo11s.pt",
+            "yolov8n-seg.pt",
+            "yolo26n-seg.pt",
+            "sam2.1_s.pt",
+            "sam2.1_t.pt",
+        ):
+            self.assertIn(weight_name, bake_script)
 
     def test_optional_sam_annotation_qa_controls_are_exposed(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
