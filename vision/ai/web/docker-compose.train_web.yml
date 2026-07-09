@@ -1,6 +1,6 @@
 services:
   yolov8-training-web:
-    image: meraquetech/race_nav:yolov8-training-web.v8
+    image: meraquetech/race_nav:yolov8-training-web.v9
     build:
       context: ../../..
       dockerfile: vision/ai/web/Dockerfile.cuda
