@@ -2031,6 +2031,11 @@ def loss_summary(row: dict, task: str) -> dict:
     train = loss_components(row, "train")
     val = loss_components(row, "val")
     comparable_components = comparable_loss_component_names(task, row)
+    train_display_components = list(comparable_components)
+    val_display_components = list(comparable_components)
+    if not comparable_components and "loss" in train:
+        train_display_components = ["loss"]
+        val_display_components = ["loss"] if "loss" in val else []
 
     def component_sum(components: dict[str, float], names: list[str]) -> Optional[float]:
         if not names:
@@ -2038,14 +2043,14 @@ def loss_summary(row: dict, task: str) -> dict:
         return sum(components[name] for name in names)
 
     auxiliary_train = {
-        key: value for key, value in train.items() if key not in comparable_components
+        key: value for key, value in train.items() if key not in train_display_components
     }
     auxiliary_val = {
-        key: value for key, value in val.items() if key not in comparable_components
+        key: value for key, value in val.items() if key not in val_display_components
     }
     return {
-        "training_loss": component_sum(train, comparable_components),
-        "testing_loss": component_sum(val, comparable_components),
+        "training_loss": component_sum(train, train_display_components),
+        "testing_loss": component_sum(val, val_display_components),
         "raw_training_loss": sum(train.values()) if train else None,
         "raw_testing_loss": sum(val.values()) if val else None,
         "auxiliary_training_loss": sum(auxiliary_train.values()) if auxiliary_train else None,

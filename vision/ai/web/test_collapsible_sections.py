@@ -169,6 +169,8 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('form.append("weight_family"', script)
         self.assertIn("MODEL_CATALOG", script)
         self.assertIn('projectTask: "rfdetr"', script)
+        self.assertIn('"compute_val_loss": True', train_source)
+        self.assertIn("model.train(**supported_train_kwargs(model, train_kwargs))", train_source)
 
     def test_rfdetr_progress_and_results_refresh_are_supported(self):
         script = APP_JS.read_text(encoding="utf-8")
@@ -439,6 +441,15 @@ class CollapsibleSectionTests(unittest.TestCase):
         classify_cls_summary = namespace["loss_summary"](classify_cls_row, "classify")
         self.assertEqual(classify_cls_summary["training_loss"], 0.3)
         self.assertEqual(classify_cls_summary["testing_loss"], 0.4)
+
+        rfdetr_row = {
+            "train/loss": "4.485000133514404",
+            "val/loss": "",
+        }
+        rfdetr_summary = namespace["loss_summary"](rfdetr_row, "detect")
+        self.assertAlmostEqual(rfdetr_summary["training_loss"], 4.485000133514404)
+        self.assertIsNone(rfdetr_summary["testing_loss"])
+        self.assertIsNone(rfdetr_summary["auxiliary_training_loss"])
 
     def test_underrepresented_report_classes_are_not_truncated(self):
         source = REPORT_GENERATOR.read_text(encoding="utf-8")

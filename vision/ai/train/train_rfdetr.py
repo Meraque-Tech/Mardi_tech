@@ -931,6 +931,7 @@ def main():
             "warmup_epochs": float(args.warmup_epochs),
             "seed": int(args.seed),
             "progress_bar": "tqdm",
+            "compute_val_loss": True,
         }
         if args.resume and (run_dir / "checkpoint.pth").is_file():
             train_kwargs["resume"] = str(run_dir / "checkpoint.pth")
