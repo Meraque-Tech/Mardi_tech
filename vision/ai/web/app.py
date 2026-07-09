@@ -174,7 +174,7 @@ WEB_TEST_PROGRESS_RE = re.compile(
     r"^WEB_TEST_PROGRESS\s+percent=(\d+)\s+stage=([A-Za-z0-9_-]+)(?:\s+detail=(.*))?$"
 )
 WEB_TEST_RUN_DIR_RE = re.compile(r"^WEB_TEST_RUN_DIR\s+path=(.+)$")
-TIMESTAMPED_RUN_SUFFIX_RE = re.compile(r"^(?P<base>.+)-\d{8}-\d{6}$")
+TIMESTAMPED_RUN_SUFFIX_RE = re.compile(r"^(?P<base>.+)-(?P<timestamp>\d{8}-\d{6})$")
 RUN_DIRECTORY_PREFIXES = ("Logging results to ", "Results saved to ")
 RFDETR_NON_FATAL_WARNING_PATTERNS = (
     "pretrained weights",
@@ -518,6 +518,13 @@ def timestamped_training_run_name(name: str, resume: bool = False, now: Optional
     if match is not None:
         base_name = match.group("base")
     return f"{base_name}-{timestamp}"
+
+
+def training_report_download_filename(run_dir: Path) -> str:
+    match = TIMESTAMPED_RUN_SUFFIX_RE.match(run_dir.name)
+    if match is None:
+        return "training_report.pdf"
+    return f"training_report_{match.group('timestamp')}.pdf"
 
 
 def is_known_training_project_default(project: str) -> bool:
@@ -6258,7 +6265,7 @@ def download_training_report(request: WeightRequest):
         raise HTTPException(status_code=500, detail="PDF reporting requires the reportlab dependency. Rebuild the container image.") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not generate the training report: {exc}") from exc
-    return FileResponse(report_path, media_type="application/pdf", filename="training_report.pdf")
+    return FileResponse(report_path, media_type="application/pdf", filename=training_report_download_filename(run_dir))
 
 
 @app.get("/api/train/artifacts/view/{artifact}")
