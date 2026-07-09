@@ -147,6 +147,13 @@ Val (Epoch 1/3) — Per-class Metrics
         "3,,,,,,\n",
         encoding="utf-8",
     )
+    lightning_dir = run_dir / "lightning_logs" / "version_0"
+    lightning_dir.mkdir(parents=True)
+    (lightning_dir / "metrics.csv").write_text(
+        "epoch,train/loss_epoch,val/loss_epoch\n"
+        "1,2.5000,2.2500\n",
+        encoding="utf-8",
+    )
     source = write_results_csv(run_dir, 3, log_path)
     write_web_metrics(run_dir, "rfdetr-nano", ["flat_plant", "ok_plant"], log_path, dataset_audit, False)
 
@@ -155,6 +162,8 @@ Val (Epoch 1/3) — Per-class Metrics
     assert "metrics/mAP50(B)" in rows
     assert "0.0821" in rows
     assert "0.7122" in rows
+    assert "2.5" in rows
+    assert "2.25" in rows
     payload = yaml.safe_load((run_dir / "web_metrics.json").read_text(encoding="utf-8"))
     assert payload["backend"] == "rfdetr"
     assert payload["per_class"][0]["class_name"] == "flat_plant"

@@ -39,10 +39,36 @@ RESULT_FIELDNAMES = [
     "metrics/mAP50(B)",
     "metrics/mAP50-95(B)",
 ]
+LOSS_FIELDNAMES = ("train/loss", "val/loss")
+DETECTION_FIELDNAMES = (
+    "metrics/precision(B)",
+    "metrics/recall(B)",
+    "metrics/mAP50(B)",
+    "metrics/mAP50-95(B)",
+)
 METRIC_ALIASES = {
     "epoch": ["epoch", "trainer/global_step", "global_step", "step"],
-    "train_loss": ["train/loss", "train_loss", "loss", "train/total_loss", "train_loss_epoch"],
-    "val_loss": ["val/loss", "val_loss", "val/total_loss", "validation_loss"],
+    "train_loss": [
+        "train/loss",
+        "train/loss_epoch",
+        "train/loss_step",
+        "train_loss",
+        "train_loss_epoch",
+        "loss",
+        "loss_epoch",
+        "train/total_loss",
+        "train/total_loss_epoch",
+    ],
+    "val_loss": [
+        "val/loss",
+        "val/loss_epoch",
+        "val_loss",
+        "val_loss_epoch",
+        "validation/loss",
+        "validation_loss",
+        "val/total_loss",
+        "val/total_loss_epoch",
+    ],
     "precision": ["val/precision", "precision", "prec", "metrics/precision(B)", "val/prec"],
     "recall": ["val/recall", "recall", "metrics/recall(B)"],
     "f1": ["val/f1", "f1", "F1"],
@@ -640,6 +666,37 @@ def normalize_log_metric_rows(log_metrics: dict) -> list[dict]:
     return normalized_rows
 
 
+def row_has_value(row: dict, keys: tuple[str, ...]) -> bool:
+    return any(row.get(key) is not None for key in keys)
+
+
+def merge_loss_metrics(log_rows: list[dict], csv_rows: list[dict]) -> list[dict]:
+    if not log_rows or not csv_rows:
+        return log_rows
+
+    loss_rows = [row for row in csv_rows if row_has_value(row, LOSS_FIELDNAMES)]
+    if not loss_rows:
+        return log_rows
+
+    loss_by_epoch = {int(row.get("epoch") or 0): row for row in loss_rows}
+    merged_rows = []
+    for index, log_row in enumerate(log_rows, start=1):
+        merged = dict(log_row)
+        epoch = int(merged.get("epoch") or index)
+        loss_row = loss_by_epoch.get(epoch)
+        if loss_row is None and len(loss_rows) == len(log_rows):
+            loss_row = loss_rows[index - 1]
+        if loss_row is None:
+            prior_rows = [row for row in loss_rows if int(row.get("epoch") or 0) <= epoch]
+            loss_row = prior_rows[-1] if prior_rows else None
+        if loss_row is not None:
+            for key in LOSS_FIELDNAMES:
+                if merged.get(key) is None and loss_row.get(key) is not None:
+                    merged[key] = loss_row[key]
+        merged_rows.append(merged)
+    return merged_rows
+
+
 def placeholder_result_row(epochs: int) -> dict:
     return {
         "epoch": max(1, int(epochs)),
@@ -656,21 +713,14 @@ def build_results_rows(run_dir: Path, epochs: int, log_path: Path | None = None)
     rows = normalize_csv_metric_rows(find_rfdetr_metric_rows(run_dir))
     log_rows = normalize_log_metric_rows(parse_rfdetr_log_metrics(log_path))
     if log_rows:
+        merged_log_rows = merge_loss_metrics(log_rows, rows)
         if not rows:
-            return log_rows, "rfdetr_log"
+            return merged_log_rows, "rfdetr_log"
         latest_csv = rows[-1]
         latest_log = log_rows[-1]
-        csv_has_metrics = any(
-            latest_csv.get(key) is not None
-            for key in (
-                "metrics/precision(B)",
-                "metrics/recall(B)",
-                "metrics/mAP50(B)",
-                "metrics/mAP50-95(B)",
-            )
-        )
+        csv_has_metrics = row_has_value(latest_csv, DETECTION_FIELDNAMES)
         if not csv_has_metrics or latest_log.get("epoch", 0) >= latest_csv.get("epoch", 0):
-            return log_rows, "rfdetr_log"
+            return merged_log_rows, "rfdetr_log"
     if rows:
         return rows, "csv"
     return [placeholder_result_row(epochs)], "placeholder"
