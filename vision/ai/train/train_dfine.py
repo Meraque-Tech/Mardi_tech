@@ -156,6 +156,28 @@ def normalize_device(device: str | None) -> dict[str, str]:
     return env
 
 
+def dfine_train_transforms(imgsz: int) -> dict:
+    return {
+        "type": "Compose",
+        "ops": [
+            {"type": "Resize", "size": [int(imgsz), int(imgsz)]},
+            {"type": "SanitizeBoundingBoxes", "min_size": 1},
+            {"type": "ConvertPILImage", "dtype": "float32", "scale": True},
+            {"type": "ConvertBoxes", "fmt": "cxcywh", "normalize": True},
+        ],
+    }
+
+
+def dfine_val_transforms(imgsz: int) -> dict:
+    return {
+        "type": "Compose",
+        "ops": [
+            {"type": "Resize", "size": [int(imgsz), int(imgsz)]},
+            {"type": "ConvertPILImage", "dtype": "float32", "scale": True},
+        ],
+    }
+
+
 def write_dfine_config(
     run_dir: Path,
     dfine_root: Path,
@@ -179,13 +201,9 @@ def write_dfine_config(
             "dataset": {
                 "img_folder": str(coco_dir / "train2017"),
                 "ann_file": str(train_ann),
-                "transforms": {
-                    "ops": [
-                        {"type": "Resize", "size": [int(args.imgsz), int(args.imgsz)]},
-                    ],
-                },
+                "transforms": dfine_train_transforms(int(args.imgsz)),
             },
-            "collate_fn": {"base_size": int(args.imgsz)},
+            "collate_fn": {"type": "BatchImageCollateFunction", "base_size": int(args.imgsz)},
         },
         "val_dataloader": {
             "total_batch_size": max(1, int(args.batch)),
@@ -193,13 +211,9 @@ def write_dfine_config(
             "dataset": {
                 "img_folder": str(coco_dir / "val2017"),
                 "ann_file": str(val_ann),
-                "transforms": {
-                    "ops": [
-                        {"type": "Resize", "size": [int(args.imgsz), int(args.imgsz)]},
-                    ],
-                },
+                "transforms": dfine_val_transforms(int(args.imgsz)),
             },
-            "collate_fn": {"base_size": int(args.imgsz)},
+            "collate_fn": {"type": "BatchImageCollateFunction", "base_size": int(args.imgsz)},
         },
         "optimizer": {
             "type": "AdamW",
