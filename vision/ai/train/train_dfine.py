@@ -52,6 +52,14 @@ COCO_AP_RE = re.compile(
     r"Average Precision\s+\(AP\)\s+@\[\s*IoU=(?P<iou>0\.50:0\.95|0\.50)\s*\|[^\]]+\]\s*=\s*(?P<value>-?\d+(?:\.\d+)?)"
 )
 EPOCH_RE = re.compile(r"(?:epoch|Epoch)\D+(\d+)(?:\D+(\d+))?")
+DFINE_PROGRESS_RE = re.compile(
+    r"^Epoch:\s*\[\s*(?P<epoch>\d+)\s*/\s*(?P<total>\d+)\s*\]\s*"
+    r"\[\s*(?P<step>\d+)\s*/\s*(?P<steps>\d+)\s*\].*?"
+    r"\blr:\s*(?P<lr>-?\d+(?:\.\d+)?(?:e[+-]?\d+)?).*?"
+    r"\bloss:\s*(?P<loss>-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*"
+    r"\((?P<loss_avg>-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\)",
+    re.IGNORECASE,
+)
 
 
 def parse_args():
@@ -227,7 +235,100 @@ def write_dfine_config(
     return config_path
 
 
-def run_dfine_training(dfine_root: Path, config_path: Path, run_dir: Path, args) -> int:
+def parse_dfine_progress_line(line: str) -> dict[str, Any] | None:
+    match = DFINE_PROGRESS_RE.search(line)
+    if match is None:
+        return None
+    loss_avg = float_value(match.group("loss_avg"))
+    loss = float_value(match.group("loss"))
+    lr = float_value(match.group("lr"))
+    if loss_avg is None and loss is None:
+        return None
+    raw_epoch = int(match.group("epoch"))
+    return {
+        "epoch": raw_epoch + 1,
+        "raw_epoch": raw_epoch,
+        "total_epochs": int(match.group("total")),
+        "step": int(match.group("step")),
+        "total_steps": int(match.group("steps")),
+        "lr": lr,
+        "train/loss": loss_avg if loss_avg is not None else loss,
+        "train/loss_step": loss,
+    }
+
+
+def parse_dfine_coco_ap_line(line: str) -> dict[str, float]:
+    match = COCO_AP_RE.search(line)
+    if match is None:
+        return {}
+    value = float_value(match.group("value"))
+    if value is None or value < 0:
+        return {}
+    if match.group("iou") == "0.50":
+        return {"metrics/mAP50(B)": value}
+    return {"metrics/mAP50-95(B)": value}
+
+
+def read_results_rows(run_dir: Path) -> list[dict]:
+    results_path = run_dir / "results.csv"
+    if not results_path.is_file():
+        return []
+    try:
+        with results_path.open("r", encoding="utf-8", newline="") as file:
+            return list(csv.DictReader(file))
+    except (OSError, csv.Error):
+        return []
+
+
+def result_row_has_value(row: dict) -> bool:
+    return any(row.get(key) not in (None, "") for key in RESULT_FIELDNAMES if key != "epoch")
+
+
+def coerce_result_row(row: dict) -> dict:
+    coerced = {key: row.get(key) for key in RESULT_FIELDNAMES}
+    epoch = float_value(coerced.get("epoch"))
+    coerced["epoch"] = int(epoch) if epoch is not None else None
+    for key in RESULT_FIELDNAMES:
+        if key == "epoch":
+            continue
+        value = float_value(coerced.get(key))
+        coerced[key] = value
+    return coerced
+
+
+def write_result_rows(run_dir: Path, rows: list[dict]) -> None:
+    rows = [coerce_result_row(row) for row in rows if row.get("epoch") is not None]
+    rows.sort(key=lambda row: int(row.get("epoch") or 0))
+    with (run_dir / "results.csv").open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=RESULT_FIELDNAMES)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: "" if row.get(key) is None else row.get(key) for key in RESULT_FIELDNAMES})
+
+
+def upsert_live_result(run_dir: Path, epoch: int, values: dict[str, Any]) -> None:
+    by_epoch = {}
+    for row in read_results_rows(run_dir):
+        coerced = coerce_result_row(row)
+        if coerced.get("epoch") is not None:
+            by_epoch[int(coerced["epoch"])] = coerced
+    row = by_epoch.setdefault(epoch, {"epoch": epoch})
+    for key, value in values.items():
+        if key in RESULT_FIELDNAMES and value is not None:
+            row[key] = value
+    if result_row_has_value(row):
+        by_epoch[epoch] = row
+    write_result_rows(run_dir, list(by_epoch.values()))
+
+
+def run_dfine_training(
+    dfine_root: Path,
+    config_path: Path,
+    run_dir: Path,
+    args,
+    class_names: list[str],
+    conversion_summary: dict[str, Any] | None,
+) -> int:
     command = [
         sys.executable,
         "-m",
@@ -258,10 +359,28 @@ def run_dfine_training(dfine_root: Path, config_path: Path, run_dir: Path, args)
         bufsize=1,
     )
     latest_epoch = 0
+    latest_metrics_epoch = 1
     if process.stdout is not None:
         for line in process.stdout:
             clean = line.rstrip("\n")
             print(clean, flush=True)
+            progress = parse_dfine_progress_line(clean)
+            if progress is not None:
+                latest_metrics_epoch = int(progress["epoch"])
+                upsert_live_result(run_dir, latest_metrics_epoch, {"train/loss": progress.get("train/loss")})
+                write_web_metrics(run_dir, args.model, class_names, conversion_summary, False)
+                print(
+                    f"{WEB_PROGRESS_PREFIX} epoch={min(latest_metrics_epoch, args.epochs)} total={args.epochs}",
+                    flush=True,
+                )
+                continue
+
+            coco_metrics = parse_dfine_coco_ap_line(clean)
+            if coco_metrics:
+                upsert_live_result(run_dir, latest_metrics_epoch, coco_metrics)
+                write_web_metrics(run_dir, args.model, class_names, conversion_summary, False)
+                continue
+
             match = EPOCH_RE.search(clean)
             if match is not None:
                 try:
@@ -411,6 +530,10 @@ def placeholder_result_row(epochs: int) -> dict:
 def write_results_csv(run_dir: Path, epochs: int, log_path: Path | None = None) -> str:
     rows = normalize_csv_metric_rows(find_metric_rows(run_dir))
     source = "csv"
+    if not rows:
+        rows = [coerce_result_row(row) for row in read_results_rows(run_dir)]
+        rows = [row for row in rows if row.get("epoch") is not None and result_row_has_value(row)]
+        source = "results_csv" if rows else "placeholder"
     log_metrics = parse_dfine_log_metrics(log_path)
     if not rows:
         rows = [placeholder_result_row(epochs)]
@@ -419,11 +542,7 @@ def write_results_csv(run_dir: Path, epochs: int, log_path: Path | None = None) 
         rows[-1].update({key: value for key, value in log_metrics.items() if value is not None})
         source = "dfine_log" if source == "placeholder" else f"{source}+dfine_log"
 
-    with (run_dir / "results.csv").open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=RESULT_FIELDNAMES)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: "" if row.get(key) is None else row.get(key) for key in RESULT_FIELDNAMES})
+    write_result_rows(run_dir, rows)
     return source
 
 
@@ -535,7 +654,7 @@ def main():
             dfine_root = dfine_repo_dir()
             require_dfine_repo(dfine_root)
             config_path = write_dfine_config(run_dir, dfine_root, coco_result.output_dir, len(class_names), args)
-            return_code = run_dfine_training(dfine_root, config_path, run_dir, args)
+            return_code = run_dfine_training(dfine_root, config_path, run_dir, args, class_names, conversion_summary)
             if return_code != 0:
                 raise SystemExit(f"D-FINE training failed with exit code {return_code}.")
             training_completed = True

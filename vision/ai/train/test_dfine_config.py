@@ -1,10 +1,17 @@
 """Tests for D-FINE web runner configuration."""
 
 from argparse import Namespace
+import csv
 
 import yaml
 
-from vision.ai.train.train_dfine import write_dfine_config
+from vision.ai.train.train_dfine import (
+    parse_dfine_coco_ap_line,
+    parse_dfine_progress_line,
+    upsert_live_result,
+    write_dfine_config,
+    write_results_csv,
+)
 
 
 def test_dfine_web_config_converts_pil_images_to_tensors(tmp_path):
@@ -28,3 +35,50 @@ def test_dfine_web_config_converts_pil_images_to_tensors(tmp_path):
     assert {"type": "ConvertPILImage", "dtype": "float32", "scale": True} in val_ops
     assert {"type": "ConvertBoxes", "fmt": "cxcywh", "normalize": True} in train_ops
     assert payload["train_dataloader"]["collate_fn"]["type"] == "BatchImageCollateFunction"
+
+
+def test_dfine_progress_line_is_normalized_for_web_metrics():
+    line = (
+        "Epoch: [0/3]  [ 200/1351]  eta: 0:03:15  lr: 0.000162  "
+        "loss: 26.7643 (29.0367)  loss_vfl: 0.8779 (0.6572)"
+    )
+
+    parsed = parse_dfine_progress_line(line)
+
+    assert parsed["epoch"] == 1
+    assert parsed["raw_epoch"] == 0
+    assert parsed["step"] == 200
+    assert parsed["total_steps"] == 1351
+    assert parsed["lr"] == 0.000162
+    assert parsed["train/loss"] == 29.0367
+    assert parsed["train/loss_step"] == 26.7643
+
+
+def test_dfine_live_results_are_preserved_by_finalization(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    upsert_live_result(run_dir, 1, {"train/loss": 29.0367})
+    upsert_live_result(
+        run_dir,
+        1,
+        parse_dfine_coco_ap_line(
+            "Average Precision (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.790"
+        ),
+    )
+    source = write_results_csv(run_dir, 3)
+
+    assert source == "results_csv"
+    with (run_dir / "results.csv").open("r", encoding="utf-8", newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert rows == [
+        {
+            "epoch": "1",
+            "train/loss": "29.0367",
+            "val/loss": "",
+            "metrics/precision(B)": "",
+            "metrics/recall(B)": "",
+            "metrics/mAP50(B)": "0.79",
+            "metrics/mAP50-95(B)": "",
+        }
+    ]
