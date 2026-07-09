@@ -167,6 +167,20 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("MODEL_CATALOG", script)
         self.assertIn('projectTask: "rfdetr"', script)
 
+    def test_rfdetr_progress_and_results_refresh_are_supported(self):
+        script = APP_JS.read_text(encoding="utf-8")
+        app_source = APP_PY.read_text(encoding="utf-8")
+
+        self.assertIn("RFDETR_VALIDATION_PROGRESS_RE", app_source)
+        self.assertIn("Val\\s+\\(Epoch\\s+(\\d+)\\s*/\\s*(\\d+)\\)", app_source)
+        self.assertIn("force=is_rfdetr_run(run_dir)", app_source)
+        self.assertIn("Progress updates when validation metrics are logged", app_source)
+
+        self.assertIn("progress.detail", script)
+        self.assertIn("Running epoch", script)
+        self.assertIn("finished validation", script)
+        self.assertNotIn("`${completed} ${completed === 1 ? \"epoch\" : \"epochs\"} completed.`", script)
+
     def test_optional_sam_annotation_qa_controls_are_exposed(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")

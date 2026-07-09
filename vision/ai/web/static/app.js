@@ -1259,6 +1259,7 @@ function renderEpochProgress(progress = {}, phase = "idle") {
   const current = Math.max(0, Number(progress.current) || 0);
   const completed = Math.max(0, Number(progress.completed) || 0);
   const total = Math.max(0, Number(progress.total) || 0);
+  const progressDetail = typeof progress.detail === "string" ? progress.detail.trim() : "";
   const percent = total
     ? Math.min(100, Math.max(0, Number(progress.percent) || (current / total) * 100))
     : 0;
@@ -1269,12 +1270,12 @@ function renderEpochProgress(progress = {}, phase = "idle") {
     label = total ? `Starting a ${total}-epoch run` : "Starting training";
     detail = "Loading the model and preparing the dataloaders.";
   } else if (phase === "training") {
-    label = current && total ? `Epoch ${current} of ${total}` : "Starting first epoch";
-    detail = completed
-      ? `${completed} ${completed === 1 ? "epoch" : "epochs"} completed.`
-      : "The first epoch is in progress.";
+    label = current && total ? `Running epoch ${current} of ${total}` : "Training running";
+    detail = progressDetail || (completed
+      ? `${completed} ${completed === 1 ? "epoch has" : "epochs have"} finished validation.`
+      : "Training is running. Waiting for the first validation update.");
   } else if (phase === "completed") {
-    label = total ? `Completed ${completed || current} of ${total}` : "Training completed";
+    label = total ? `Training completed: ${completed || current} of ${total}` : "Training completed";
     detail = completed < total
       ? "Training finished early using the configured stopping criteria."
       : "All configured epochs completed.";

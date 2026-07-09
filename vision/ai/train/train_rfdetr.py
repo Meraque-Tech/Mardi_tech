@@ -654,11 +654,25 @@ def placeholder_result_row(epochs: int) -> dict:
 
 def build_results_rows(run_dir: Path, epochs: int, log_path: Path | None = None) -> tuple[list[dict], str]:
     rows = normalize_csv_metric_rows(find_rfdetr_metric_rows(run_dir))
-    if rows:
-        return rows, "csv"
     log_rows = normalize_log_metric_rows(parse_rfdetr_log_metrics(log_path))
     if log_rows:
-        return log_rows, "rfdetr_log"
+        if not rows:
+            return log_rows, "rfdetr_log"
+        latest_csv = rows[-1]
+        latest_log = log_rows[-1]
+        csv_has_metrics = any(
+            latest_csv.get(key) is not None
+            for key in (
+                "metrics/precision(B)",
+                "metrics/recall(B)",
+                "metrics/mAP50(B)",
+                "metrics/mAP50-95(B)",
+            )
+        )
+        if not csv_has_metrics or latest_log.get("epoch", 0) >= latest_csv.get("epoch", 0):
+            return log_rows, "rfdetr_log"
+    if rows:
+        return rows, "csv"
     return [placeholder_result_row(epochs)], "placeholder"
 
 

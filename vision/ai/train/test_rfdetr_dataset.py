@@ -107,6 +107,21 @@ Val (Epoch 1/3) — Per-class Metrics
 ┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━┩
 │ ok_plant │   0.0283 │ 0.2421 │ 0.1566 │    0.0905 │ 0.5789 │
 └──────────┴──────────┴────────┴────────┴───────────┴────────┘
+Validation: |          | 0/? [00:00<?, ?it/s]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃           mAP            ┃  mAR   ┃         F1 sweep         ┃
+┡━━━━━━━━┯━━━━━━━━┯━━━━━━━━╇━━━━━━━━╇━━━━━━━━┯━━━━━━━━┯━━━━━━━━┩
+│ 50:95  │   50   │   75   │  @500  │   F1   │  Prec  │ Recall │
+├────────┼────────┼────────┼────────┼────────┼────────┼────────┤
+│ 0.3095 │ 0.7122 │ 0.2051 │ 0.5231 │ 0.6733 │ 0.7035 │ 0.6802 │
+└────────┴────────┴────────┴────────┴────────┴────────┴────────┘
+Val (Epoch 1/3) — Per-class Metrics
+┏━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┓
+┃ Class      ┃ AP 50:95 ┃     AR ┃     F1 ┃ Precision ┃ Recall ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━┩
+│ flat_plant │   0.3820 │ 0.5622 │ 0.7511 │    0.6498 │ 0.8900 │
+│ ok_plant   │   0.3623 │ 0.5454 │ 0.7967 │    0.8160 │ 0.7783 │
+└────────────┴──────────┴────────┴────────┴───────────┴────────┘
 """,
         encoding="utf-8",
     )
@@ -122,9 +137,16 @@ Val (Epoch 1/3) — Per-class Metrics
     }
 
     parsed = parse_rfdetr_log_metrics(log_path)
-    assert parsed["overall"][-1]["map50"] == 0.0821
+    assert len(parsed["overall"]) == 2
+    assert parsed["overall"][0]["map50"] == 0.0821
+    assert parsed["overall"][-1]["map50"] == 0.7122
     assert parsed["per_class"][0]["class_name"] == "ok_plant"
 
+    (run_dir / "results.csv").write_text(
+        "epoch,train/loss,val/loss,metrics/precision(B),metrics/recall(B),metrics/mAP50(B),metrics/mAP50-95(B)\n"
+        "3,,,,,,\n",
+        encoding="utf-8",
+    )
     source = write_results_csv(run_dir, 3, log_path)
     write_web_metrics(run_dir, "rfdetr-nano", ["flat_plant", "ok_plant"], log_path, dataset_audit, False)
 
@@ -132,13 +154,14 @@ Val (Epoch 1/3) — Per-class Metrics
     rows = (run_dir / "results.csv").read_text(encoding="utf-8")
     assert "metrics/mAP50(B)" in rows
     assert "0.0821" in rows
+    assert "0.7122" in rows
     payload = yaml.safe_load((run_dir / "web_metrics.json").read_text(encoding="utf-8"))
     assert payload["backend"] == "rfdetr"
     assert payload["per_class"][0]["class_name"] == "flat_plant"
-    assert payload["per_class"][0]["f1"] is None
+    assert payload["per_class"][0]["f1"] == 0.7511
     assert payload["per_class"][1]["class_name"] == "ok_plant"
-    assert payload["per_class"][1]["f1"] == 0.1566
-    assert payload["macro_f1"] is None
+    assert payload["per_class"][1]["f1"] == 0.7967
+    assert payload["macro_f1"] == 0.7739
     assert payload["roc_auc"]["mode"] == "not_available"
 
 

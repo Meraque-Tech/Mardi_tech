@@ -170,6 +170,7 @@ ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
 PROGRESS_LINE_RE = re.compile(r":\s*\d+%\s+.*\b\d+/\d+\b")
 WEB_PROGRESS_RE = re.compile(r"^WEB_TRAINING_PROGRESS\s+epoch=(\d+)\s+total=(\d+)$")
+RFDETR_VALIDATION_PROGRESS_RE = re.compile(r"Val\s+\(Epoch\s+(\d+)\s*/\s*(\d+)\)", re.IGNORECASE)
 WEB_TEST_PROGRESS_RE = re.compile(
     r"^WEB_TEST_PROGRESS\s+percent=(\d+)\s+stage=([A-Za-z0-9_-]+)(?:\s+detail=(.*))?$"
 )
@@ -2410,10 +2411,10 @@ def find_rfdetr_log_for_run(run_dir: Path) -> Optional[Path]:
     return None
 
 
-def ensure_rfdetr_web_artifacts(run_dir: Path):
+def ensure_rfdetr_web_artifacts(run_dir: Path, force: bool = False):
     if not is_rfdetr_run(run_dir):
         return
-    if (run_dir / "results.csv").is_file() and (run_dir / "web_metrics.json").is_file():
+    if not force and (run_dir / "results.csv").is_file() and (run_dir / "web_metrics.json").is_file():
         return
     log_path = find_rfdetr_log_for_run(run_dir)
     if log_path is None:
@@ -2435,7 +2436,7 @@ def ensure_rfdetr_web_artifacts(run_dir: Path):
 
 
 def read_run_metrics(run_dir: Path) -> dict:
-    ensure_rfdetr_web_artifacts(run_dir)
+    ensure_rfdetr_web_artifacts(run_dir, force=is_rfdetr_run(run_dir))
     results_path = run_dir / "results.csv"
     if not results_path.is_file():
         return {
@@ -3901,6 +3902,16 @@ def capture_training_run_dir(line: str):
 def capture_epoch_progress(line: str) -> bool:
     global training_run_info
     match = WEB_PROGRESS_RE.match(line)
+    if match is not None:
+        current_epoch = int(match.group(1))
+        total_epochs = int(match.group(2))
+        if training_run_info is not None and current_epoch > 0 and total_epochs > 0:
+            training_run_info["current_epoch"] = min(current_epoch, total_epochs)
+            training_run_info["total_epochs"] = total_epochs
+            training_run_info["progress_detail"] = ""
+        return True
+
+    match = RFDETR_VALIDATION_PROGRESS_RE.search(line)
     if match is None:
         return False
 
@@ -3909,7 +3920,8 @@ def capture_epoch_progress(line: str) -> bool:
     if training_run_info is not None and current_epoch > 0 and total_epochs > 0:
         training_run_info["current_epoch"] = min(current_epoch, total_epochs)
         training_run_info["total_epochs"] = total_epochs
-    return True
+        training_run_info["progress_detail"] = "RF-DETR validation metrics were updated from the latest validation block."
+    return False
 
 
 def capture_test_run_dir(line: str):
@@ -4119,11 +4131,15 @@ def epoch_progress(run_info: dict, running: bool) -> dict:
     total = max(0, int(run_info.get("total_epochs") or 0))
     completed = completed_epoch_from_results(run_info)
     current = max(0, int(run_info.get("current_epoch") or 0))
+    detail = str(run_info.get("progress_detail") or "").strip()
 
     if running and current == 0 and total:
         current = min(completed + 1, total)
     elif not running and completed:
         current = max(current, completed)
+
+    if running and not detail and str(run_info.get("family") or "").lower() == "rfdetr":
+        detail = "RF-DETR is training. Progress updates when validation metrics are logged."
 
     if total:
         current = min(current, total)
@@ -4137,6 +4153,7 @@ def epoch_progress(run_info: dict, running: bool) -> dict:
         "completed": completed,
         "total": total,
         "percent": percent,
+        "detail": detail,
     }
 
 
