@@ -470,7 +470,9 @@ the UI and PDF report show those as unavailable instead of pending.
 
 D-FINE-N is exposed as a separate detection backend. The web UI still prepares a
 YOLO-format dataset, then `train_dfine.py` converts it to a COCO2017-style
-layout before launching the official D-FINE trainer. Set `DFINE_REPO_DIR` to an
+layout before launching the official D-FINE trainer. The CUDA image installs the
+official D-FINE checkout under `/opt/D-FINE` by default and sets
+`DFINE_REPO_DIR` to that path. For manual setups, set `DFINE_REPO_DIR` to an
 official D-FINE checkout, or vendor it under `third_party/D-FINE`, before
 starting a D-FINE run. The runner normalizes available outputs back into
 `runs/dfine/<run-name>/weights/`, `results.csv`, and `web_metrics.json`.

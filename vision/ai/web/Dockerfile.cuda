@@ -3,6 +3,8 @@ FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 ARG BAKE_PRETRAINED_WEIGHTS=1
+ARG INSTALL_DFINE=1
+ARG DFINE_REPO_URL=https://github.com/Peterande/D-FINE.git
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -23,11 +25,21 @@ RUN apt-get update \
 COPY vision/ai/web/requirements.txt /app/vision/ai/web/requirements.txt
 RUN pip3 install --no-cache-dir -r /app/vision/ai/web/requirements.txt
 
+RUN if [ "${INSTALL_DFINE}" = "1" ]; then \
+        git clone --depth 1 "${DFINE_REPO_URL}" /opt/D-FINE \
+        && if [ -f /opt/D-FINE/requirements.txt ]; then \
+            pip3 install --no-cache-dir -r /opt/D-FINE/requirements.txt; \
+        fi; \
+    else \
+        echo "Skipping D-FINE checkout."; \
+    fi
+
 COPY . /app
 
 RUN groupadd --gid "${HOST_GID}" appuser \
     && useradd --uid "${HOST_UID}" --gid "${HOST_GID}" --create-home appuser \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app \
+    && if [ -d /opt/D-FINE ]; then chown -R appuser:appuser /opt/D-FINE; fi
 
 ENV HOME=/home/appuser
 ENV USER=appuser
@@ -35,7 +47,7 @@ ENV LOGNAME=appuser
 ENV YOLO_CONFIG_DIR=/home/appuser/.config/Ultralytics
 ENV ULTRALYTICS_WEIGHTS_DIR=/home/appuser/.cache/ultralytics/weights
 ENV RFDETR_CACHE_DIR=/home/appuser/.roboflow/models
-ENV DFINE_REPO_DIR=/app/third_party/D-FINE
+ENV DFINE_REPO_DIR=/opt/D-FINE
 
 USER appuser
 

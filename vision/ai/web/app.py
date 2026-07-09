@@ -6191,6 +6191,12 @@ def start_training(request: TrainRequest):
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(REPO_ROOT)
+        if not existing_pythonpath
+        else f"{REPO_ROOT}{os.pathsep}{existing_pythonpath}"
+    )
 
     header = (
         "Training started.\n"

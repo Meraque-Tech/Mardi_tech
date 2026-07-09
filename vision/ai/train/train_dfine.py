@@ -18,6 +18,10 @@ from typing import Any
 
 import yaml
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from vision.ai.train.yolo_to_coco import convert_yolo_to_coco, normalize_names, read_dataset_yaml
 
 
@@ -113,6 +117,9 @@ def dfine_repo_dir() -> Path:
     configured = os.getenv("DFINE_REPO_DIR")
     if configured:
         return Path(configured).expanduser().resolve()
+    image_checkout = Path("/opt/D-FINE")
+    if image_checkout.is_dir():
+        return image_checkout
     return repo_root() / "third_party" / "D-FINE"
 
 
