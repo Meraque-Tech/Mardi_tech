@@ -129,10 +129,19 @@ const CONTROL_DEFAULTS = {
 };
 
 const RFDETR_MODEL_SIZE = "rfdetr-nano";
+const DFINE_MODEL_SIZE = "dfine-n";
 const RFDETR_DEFAULTS = {
   imgsz: 512,
   batch: 4,
   lr0: 0.0001,
+  "weight-decay": 0.0001,
+  "warmup-epochs": 0,
+  "cos-lr": false,
+};
+const DFINE_DEFAULTS = {
+  imgsz: 640,
+  batch: 4,
+  lr0: 0.0004,
   "weight-decay": 0.0001,
   "warmup-epochs": 0,
   "cos-lr": false,
@@ -150,6 +159,7 @@ const MODEL_FAMILIES = [
   { id: "yolo11", label: "YOLO11", backend: "ultralytics", tasks: ["detect", "segment", "classify"], summary: "Newer Ultralytics YOLO family." },
   { id: "yolo26", label: "YOLO26", backend: "ultralytics", tasks: ["detect", "segment", "semantic", "classify"], summary: "Ultralytics family with semantic segmentation options." },
   { id: "rfdetr", label: "RF-DETR", backend: "rfdetr", tasks: ["detect"], summary: "Transformer detector; Nano is enabled for now." },
+  { id: "dfine", label: "D-FINE", backend: "dfine", tasks: ["detect"], summary: "COCO-format transformer detector; Nano is enabled for now." },
 ];
 
 const MODEL_SIZES = [
@@ -216,12 +226,25 @@ const MODEL_CATALOG = [
     summary: "Transformer object detector. Lowest RF-DETR VRAM option.",
     compatibility: "Detection only. YOLO-format datasets are supported. RF-DETR training defaults are applied.",
   },
+  {
+    value: DFINE_MODEL_SIZE,
+    task: "detect",
+    projectTask: "dfine",
+    family: "dfine",
+    size: "nano",
+    backend: "dfine",
+    label: "D-FINE Nano",
+    checkpoint: DFINE_MODEL_SIZE,
+    summary: "D-FINE Nano detector. YOLO datasets are converted to COCO at training time.",
+    compatibility: "Detection only. Requires an official D-FINE checkout in the training container.",
+  },
 ];
 const MODEL_BY_VALUE = Object.fromEntries(MODEL_CATALOG.map((model) => [model.value, model]));
 
 const TASK_PROJECT_DEFAULTS = {
   detect: "runs/detect",
   rfdetr: "runs/rfdetr",
+  dfine: "runs/dfine",
   segment: "runs/segment",
   semantic: "runs/semantic",
   classify: "runs/classify",
@@ -302,6 +325,9 @@ function taskForModelSize(modelSize) {
   if (value.startsWith("rfdetr-")) {
     return "rfdetr";
   }
+  if (value.startsWith("dfine-")) {
+    return "dfine";
+  }
   if (value.endsWith("-seg")) {
     return "segment";
   }
@@ -358,21 +384,24 @@ function syncProjectWithModelTask() {
 }
 
 function applyModelFamilyDefaults() {
-  if (taskForModelSize($("model-size").value) !== "rfdetr") {
-    return;
+  const projectTask = taskForModelSize($("model-size").value);
+  if (projectTask === "rfdetr") {
+    Object.entries(RFDETR_DEFAULTS).forEach(([id, value]) => setControlValue(id, value));
+  } else if (projectTask === "dfine") {
+    Object.entries(DFINE_DEFAULTS).forEach(([id, value]) => setControlValue(id, value));
   }
-  Object.entries(RFDETR_DEFAULTS).forEach(([id, value]) => setControlValue(id, value));
 }
 
 function syncModelFamilyControls() {
   const trainingLocked = state.running || state.isStarting || state.isStopping;
   const locked = trainingLocked || state.testRunning || state.testStarting || state.testStopping
     || state.annotationQaRunning || state.annotationQaStopping;
-  const isRfdetr = taskForModelSize($("model-size").value) === "rfdetr";
+  const backend = selectedModelSpec()?.backend || "ultralytics";
+  const isUltralytics = backend === "ultralytics";
   document.querySelectorAll("[data-ultralytics-only]").forEach((element) => {
-    element.hidden = isRfdetr;
+    element.hidden = !isUltralytics;
     element.querySelectorAll("input, select, textarea, button").forEach((control) => {
-      control.disabled = locked || isRfdetr;
+      control.disabled = locked || !isUltralytics;
     });
   });
 }
@@ -2874,6 +2903,8 @@ function renderConfusionMatrices(artifacts = {}, target = weightTarget(), metric
     ? "Click a matrix to open the full-resolution validation plot."
     : metrics.backend === "rfdetr"
       ? "RF-DETR training does not generate validation confusion matrices in this runner."
+      : metrics.backend === "dfine"
+        ? "D-FINE training does not generate validation confusion matrices in this runner yet."
       : "The confusion matrix will appear after validation plots are generated.";
 }
 
@@ -3378,12 +3409,13 @@ function syncInferenceControls() {
   const uploadedWeight = $("inference-weight-file").files[0];
   const uploadedSuffix = inferenceWeightSuffix(uploadedWeight);
   const uploadFamily = $("inference-upload-family").value;
-  const hasUploadedWeight = uploadFamily === "rfdetr"
+  const isDetrUpload = uploadFamily === "rfdetr" || uploadFamily === "dfine";
+  const hasUploadedWeight = isDetrUpload
     ? uploadedSuffix === ".pt"
     : uploadedSuffix === ".pt" || uploadedSuffix === ".onnx";
-  $("inference-convert-onnx-row").hidden = source !== "upload" || uploadedSuffix !== ".pt" || uploadFamily === "rfdetr";
-  $("inference-convert-onnx").disabled = source !== "upload" || uploadedSuffix !== ".pt" || uploadFamily === "rfdetr";
-  if (uploadedSuffix !== ".pt" || uploadFamily === "rfdetr") {
+  $("inference-convert-onnx-row").hidden = source !== "upload" || uploadedSuffix !== ".pt" || isDetrUpload;
+  $("inference-convert-onnx").disabled = source !== "upload" || uploadedSuffix !== ".pt" || isDetrUpload;
+  if (uploadedSuffix !== ".pt" || isDetrUpload) {
     $("inference-convert-onnx").checked = false;
   }
   const hasMedia = Boolean($("inference-media-file").files[0]);
@@ -3413,7 +3445,7 @@ function renderInferenceWeights(weights) {
     option.value = "";
     option.textContent = "No weights found";
     select.appendChild(option);
-    $("inference-weights-status").textContent = "No .pt or .onnx weights were found under runs/detect, runs/rfdetr, runs/segment, runs/semantic, or runs/classify.";
+    $("inference-weights-status").textContent = "No .pt or .onnx weights were found under runs/detect, runs/rfdetr, runs/dfine, runs/segment, runs/semantic, or runs/classify.";
     syncInferenceControls();
     return;
   }
@@ -3934,9 +3966,10 @@ async function runInference() {
   if (source === "upload") {
     const suffix = inferenceWeightSuffix($("inference-weight-file").files[0]);
     const uploadFamily = $("inference-upload-family").value;
-    const supportedSuffixes = uploadFamily === "rfdetr" ? [".pt"] : [".pt", ".onnx"];
+    const isDetrUpload = uploadFamily === "rfdetr" || uploadFamily === "dfine";
+    const supportedSuffixes = isDetrUpload ? [".pt"] : [".pt", ".onnx"];
     if (!supportedSuffixes.includes(suffix)) {
-      setInferenceMessage(uploadFamily === "rfdetr" ? "Uploaded RF-DETR weights must be a .pt file." : "Uploaded weights must be a .pt or .onnx file.", true);
+      setInferenceMessage(isDetrUpload ? "Uploaded DETR-family weights must be a .pt file." : "Uploaded weights must be a .pt or .onnx file.", true);
       return;
     }
   }
@@ -3944,6 +3977,7 @@ async function runInference() {
   const convertToOnnx = source === "upload"
     && inferenceWeightSuffix($("inference-weight-file").files[0]) === ".pt"
     && $("inference-upload-family").value !== "rfdetr"
+    && $("inference-upload-family").value !== "dfine"
     && $("inference-convert-onnx").checked;
 
   const form = new FormData();

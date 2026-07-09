@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from .dataset_provenance import roboflow_pre_augmentation_summary
 from .infer_yolo import InferenceStopped, run_yolo_inference
 from .infer_rfdetr import run_rfdetr_inference
+from .infer_dfine import run_dfine_inference
 from .stratified_split import SPLIT_NAMES, stratified_split
 from vision.ai.train.train_rfdetr import RFDETR_RUN_LOG, finalize_rfdetr_artifacts
 
@@ -39,6 +40,7 @@ WEB_DIR = Path(__file__).resolve().parent
 REPO_ROOT = WEB_DIR.parents[2]
 TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_yolov8.py"
 RFDETR_TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_rfdetr.py"
+DFINE_TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_dfine.py"
 TEST_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "test_yolov8.py"
 STATIC_DIR = WEB_DIR / "static"
 LOG_DIR = WEB_DIR / "logs"
@@ -48,10 +50,11 @@ RUNS_ROOT = REPO_ROOT / "runs"
 ANNOTATION_QA_ROOT = RUNS_ROOT / "annotation_qa"
 DETECT_RUNS_ROOT = RUNS_ROOT / "detect"
 RFDETR_RUNS_ROOT = RUNS_ROOT / "rfdetr"
+DFINE_RUNS_ROOT = RUNS_ROOT / "dfine"
 SEGMENT_RUNS_ROOT = RUNS_ROOT / "segment"
 SEMANTIC_RUNS_ROOT = RUNS_ROOT / "semantic"
 CLASSIFY_RUNS_ROOT = RUNS_ROOT / "classify"
-TRAINING_RUNS_ROOTS = (DETECT_RUNS_ROOT, RFDETR_RUNS_ROOT, SEGMENT_RUNS_ROOT, SEMANTIC_RUNS_ROOT, CLASSIFY_RUNS_ROOT)
+TRAINING_RUNS_ROOTS = (DETECT_RUNS_ROOT, RFDETR_RUNS_ROOT, DFINE_RUNS_ROOT, SEGMENT_RUNS_ROOT, SEMANTIC_RUNS_ROOT, CLASSIFY_RUNS_ROOT)
 TEST_RUNS_ROOT = RUNS_ROOT / "test"
 INFERENCE_SCRIPT = WEB_DIR / "infer_yolo.py"
 MYT = timezone(timedelta(hours=8), name="MYT")
@@ -131,6 +134,7 @@ MODEL_MAP = {
 TRAINING_PROJECT_DEFAULTS = {
     "detect": "runs/detect",
     "rfdetr": "runs/rfdetr",
+    "dfine": "runs/dfine",
     "segment": "runs/segment",
     "semantic": "runs/semantic",
     "classify": "runs/classify",
@@ -141,6 +145,16 @@ RFDETR_DEFAULTS = {
     "imgsz": 512,
     "batch": 4,
     "lr0": 1e-4,
+    "weight_decay": 1e-4,
+    "warmup_epochs": 0.0,
+    "cos_lr": False,
+}
+DFINE_DEFAULTS = {
+    "model_size": "dfine-n",
+    "model": "dfine-n",
+    "imgsz": 640,
+    "batch": 4,
+    "lr0": 4e-4,
     "weight_decay": 1e-4,
     "warmup_epochs": 0.0,
     "cos_lr": False,
@@ -164,6 +178,13 @@ MODEL_REGISTRY.update({
         "model": RFDETR_DEFAULTS["model"],
         "runner": RFDETR_TRAIN_SCRIPT,
         "project_default": TRAINING_PROJECT_DEFAULTS["rfdetr"],
+    },
+    "dfine-n": {
+        "family": "dfine",
+        "task": "detect",
+        "model": DFINE_DEFAULTS["model"],
+        "runner": DFINE_TRAIN_SCRIPT,
+        "project_default": TRAINING_PROJECT_DEFAULTS["dfine"],
     },
 })
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -504,6 +525,20 @@ def rfdetr_training_value(request: TrainRequest, key: str):
     return request_value
 
 
+def backend_training_value(request: TrainRequest, key: str, family: str):
+    defaults = {
+        "rfdetr": RFDETR_DEFAULTS,
+        "dfine": DFINE_DEFAULTS,
+    }.get(family)
+    if not defaults:
+        return getattr(request, key)
+    request_value = getattr(request, key)
+    default_value = getattr(TrainRequest(), key)
+    if request_value == default_value:
+        return defaults[key]
+    return request_value
+
+
 def default_project_for_training_task(task: str) -> str:
     return TRAINING_PROJECT_DEFAULTS.get(task, TRAINING_PROJECT_DEFAULTS["detect"])
 
@@ -580,7 +615,7 @@ def ensure_inference_runs_path(path: Path):
             continue
     raise HTTPException(
         status_code=400,
-        detail="Inference weights can only be selected from runs/detect, runs/segment, runs/semantic, or runs/classify.",
+        detail="Inference weights can only be selected from runs/detect, runs/rfdetr, runs/dfine, runs/segment, runs/semantic, or runs/classify.",
     )
 
 
@@ -797,13 +832,15 @@ def family_for_weight_path(weights_path: Path) -> str:
     parts = {part.lower() for part in weights_path.parts}
     if "rfdetr" in parts:
         return "rfdetr"
+    if "dfine" in parts:
+        return "dfine"
     context = read_json_object(weights_path.parent.parent / TRAINING_REPORT_CONTEXT_FILE)
     family = str(context.get("family") or context.get("hyperparameters", {}).get("family") or "").lower()
-    return family if family in {"rfdetr", "ultralytics"} else "ultralytics"
+    return family if family in {"dfine", "rfdetr", "ultralytics"} else "ultralytics"
 
 
 def task_for_runs_root(root: Path) -> str:
-    if root == RFDETR_RUNS_ROOT:
+    if root in {RFDETR_RUNS_ROOT, DFINE_RUNS_ROOT}:
         return "detect"
     if root == SEGMENT_RUNS_ROOT:
         return "segment"
@@ -815,7 +852,11 @@ def task_for_runs_root(root: Path) -> str:
 
 
 def family_for_runs_root(root: Path) -> str:
-    return "rfdetr" if root == RFDETR_RUNS_ROOT else "ultralytics"
+    if root == RFDETR_RUNS_ROOT:
+        return "rfdetr"
+    if root == DFINE_RUNS_ROOT:
+        return "dfine"
+    return "ultralytics"
 
 
 def available_inference_weights() -> list[dict]:
@@ -1240,7 +1281,12 @@ def run_inference_job(
                     elapsed_ms=round((time.time() - started) * 1000, 2),
                 )
 
-        inference_runner = run_rfdetr_inference if inference_family == "rfdetr" else run_yolo_inference
+        inference_runners = {
+            "dfine": run_dfine_inference,
+            "rfdetr": run_rfdetr_inference,
+            "ultralytics": run_yolo_inference,
+        }
+        inference_runner = inference_runners.get(inference_family, run_yolo_inference)
         payload = inference_runner(
             **inference_request,
             progress_callback=handle_progress,
@@ -2470,7 +2516,7 @@ def read_run_metrics(run_dir: Path) -> dict:
     map50 = float_value(row, profile["map50_key"]) if profile.get("map50_key") else None
     map50_95 = float_value(row, profile["map50_95_key"]) if profile.get("map50_95_key") else None
     web_metrics = read_web_metrics(run_dir)
-    backend = web_metrics.get("backend") or ("rfdetr" if is_rfdetr_run(run_dir) else "ultralytics")
+    backend = web_metrics.get("backend") or family_for_runs_root(run_dir.parent)
     class_metrics = {
         "macro_f1": web_metrics.get("macro_f1"),
         "weighted_f1": web_metrics.get("weighted_f1"),
@@ -2489,7 +2535,7 @@ def read_run_metrics(run_dir: Path) -> dict:
     history = build_metric_history(rows, profile)
     metrics_note = (
         web_metrics.get("per_class_note")
-        if backend == "rfdetr" and web_metrics.get("per_class_note")
+        if backend in {"dfine", "rfdetr"} and web_metrics.get("per_class_note")
         else "Macro and weighted F1 are calculated from final per-class validation rows when available. "
         + loss_note(losses)
     )
@@ -4145,6 +4191,8 @@ def epoch_progress(run_info: dict, running: bool) -> dict:
 
     if running and not detail and str(run_info.get("family") or "").lower() == "rfdetr":
         detail = "RF-DETR is training. Progress updates when validation metrics are logged."
+    if running and not detail and str(run_info.get("family") or "").lower() == "dfine":
+        detail = "D-FINE is training. Progress updates when the backend logs epoch markers."
 
     if total:
         current = min(current, total)
@@ -4573,13 +4621,13 @@ def run_inference(
         normalized_family = str(weight_family or "ultralytics").strip().lower()
         if normalized_family == "auto":
             normalized_family = "ultralytics"
-        if normalized_family not in {"ultralytics", "rfdetr"}:
+        if normalized_family not in {"ultralytics", "rfdetr", "dfine"}:
             raise HTTPException(status_code=400, detail="Unknown inference weights backend.")
-        if normalized_family == "rfdetr" and weight_suffix != ".pt":
-            raise HTTPException(status_code=400, detail="Uploaded RF-DETR weights must be a .pt file.")
+        if normalized_family in {"dfine", "rfdetr"} and weight_suffix != ".pt":
+            raise HTTPException(status_code=400, detail="Uploaded DETR-family weights must be a .pt file.")
         if convert_to_onnx and weight_suffix != ".pt":
             convert_to_onnx = False
-        if normalized_family == "rfdetr":
+        if normalized_family in {"dfine", "rfdetr"}:
             convert_to_onnx = False
         weights_path = (INFERENCE_UPLOAD_ROOT / job_id / Path(weight_file.filename).name).resolve()
         ensure_inference_path(weights_path)
@@ -6005,9 +6053,9 @@ def start_training(request: TrainRequest):
         "warmup_epochs": request.warmup_epochs,
         "cos_lr": request.cos_lr,
     }
-    if model_family == "rfdetr":
+    if model_family in {"dfine", "rfdetr"}:
         for key in training_values:
-            training_values[key] = rfdetr_training_value(request, key)
+            training_values[key] = backend_training_value(request, key, model_family)
 
     request_payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
     request_payload.update(training_values)
@@ -6020,7 +6068,7 @@ def start_training(request: TrainRequest):
     report_context = {}
     if resume_run_dir:
         report_context = read_json_object(resume_run_dir / TRAINING_REPORT_CONTEXT_FILE)
-        if model_family == "rfdetr" and dataset_yaml is None and report_context.get("dataset_yaml"):
+        if model_family in {"dfine", "rfdetr"} and dataset_yaml is None and report_context.get("dataset_yaml"):
             dataset_yaml = Path(str(report_context["dataset_yaml"])).expanduser()
     if not report_context:
         report_dataset_yaml = dataset_yaml
@@ -6041,6 +6089,7 @@ def start_training(request: TrainRequest):
                 "platform": platform.platform(),
                 "ultralytics": installed_version("ultralytics"),
                 "rfdetr": installed_version("rfdetr"),
+                "dfine_repo": os.getenv("DFINE_REPO_DIR") or str(REPO_ROOT / "third_party" / "D-FINE"),
                 "torch": installed_version("torch"),
                 "gpus": gpu_status().get("gpus", []),
             },
@@ -6125,7 +6174,7 @@ def start_training(request: TrainRequest):
         if request.auto_augment:
             cmd.extend(["--auto-augment", request.auto_augment])
 
-    if dataset_yaml is not None and (not request.resume or model_family == "rfdetr"):
+    if dataset_yaml is not None and (not request.resume or model_family in {"dfine", "rfdetr"}):
         cmd.extend(["--data", str(dataset_yaml)])
 
     device = request.device or os.getenv("TRAINING_DEVICE")

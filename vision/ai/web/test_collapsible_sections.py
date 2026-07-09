@@ -172,6 +172,29 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('"compute_val_loss": True', train_source)
         self.assertIn("model.train(**supported_train_kwargs(model, train_kwargs))", train_source)
 
+    def test_dfine_nano_backend_is_exposed_with_backend_specific_controls(self):
+        markup = INDEX_HTML.read_text(encoding="utf-8")
+        script = APP_JS.read_text(encoding="utf-8")
+        app_source = APP_PY.read_text(encoding="utf-8")
+        train_source = (WEB_DIR.parent / "train" / "train_dfine.py").read_text(encoding="utf-8")
+        infer_source = (WEB_DIR / "infer_dfine.py").read_text(encoding="utf-8")
+
+        self.assertIn('optgroup label="Detection - D-FINE"', markup)
+        self.assertIn('<option value="dfine-n">D-FINE Nano - dfine-n</option>', markup)
+        self.assertIn('"dfine-n": {', app_source)
+        self.assertIn('"family": "dfine"', app_source)
+        self.assertIn('"model": DFINE_DEFAULTS["model"]', app_source)
+        self.assertIn('default="dfine-n"', train_source)
+        self.assertIn('convert_yolo_to_coco', train_source)
+        self.assertIn('DFINE_REPO_DIR', train_source)
+        self.assertIn('run_dfine_inference', infer_source)
+
+        self.assertIn('const DFINE_DEFAULTS = {', script)
+        self.assertIn('projectTask: "dfine"', script)
+        self.assertIn('backend: "dfine"', script)
+        self.assertIn('dfine: "runs/dfine"', script)
+        self.assertIn('uploadFamily === "dfine"', script)
+
     def test_rfdetr_progress_and_results_refresh_are_supported(self):
         script = APP_JS.read_text(encoding="utf-8")
         app_source = APP_PY.read_text(encoding="utf-8")
@@ -252,6 +275,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertEqual(project_defaults, {
             "detect": "runs/detect",
             "rfdetr": "runs/rfdetr",
+            "dfine": "runs/dfine",
             "segment": "runs/segment",
             "semantic": "runs/semantic",
             "classify": "runs/classify",

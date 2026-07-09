@@ -468,6 +468,13 @@ available and from the RF-DETR validation console table otherwise. RF-DETR does
 not generate ROC-AUC or validation confusion-matrix artifacts in this runner, so
 the UI and PDF report show those as unavailable instead of pending.
 
+D-FINE-N is exposed as a separate detection backend. The web UI still prepares a
+YOLO-format dataset, then `train_dfine.py` converts it to a COCO2017-style
+layout before launching the official D-FINE trainer. Set `DFINE_REPO_DIR` to an
+official D-FINE checkout, or vendor it under `third_party/D-FINE`, before
+starting a D-FINE run. The runner normalizes available outputs back into
+`runs/dfine/<run-name>/weights/`, `results.csv`, and `web_metrics.json`.
+
 ## Outputs And Downloads
 
 Training outputs are saved under the selected project and resolved run name. By

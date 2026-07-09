@@ -35,6 +35,7 @@ ENV LOGNAME=appuser
 ENV YOLO_CONFIG_DIR=/home/appuser/.config/Ultralytics
 ENV ULTRALYTICS_WEIGHTS_DIR=/home/appuser/.cache/ultralytics/weights
 ENV RFDETR_CACHE_DIR=/home/appuser/.roboflow/models
+ENV DFINE_REPO_DIR=/app/third_party/D-FINE
 
 USER appuser
 
