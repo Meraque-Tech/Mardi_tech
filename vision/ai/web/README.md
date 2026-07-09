@@ -429,6 +429,12 @@ and the target is whether that class appears anywhere in the image. This makes
 ROC-AUC well-defined for the UI while the AP columns remain box-level detection
 metrics from YOLO validation.
 
+RF-DETR runs write the same web-facing `results.csv` and `web_metrics.json`
+files, but the values are normalized from RF-DETR/Lightning CSV artifacts when
+available and from the RF-DETR validation console table otherwise. RF-DETR does
+not generate ROC-AUC or validation confusion-matrix artifacts in this runner, so
+the UI and PDF report show those as unavailable instead of pending.
+
 ## Outputs And Downloads
 
 Training outputs are saved under the selected project and resolved run name. By

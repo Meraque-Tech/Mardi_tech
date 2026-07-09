@@ -2832,7 +2832,7 @@ function artifactViewUrl(artifact, target, status) {
   return `/api/train/artifacts/view/${encodeURIComponent(artifact)}?${params.toString()}`;
 }
 
-function renderConfusionMatrices(artifacts = {}, target = weightTarget()) {
+function renderConfusionMatrices(artifacts = {}, target = weightTarget(), metrics = {}) {
   const variants = [
     {
       artifact: "confusion_matrix_normalized",
@@ -2871,7 +2871,9 @@ function renderConfusionMatrices(artifacts = {}, target = weightTarget()) {
 
   $("confusion-matrix-status").textContent = availableCount
     ? "Click a matrix to open the full-resolution validation plot."
-    : "The confusion matrix will appear after validation plots are generated.";
+    : metrics.backend === "rfdetr"
+      ? "RF-DETR training does not generate validation confusion matrices in this runner."
+      : "The confusion matrix will appear after validation plots are generated.";
 }
 
 function renderRocAuc(rocAuc = {}, artifacts = {}, target = weightTarget()) {
@@ -2895,7 +2897,9 @@ function renderRocAuc(rocAuc = {}, artifacts = {}, target = weightTarget()) {
   const classes = Array.isArray(rocAuc.classes) ? rocAuc.classes : [];
   const container = $("roc-auc-summary");
   if (!classes.length) {
-    container.innerHTML = "";
+    container.innerHTML = rocAuc.note
+      ? `<p>${escapeHtml(rocAuc.note)}</p>`
+      : "";
   } else {
     const rows = classes.map((item) => `
       <tr>
@@ -4497,7 +4501,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
       renderClassMetrics([]);
       resetCharts();
       setArtifactButtons(metrics.artifacts || false);
-      renderConfusionMatrices(metrics.artifacts || {}, target);
+      renderConfusionMatrices(metrics.artifacts || {}, target, metrics);
       renderRocAuc({}, metrics.artifacts || {}, target);
       $("metrics-status").textContent = "No results.csv found for this run yet.";
       return;
@@ -4518,7 +4522,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     renderClassMetrics(metrics.per_class);
     renderMetricCharts(metrics.history, metrics.metric_labels);
     setArtifactButtons(metrics.artifacts || true);
-    renderConfusionMatrices(metrics.artifacts || {}, target);
+    renderConfusionMatrices(metrics.artifacts || {}, target, metrics);
     renderRocAuc(metrics.roc_auc || {}, metrics.artifacts || {}, target);
     $("metrics-status").textContent = `Epoch ${metrics.epoch}. ${metrics.note}`;
   } catch (error) {

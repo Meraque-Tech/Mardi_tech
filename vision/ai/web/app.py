@@ -32,6 +32,7 @@ from .dataset_provenance import roboflow_pre_augmentation_summary
 from .infer_yolo import InferenceStopped, run_yolo_inference
 from .infer_rfdetr import run_rfdetr_inference
 from .stratified_split import SPLIT_NAMES, stratified_split
+from vision.ai.train.train_rfdetr import RFDETR_RUN_LOG, finalize_rfdetr_artifacts
 
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -175,6 +176,23 @@ WEB_TEST_PROGRESS_RE = re.compile(
 WEB_TEST_RUN_DIR_RE = re.compile(r"^WEB_TEST_RUN_DIR\s+path=(.+)$")
 TIMESTAMPED_RUN_SUFFIX_RE = re.compile(r"^(?P<base>.+)-\d{8}-\d{6}$")
 RUN_DIRECTORY_PREFIXES = ("Logging results to ", "Results saved to ")
+RFDETR_NON_FATAL_WARNING_PATTERNS = (
+    "pretrained weights",
+    "loaded only partially",
+    "different number of positional encodings",
+    "patch size 16 instead of 14",
+    "litlogger",
+    "bf16-mixed is not supported by the model summary",
+    "existing log directory",
+    "previous log files in this directory will be deleted",
+    "detection head will be re-initialized",
+)
+RFDETR_FATAL_ERROR_PATTERNS = (
+    "could not detect dataset format",
+    "no module named pytorch_lightning",
+    "cuda out of memory",
+    "missing labels folder",
+)
 SPLIT_METADATA_FILE = ".split_metadata.json"
 DATASET_SUMMARY_FILE = ".web_dataset_summary.json"
 TRAINING_REPORT_CONTEXT_FILE = "training_report_context.json"
@@ -1339,6 +1357,8 @@ def is_run_dir(path: Path) -> bool:
         (path / "weights" / "best.pt").is_file()
         or (path / "weights" / "last.pt").is_file()
         or (path / "results.csv").is_file()
+        or (path / TRAINING_REPORT_CONTEXT_FILE).is_file()
+        or any(path.glob("checkpoint*.pth"))
     )
 
 
@@ -2293,7 +2313,122 @@ def read_web_metrics(run_dir: Path) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def is_rfdetr_run(run_dir: Path) -> bool:
+    parts = {part.lower() for part in run_dir.parts}
+    if "rfdetr" in parts:
+        return True
+    context = read_json_object(run_dir / TRAINING_REPORT_CONTEXT_FILE)
+    family = str(context.get("family") or context.get("hyperparameters", {}).get("family") or "").lower()
+    return family == "rfdetr"
+
+
+def rfdetr_class_names_from_context(context: dict) -> list[str]:
+    summary = context.get("dataset_summary") if isinstance(context.get("dataset_summary"), dict) else {}
+    classes = summary.get("classes")
+    if isinstance(classes, list):
+        return [str(name) for name in classes]
+    distribution = summary.get("class_distribution")
+    if isinstance(distribution, list):
+        return [str(row.get("class_name")) for row in distribution if row.get("class_name")]
+    return []
+
+
+def rfdetr_dataset_audit_from_context(context: dict) -> dict:
+    class_names = rfdetr_class_names_from_context(context)
+    summary = context.get("dataset_summary") if isinstance(context.get("dataset_summary"), dict) else {}
+    summary_splits = summary.get("splits") if isinstance(summary.get("splits"), dict) else {}
+    splits = {}
+    for source_name, target_name in (("train", "train"), ("val", "valid"), ("valid", "valid"), ("test", "test")):
+        split = summary_splits.get(source_name)
+        if not isinstance(split, dict) or target_name in splits:
+            continue
+        rows = []
+        for row in split.get("class_distribution") or []:
+            rows.append({
+                "class_id": row.get("class_id"),
+                "class_name": row.get("class_name"),
+                "images": int(row.get("images") or 0),
+                "instances": int(row.get("instances") or 0),
+            })
+        missing_ids = [
+            index
+            for index, row in enumerate(rows)
+            if int(row.get("instances") or 0) == 0
+        ]
+        splits[target_name] = {
+            "split": target_name,
+            "label_path": split.get("label_path", ""),
+            "classes": rows,
+            "present_class_ids": [row.get("class_id") for row in rows if int(row.get("instances") or 0) > 0],
+            "missing_class_ids": missing_ids,
+            "malformed_labels": 0,
+            "warnings": split.get("warnings") or [],
+        }
+    return {
+        "dataset_dir": summary.get("dataset_root", ""),
+        "classes": class_names,
+        "splits": splits,
+    }
+
+
+def rfdetr_model_id_from_context(context: dict) -> str:
+    hyperparameters = context.get("hyperparameters") if isinstance(context.get("hyperparameters"), dict) else {}
+    value = context.get("model") or hyperparameters.get("model") or hyperparameters.get("model_size")
+    return str(value or RFDETR_DEFAULTS["model"])
+
+
+def rfdetr_epochs_from_context(context: dict) -> int:
+    hyperparameters = context.get("hyperparameters") if isinstance(context.get("hyperparameters"), dict) else {}
+    try:
+        return max(1, int(hyperparameters.get("epochs") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def find_rfdetr_log_for_run(run_dir: Path) -> Optional[Path]:
+    candidates = [run_dir / RFDETR_RUN_LOG]
+    if training_log_file is not None:
+        candidates.append(training_log_file)
+    candidates.append(LOG_FILE)
+    candidates.extend(sorted(LOG_DIR.glob("train-*.log"), key=lambda path: path.stat().st_mtime, reverse=True))
+
+    seen = set()
+    for path in candidates:
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        data = read_log_file(path)
+        if run_dir.name in data or str(run_dir) in data:
+            return path
+    return None
+
+
+def ensure_rfdetr_web_artifacts(run_dir: Path):
+    if not is_rfdetr_run(run_dir):
+        return
+    if (run_dir / "results.csv").is_file() and (run_dir / "web_metrics.json").is_file():
+        return
+    log_path = find_rfdetr_log_for_run(run_dir)
+    if log_path is None:
+        return
+    context = read_json_object(run_dir / TRAINING_REPORT_CONTEXT_FILE)
+    try:
+        finalize_rfdetr_artifacts(
+            run_dir,
+            model_id=rfdetr_model_id_from_context(context),
+            class_names=rfdetr_class_names_from_context(context),
+            epochs=rfdetr_epochs_from_context(context),
+            log_path=log_path,
+            dataset_audit=rfdetr_dataset_audit_from_context(context),
+            training_completed=None,
+            quiet=True,
+        )
+    except Exception:
+        return
+
+
 def read_run_metrics(run_dir: Path) -> dict:
+    ensure_rfdetr_web_artifacts(run_dir)
     results_path = run_dir / "results.csv"
     if not results_path.is_file():
         return {
@@ -2322,6 +2457,7 @@ def read_run_metrics(run_dir: Path) -> dict:
     map50 = float_value(row, profile["map50_key"]) if profile.get("map50_key") else None
     map50_95 = float_value(row, profile["map50_95_key"]) if profile.get("map50_95_key") else None
     web_metrics = read_web_metrics(run_dir)
+    backend = web_metrics.get("backend") or ("rfdetr" if is_rfdetr_run(run_dir) else "ultralytics")
     class_metrics = {
         "macro_f1": web_metrics.get("macro_f1"),
         "weighted_f1": web_metrics.get("weighted_f1"),
@@ -2338,11 +2474,20 @@ def read_run_metrics(run_dir: Path) -> dict:
             "note": "ROC-AUC will appear after web metrics are generated for this run.",
         }
     history = build_metric_history(rows, profile)
+    metrics_note = (
+        web_metrics.get("per_class_note")
+        if backend == "rfdetr" and web_metrics.get("per_class_note")
+        else "Macro and weighted F1 are calculated from final per-class validation rows when available. "
+        + loss_note(losses)
+    )
 
     return {
         "available": True,
         "run_dir": str(run_dir),
         "results_csv": str(results_path),
+        "backend": backend,
+        "per_class_source": web_metrics.get("per_class_source"),
+        "per_class_note": web_metrics.get("per_class_note"),
         "epoch": int(float_value(row, "epoch") or 0),
         "task": profile["task"],
         "metric_type": profile["metric_type"],
@@ -2367,10 +2512,7 @@ def read_run_metrics(run_dir: Path) -> dict:
         "history": history,
         "best": best_metric_summary(history),
         "artifacts": run_artifact_statuses(run_dir),
-        "note": (
-            "Macro and weighted F1 are calculated from final per-class validation rows when available. "
-            + loss_note(losses)
-        ),
+        "note": metrics_note,
     }
 
 
@@ -3864,10 +4006,49 @@ def read_log_file(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def classify_rfdetr_log_line(line: str) -> str:
+    lower = line.lower()
+    if any(pattern in lower for pattern in RFDETR_FATAL_ERROR_PATTERNS):
+        return "fatal"
+    if "rf-detr" not in lower and "rfdetr" not in lower:
+        return ""
+    if any(pattern in lower for pattern in RFDETR_NON_FATAL_WARNING_PATTERNS):
+        return "non_fatal"
+    return ""
+
+
 def read_error_log(path: Path) -> str:
     keywords = ("error", "warning", "traceback", "exception", "failed", "no space", "not found")
     lines = read_log_file(path).splitlines()
-    return "\n".join(line for line in lines if any(keyword in line.lower() for keyword in keywords))
+    fatal_lines = []
+    regular_lines = []
+    expected_rfdetr = []
+    for line in lines:
+        lower = line.lower()
+        if not any(keyword in lower for keyword in keywords):
+            continue
+        classification = classify_rfdetr_log_line(line)
+        if classification == "fatal":
+            fatal_lines.append(line)
+        elif classification == "non_fatal":
+            expected_rfdetr.append(line)
+        else:
+            regular_lines.append(line)
+
+    output = []
+    if expected_rfdetr:
+        output.append("RF-DETR note: training can continue with expected model-loading warnings.")
+        output.extend(f"Expected RF-DETR warning: {line}" for line in expected_rfdetr)
+    if fatal_lines:
+        if output:
+            output.append("")
+        output.append("Fatal or blocking RF-DETR issues:")
+        output.extend(fatal_lines)
+    if regular_lines:
+        if output:
+            output.append("")
+        output.extend(regular_lines)
+    return "\n".join(output)
 
 
 def latest_timestamped_log() -> Optional[Path]:
