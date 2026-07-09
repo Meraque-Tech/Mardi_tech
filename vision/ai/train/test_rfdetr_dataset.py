@@ -1,5 +1,6 @@
 """Tests for the RF-DETR dataset layout adapter."""
 
+import csv
 from pathlib import Path
 
 import yaml
@@ -156,7 +157,7 @@ Val (Epoch 1/3) — Per-class Metrics
     source = write_results_csv(run_dir, 3, log_path)
     write_web_metrics(run_dir, "rfdetr-nano", ["flat_plant", "ok_plant"], log_path, dataset_audit, False)
 
-    assert source == "rfdetr_log"
+    assert source == "csv"
     rows = (run_dir / "results.csv").read_text(encoding="utf-8")
     assert "metrics/mAP50(B)" in rows
     assert "0.0821" not in rows
@@ -171,6 +172,38 @@ Val (Epoch 1/3) — Per-class Metrics
     assert payload["per_class"][1]["f1"] == 0.7967
     assert payload["macro_f1"] == 0.7739
     assert payload["roc_auc"]["mode"] == "not_available"
+
+
+def test_rfdetr_sparse_lightning_metrics_are_merged_by_epoch(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "metrics.csv").write_text(
+        "epoch,step,train/loss,val/loss,val/precision,val/recall,val/mAP_50,val/mAP_50_95\n"
+        "0,49,,,,,,\n"
+        "0,3000,5.652927398681641,,,,,\n"
+        "0,3105,,5.1602702140808105,0.741415798664093,0.6908718347549438,0.7280951142311096,0.3257828652858734\n"
+        "1,3155,,,,,,\n"
+        "1,6200,5.177618503570557,,,,,\n"
+        "1,6211,,4.823765754699707,0.7740893959999084,0.7361578941345215,0.7900826930999756,0.3808826804161072\n"
+        "2,9300,4.942300796508789,,,,,\n"
+        "2,9317,,4.631448268890381,0.8328962922096252,0.7386254668235779,0.819557785987854,0.4174250364303589\n",
+        encoding="utf-8",
+    )
+
+    source = write_results_csv(run_dir, 3)
+
+    assert source == "csv"
+    with (run_dir / "results.csv").open("r", encoding="utf-8", newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert [row["epoch"] for row in rows] == ["1", "2", "3"]
+    assert rows[0]["train/loss"] == "5.652927398681641"
+    assert rows[0]["val/loss"] == "5.1602702140808105"
+    assert rows[1]["train/loss"] == "5.177618503570557"
+    assert rows[1]["val/loss"] == "4.823765754699707"
+    assert rows[1]["metrics/mAP50(B)"] == "0.7900826930999756"
+    assert rows[1]["metrics/mAP50-95(B)"] == "0.3808826804161072"
+    assert rows[2]["metrics/precision(B)"] == "0.8328962922096252"
+    assert rows[2]["metrics/recall(B)"] == "0.7386254668235779"
 
 
 def test_prepare_rfdetr_dataset_keeps_roboflow_style_layout(tmp_path):

@@ -72,12 +72,24 @@ METRIC_ALIASES = {
     "precision": ["val/precision", "precision", "prec", "metrics/precision(B)", "val/prec"],
     "recall": ["val/recall", "recall", "metrics/recall(B)"],
     "f1": ["val/f1", "f1", "F1"],
-    "map50": ["val/mAP_50", "val/map_50", "val/mAP50", "map_50", "mAP_50", "mAP50", "metrics/mAP50(B)"],
+    "map50": [
+        "val/mAP_50",
+        "val/map_50",
+        "val/mAP50",
+        "val/ema_mAP_50",
+        "val/ema_map_50",
+        "map_50",
+        "mAP_50",
+        "mAP50",
+        "metrics/mAP50(B)",
+    ],
     "map50_95": [
         "val/mAP_50_95",
         "val/map_50_95",
         "val/mAP50_95",
         "val/mAP50-95",
+        "val/ema_mAP_50_95",
+        "val/ema_map_50_95",
         "map",
         "mAP",
         "map_50_95",
@@ -527,6 +539,14 @@ def find_rfdetr_metric_rows(run_dir: Path) -> list[dict]:
     return rows
 
 
+def normalized_epoch(row: dict, fallback: int, zero_based: bool = False) -> int:
+    value = normalized_metric(row, ["epoch"])
+    if value is None:
+        return fallback
+    epoch = int(value)
+    return epoch + 1 if zero_based else epoch
+
+
 def normalized_metric(row: dict, keys: list[str]):
     lookup = normalized_row_lookup(row)
     for key in keys:
@@ -650,18 +670,40 @@ def dedupe_metric_rows_by_epoch(rows: list[dict]) -> list[dict]:
 
 
 def normalize_csv_metric_rows(rows: list[dict]) -> list[dict]:
-    normalized_rows = []
+    explicit_epochs = [
+        normalized_metric(row, ["epoch"])
+        for row in rows
+        if normalized_metric(row, ["epoch"]) is not None
+    ]
+    zero_based_epochs = any(epoch == 0 for epoch in explicit_epochs)
+    by_epoch: dict[int, dict] = {}
+
     for index, row in enumerate(rows, start=1):
-        epoch = normalized_metric(row, METRIC_ALIASES["epoch"]) or index
-        normalized_rows.append({
-            "epoch": int(epoch),
+        epoch = normalized_epoch(row, index, zero_based=zero_based_epochs)
+        normalized = {
+            "epoch": epoch,
             "train/loss": normalized_metric(row, METRIC_ALIASES["train_loss"]),
             "val/loss": normalized_metric(row, METRIC_ALIASES["val_loss"]),
             "metrics/precision(B)": normalized_metric(row, METRIC_ALIASES["precision"]),
             "metrics/recall(B)": normalized_metric(row, METRIC_ALIASES["recall"]),
             "metrics/mAP50(B)": normalized_metric(row, METRIC_ALIASES["map50"]),
             "metrics/mAP50-95(B)": normalized_metric(row, METRIC_ALIASES["map50_95"]),
-        })
+        }
+        value_keys = [key for key in RESULT_FIELDNAMES if key != "epoch"]
+        if not row_has_value(normalized, tuple(value_keys)):
+            continue
+
+        merged = by_epoch.setdefault(epoch, {"epoch": epoch})
+        for key in value_keys:
+            value = normalized.get(key)
+            if value is not None:
+                merged[key] = value
+
+    normalized_rows = []
+    for epoch in sorted(by_epoch):
+        row = {"epoch": epoch}
+        row.update(by_epoch[epoch])
+        normalized_rows.append(row)
     return normalized_rows
 
 
@@ -684,29 +726,27 @@ def row_has_value(row: dict, keys: tuple[str, ...]) -> bool:
     return any(row.get(key) is not None for key in keys)
 
 
-def merge_loss_metrics(log_rows: list[dict], csv_rows: list[dict]) -> list[dict]:
-    if not log_rows or not csv_rows:
-        return log_rows
+def merge_metric_rows(primary_rows: list[dict], fallback_rows: list[dict]) -> list[dict]:
+    if not primary_rows:
+        return fallback_rows
+    if not fallback_rows:
+        return primary_rows
 
-    loss_rows = [row for row in csv_rows if row_has_value(row, LOSS_FIELDNAMES)]
-    if not loss_rows:
-        return log_rows
-
-    loss_by_epoch = {int(row.get("epoch") or 0): row for row in loss_rows}
+    fallback_by_epoch = {int(row.get("epoch") or 0): row for row in fallback_rows}
     merged_rows = []
-    for index, log_row in enumerate(log_rows, start=1):
-        merged = dict(log_row)
+    for index, primary_row in enumerate(primary_rows, start=1):
+        merged = dict(primary_row)
         epoch = int(merged.get("epoch") or index)
-        loss_row = loss_by_epoch.get(epoch)
-        if loss_row is None and len(loss_rows) == len(log_rows):
-            loss_row = loss_rows[index - 1]
-        if loss_row is None:
-            prior_rows = [row for row in loss_rows if int(row.get("epoch") or 0) <= epoch]
-            loss_row = prior_rows[-1] if prior_rows else None
-        if loss_row is not None:
-            for key in LOSS_FIELDNAMES:
-                if merged.get(key) is None and loss_row.get(key) is not None:
-                    merged[key] = loss_row[key]
+        fallback_row = fallback_by_epoch.get(epoch)
+        if fallback_row is None and len(fallback_rows) == len(primary_rows):
+            fallback_row = fallback_rows[index - 1]
+        if fallback_row is None:
+            prior_rows = [row for row in fallback_rows if int(row.get("epoch") or 0) <= epoch]
+            fallback_row = prior_rows[-1] if prior_rows else None
+        if fallback_row is not None:
+            for key in RESULT_FIELDNAMES:
+                if key != "epoch" and merged.get(key) is None and fallback_row.get(key) is not None:
+                    merged[key] = fallback_row[key]
         merged_rows.append(merged)
     return merged_rows
 
@@ -726,17 +766,10 @@ def placeholder_result_row(epochs: int) -> dict:
 def build_results_rows(run_dir: Path, epochs: int, log_path: Path | None = None) -> tuple[list[dict], str]:
     rows = normalize_csv_metric_rows(find_rfdetr_metric_rows(run_dir))
     log_rows = normalize_log_metric_rows(parse_rfdetr_log_metrics(log_path))
-    if log_rows:
-        merged_log_rows = merge_loss_metrics(log_rows, rows)
-        if not rows:
-            return merged_log_rows, "rfdetr_log"
-        latest_csv = rows[-1]
-        latest_log = log_rows[-1]
-        csv_has_metrics = row_has_value(latest_csv, DETECTION_FIELDNAMES)
-        if not csv_has_metrics or latest_log.get("epoch", 0) >= latest_csv.get("epoch", 0):
-            return merged_log_rows, "rfdetr_log"
     if rows:
-        return rows, "csv"
+        return merge_metric_rows(rows, log_rows), "csv"
+    if log_rows:
+        return log_rows, "rfdetr_log"
     return [placeholder_result_row(epochs)], "placeholder"
 
 
@@ -786,19 +819,44 @@ def weighted_metric_average(rows: list[dict], key: str):
 
 
 def latest_overall_metrics(run_dir: Path, log_metrics: dict) -> dict:
+    rows = normalize_csv_metric_rows(find_rfdetr_metric_rows(run_dir))
+    if rows:
+        row = rows[-1]
+        if row_has_value(row, DETECTION_FIELDNAMES):
+            return {
+                "precision": row.get("metrics/precision(B)"),
+                "recall": row.get("metrics/recall(B)"),
+                "map50": row.get("metrics/mAP50(B)"),
+                "map50_95": row.get("metrics/mAP50-95(B)"),
+                "source": "csv",
+            }
     if log_metrics.get("overall"):
         return dict(log_metrics["overall"][-1])
-    rows = normalize_csv_metric_rows(find_rfdetr_metric_rows(run_dir))
-    if not rows:
-        return {}
-    row = rows[-1]
-    return {
-        "precision": row.get("metrics/precision(B)"),
-        "recall": row.get("metrics/recall(B)"),
-        "map50": row.get("metrics/mAP50(B)"),
-        "map50_95": row.get("metrics/mAP50-95(B)"),
-        "source": "csv",
+    return {}
+
+
+def metric_sources(run_dir: Path, log_metrics: dict) -> dict:
+    csv_rows = normalize_csv_metric_rows(find_rfdetr_metric_rows(run_dir))
+    latest_csv = csv_rows[-1] if csv_rows else {}
+    latest_log = (log_metrics.get("overall") or [{}])[-1]
+    sources = {}
+    source_map = {
+        "train_loss": ("train/loss", None),
+        "val_loss": ("val/loss", None),
+        "precision": ("metrics/precision(B)", "precision"),
+        "recall": ("metrics/recall(B)", "recall"),
+        "map50": ("metrics/mAP50(B)", "map50"),
+        "map50_95": ("metrics/mAP50-95(B)", "map50_95"),
     }
+    for label, (csv_key, log_key) in source_map.items():
+        if latest_csv.get(csv_key) is not None:
+            sources[label] = "metrics.csv"
+        elif log_key and latest_log.get(log_key) is not None:
+            sources[label] = "rfdetr_training.log"
+        else:
+            sources[label] = "not_found"
+    sources["per_class"] = "rfdetr_training.log" if log_metrics.get("per_class") else "not_found"
+    return sources
 
 
 def write_web_metrics(
@@ -859,6 +917,7 @@ def write_web_metrics(
         "per_class_note": note,
         "macro_f1": metric_average(per_class_rows, "f1"),
         "weighted_f1": weighted_metric_average(per_class_rows, "f1"),
+        "metric_sources": metric_sources(run_dir, log_metrics),
         "training_completed": training_completed,
         "roc_auc": {
             "mode": "not_available",
