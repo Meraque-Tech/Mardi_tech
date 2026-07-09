@@ -1,0 +1,76 @@
+#training-tab {
+  display: flex;
+  width: 100%;
+  overflow-y: auto;
+}
+
+#training-controls {
+  width: 280px;
+  flex-shrink: 0;
+  background: #0f1329;
+  border-right: 1px solid rgba(255,255,255,0.08);
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+#training-controls h3 {
+  font-size: 0.85rem;
+  color: #38bdf8;
+  margin: 0.8rem 0 0.4rem;
+}
+#training-controls h3:first-child { margin-top: 0; }
+
+.dataset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+.dataset-btn {
+  background: #151933;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  color: #cbd5e1;
+  padding: 0.5rem 0.3rem;
+  font-size: 0.78rem;
+}
+.dataset-btn.active { border-color: #38bdf8; color: #38bdf8; background: rgba(56,189,248,0.08); }
+
+.controls-row {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.8rem 0;
+}
+
+#training-viz {
+  flex: 1;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.viz-card {
+  background: #0f1329;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 0.8rem;
+}
+.viz-card h4 {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.metrics-row {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  margin-bottom: 0.5rem;
+}
+.metrics-row span.val { color: #38bdf8; font-weight: 600; }
+
+canvas.chart-canvas { width: 100%; display: block; }

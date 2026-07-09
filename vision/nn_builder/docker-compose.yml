@@ -1,0 +1,13 @@
+services:
+  nn_builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.x86
+    image: meraquetech/mardi_tech:nn-builder-x86
+    container_name: nn-builder
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./saved_graphs:/app/saved_graphs
+      - ./.cache:/app/.cache
+    restart: unless-stopped

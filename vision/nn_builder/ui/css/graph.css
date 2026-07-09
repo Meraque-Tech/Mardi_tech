@@ -1,0 +1,144 @@
+#editor-tab {
+  display: flex;
+  width: 100%;
+}
+
+/* ---- palette ---- */
+#palette {
+  width: 220px;
+  flex-shrink: 0;
+  background: #0f1329;
+  border-right: 1px solid rgba(255,255,255,0.08);
+  overflow-y: auto;
+  padding: 0.5rem 0;
+}
+
+.palette-group summary {
+  padding: 0.5rem 0.9rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
+}
+.palette-group[open] summary { color: #38bdf8; }
+
+.palette-item {
+  padding: 0.4rem 1.1rem;
+  font-size: 0.82rem;
+  color: #cbd5e1;
+  cursor: grab;
+  border-left: 3px solid transparent;
+}
+.palette-item:hover {
+  background: rgba(56,189,248,0.08);
+  border-left-color: #38bdf8;
+  color: #fff;
+}
+
+/* family accent colors */
+.fam-struct { --fam-color: #94a3b8; }
+.fam-cnn { --fam-color: #38bdf8; }
+.fam-ann { --fam-color: #a78bfa; }
+.fam-rnn { --fam-color: #34d399; }
+.fam-transformer { --fam-color: #f59e0b; }
+.fam-activation { --fam-color: #f472b6; }
+.fam-config { --fam-color: #ef4444; }
+
+/* ---- canvas ---- */
+#canvas-wrap {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  background:
+    radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px) 0 0/24px 24px,
+    #0a0e27;
+  overflow: hidden;
+}
+
+#node-canvas {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+}
+#node-canvas.panning { cursor: grabbing; }
+
+.canvas-toolbar {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  display: flex;
+  gap: 0.4rem;
+  z-index: 5;
+}
+
+.canvas-hint {
+  position: absolute;
+  bottom: 0.6rem;
+  left: 0.6rem;
+  font-size: 0.72rem;
+  color: #475569;
+  z-index: 5;
+}
+
+/* ---- inspector ---- */
+#inspector {
+  width: 260px;
+  flex-shrink: 0;
+  background: #0f1329;
+  border-left: 1px solid rgba(255,255,255,0.08);
+  overflow-y: auto;
+  padding: 0.9rem;
+}
+
+#inspector h3 {
+  font-size: 0.9rem;
+  color: #38bdf8;
+  margin-bottom: 0.6rem;
+}
+
+.param-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.6rem;
+}
+.param-row input, .param-row select { width: 100%; }
+
+.empty-hint {
+  color: #475569;
+  font-size: 0.82rem;
+  margin-top: 1rem;
+}
+
+.node-shape {
+  font-size: 0.68rem;
+  color: #64748b;
+  margin-top: 0.5rem;
+}
+
+.error-badge {
+  display: inline-block;
+  background: rgba(239,68,68,0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239,68,68,0.4);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.72rem;
+  margin-top: 0.4rem;
+}
+
+.toast {
+  position: absolute;
+  bottom: 1rem;
+  right: 1rem;
+  background: #151933;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.8rem;
+  z-index: 10;
+  max-width: 320px;
+}
