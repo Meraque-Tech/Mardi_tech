@@ -16,6 +16,7 @@ import yaml
 
 
 WEB_PROGRESS_PREFIX = "WEB_TRAINING_PROGRESS"
+RFDETR_DATASET_VIEW_DIR = ".rfdetr"
 MODEL_CLASSES = {
     "rfdetr-nano": "RFDETRNano",
     "rfdetr-small": "RFDETRSmall",
@@ -70,16 +71,153 @@ def resolve_dataset_dir(data: str) -> Path:
     raise FileNotFoundError(f"Dataset path not found: {path}")
 
 
-def read_class_names(dataset_dir: Path) -> list[str]:
+def find_dataset_yaml(dataset_dir: Path) -> Path:
     yaml_path = next(
         (dataset_dir / name for name in ("data.yaml", "data.yml", "dataset.yaml") if (dataset_dir / name).is_file()),
         None,
     )
     if yaml_path is None:
-        return []
+        raise FileNotFoundError(f"Dataset YAML not found in {dataset_dir}.")
+    return yaml_path
+
+
+def read_dataset_yaml(dataset_dir: Path) -> tuple[Path, dict]:
+    yaml_path = find_dataset_yaml(dataset_dir)
     try:
         payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
+    except (OSError, yaml.YAMLError) as exc:
+        raise RuntimeError(f"Could not read dataset YAML at {yaml_path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Dataset YAML must contain a mapping: {yaml_path}")
+    return yaml_path, payload
+
+
+def resolve_yaml_dataset_root(yaml_path: Path, payload: dict) -> Path:
+    root = payload.get("path") or yaml_path.parent
+    root_path = Path(str(root)).expanduser()
+    if not root_path.is_absolute():
+        root_path = yaml_path.parent / root_path
+    return root_path.resolve()
+
+
+def resolve_split_image_dir(dataset_root: Path, value) -> Path | None:
+    if not value:
+        return None
+    values = value if isinstance(value, list) else [value]
+    for item in values:
+        candidate = Path(str(item)).expanduser()
+        if not candidate.is_absolute():
+            candidate = dataset_root / candidate
+        candidate = candidate.resolve()
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def infer_label_dir(image_dir: Path) -> Path:
+    parts = list(image_dir.parts)
+    if "images" in parts:
+        index = len(parts) - 1 - parts[::-1].index("images")
+        candidate = Path(*parts[:index], "labels", *parts[index + 1:])
+        if candidate.is_dir():
+            return candidate
+
+    candidates = [
+        image_dir.parent / "labels",
+        image_dir.parent.parent / "labels" / image_dir.name,
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    raise FileNotFoundError(f"Could not find YOLO labels folder for image folder: {image_dir}")
+
+
+def link_or_copy_dir(source: Path, target: Path):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() or target.is_symlink():
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        else:
+            shutil.rmtree(target)
+    try:
+        target.symlink_to(source.resolve(), target_is_directory=True)
+    except OSError:
+        shutil.copytree(source, target)
+
+
+def normalize_names(names):
+    if isinstance(names, list):
+        return {index: str(name) for index, name in enumerate(names)}
+    if isinstance(names, dict):
+        normalized = {}
+        for key, value in names.items():
+            try:
+                normalized[int(key)] = str(value)
+            except (TypeError, ValueError):
+                normalized[str(key)] = str(value)
+        return normalized
+    return {}
+
+
+def prepare_rfdetr_dataset(dataset_dir: Path) -> Path:
+    yaml_path, payload = read_dataset_yaml(dataset_dir)
+    source_root = resolve_yaml_dataset_root(yaml_path, payload)
+    split_values = {
+        "train": payload.get("train"),
+        "valid": payload.get("val") or payload.get("valid"),
+        "test": payload.get("test"),
+    }
+    split_dirs = {}
+    for split_name, split_value in split_values.items():
+        image_dir = resolve_split_image_dir(source_root, split_value)
+        if image_dir is None:
+            if split_name == "test":
+                continue
+            raise FileNotFoundError(
+                f"RF-DETR could not adapt the dataset. Missing {split_name} images from {yaml_path}."
+            )
+        split_dirs[split_name] = {
+            "images": image_dir,
+            "labels": infer_label_dir(image_dir),
+        }
+
+    adapter_dir = dataset_dir / RFDETR_DATASET_VIEW_DIR
+    if adapter_dir.exists() or adapter_dir.is_symlink():
+        if adapter_dir.is_symlink() or adapter_dir.is_file():
+            adapter_dir.unlink()
+        else:
+            shutil.rmtree(adapter_dir)
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+
+    for split_name, paths in split_dirs.items():
+        link_or_copy_dir(paths["images"], adapter_dir / split_name / "images")
+        link_or_copy_dir(paths["labels"], adapter_dir / split_name / "labels")
+
+    adapter_payload = {
+        "path": ".",
+        "train": "train/images",
+        "val": "valid/images",
+        "names": normalize_names(payload.get("names")),
+    }
+    if "test" in split_dirs:
+        adapter_payload["test"] = "test/images"
+    if payload.get("nc") is not None:
+        adapter_payload["nc"] = payload.get("nc")
+
+    (adapter_dir / "data.yaml").write_text(yaml.safe_dump(adapter_payload, sort_keys=False), encoding="utf-8")
+    print(f"RF-DETR dataset view created at {adapter_dir}", flush=True)
+    for split_name, paths in split_dirs.items():
+        print(
+            f"RF-DETR dataset adapter: {paths['images']} -> {adapter_dir / split_name / 'images'}",
+            flush=True,
+        )
+    return adapter_dir
+
+
+def read_class_names(dataset_dir: Path) -> list[str]:
+    try:
+        _yaml_path, payload = read_dataset_yaml(dataset_dir)
+    except (FileNotFoundError, RuntimeError):
         return []
     names = payload.get("names")
     if isinstance(names, list):
@@ -258,6 +396,7 @@ def main():
     run_dir = (Path(args.project).expanduser() / args.name).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     class_names = read_class_names(dataset_dir)
+    training_dataset_dir = prepare_rfdetr_dataset(dataset_dir)
     device = normalize_device(args.device)
     batch_size = max(1, int(args.batch))
     grad_accum_steps = max(1, math.ceil(16 / batch_size))
@@ -273,7 +412,7 @@ def main():
         model_kwargs["pretrain_weights"] = str(resume_checkpoint)
     model = model_class(**model_kwargs)
     train_kwargs = {
-        "dataset_dir": str(dataset_dir),
+        "dataset_dir": str(training_dataset_dir),
         "epochs": int(args.epochs),
         "batch_size": batch_size,
         "grad_accum_steps": grad_accum_steps,
