@@ -34,6 +34,7 @@ WEB_TEST_PROGRESS_PREFIX = "WEB_TEST_PROGRESS"
 WEB_TEST_RUN_DIR_PREFIX = "WEB_TEST_RUN_DIR"
 IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpeg", ".jpg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
 IOU_THRESHOLDS = [round(0.5 + index * 0.05, 2) for index in range(10)]
+BACKGROUND_LABEL = "background"
 
 
 def report_progress(percent: int, stage: str, detail: str):
@@ -243,6 +244,106 @@ def collect_predictions(detections, width: int, height: int) -> list[dict]:
     return rows
 
 
+def color_for_class(class_id: int) -> tuple[int, int, int]:
+    palette = (
+        (20, 145, 120),
+        (220, 90, 70),
+        (85, 120, 230),
+        (230, 170, 45),
+        (165, 95, 210),
+        (70, 170, 210),
+    )
+    return palette[class_id % len(palette)]
+
+
+def draw_boxes(image_bgr, rows: list[dict], class_names: list[str], include_confidence: bool):
+    import cv2
+
+    canvas = image_bgr.copy()
+    height, width = canvas.shape[:2]
+    line_width = max(2, round(min(width, height) / 220))
+    font_scale = max(0.45, min(width, height) / 900)
+    for row in rows:
+        class_id = int(row.get("class_id", -1))
+        x1, y1, x2, y2 = [int(round(value)) for value in row.get("box", [0, 0, 0, 0])]
+        color = color_for_class(max(0, class_id))
+        label = class_name_for_id(class_id, class_names)
+        if include_confidence and row.get("confidence") is not None:
+            label = f"{label} {float(row.get('confidence') or 0):.2f}"
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, line_width)
+        text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+        text_w, text_h = text_size
+        top = max(0, y1 - text_h - baseline - 4)
+        cv2.rectangle(canvas, (x1, top), (min(width, x1 + text_w + 6), top + text_h + baseline + 4), color, -1)
+        cv2.putText(
+            canvas,
+            label,
+            (x1 + 3, top + text_h + 1),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+    return canvas
+
+
+def make_contact_sheet(images, cell_size: int = 512):
+    import cv2
+    import numpy as np
+
+    if not images:
+        return None
+    resized = []
+    for image in images:
+        height, width = image.shape[:2]
+        scale = min(cell_size / max(1, width), cell_size / max(1, height))
+        new_width = max(1, int(width * scale))
+        new_height = max(1, int(height * scale))
+        canvas = np.full((cell_size, cell_size, 3), 245, dtype=np.uint8)
+        thumb = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        y = (cell_size - new_height) // 2
+        x = (cell_size - new_width) // 2
+        canvas[y:y + new_height, x:x + new_width] = thumb
+        resized.append(canvas)
+    rows = []
+    for offset in range(0, len(resized), 2):
+        row = resized[offset:offset + 2]
+        if len(row) == 1:
+            row.append(np.full_like(row[0], 245))
+        rows.append(np.hstack(row))
+    return np.vstack(rows)
+
+
+def save_qualitative_artifacts(
+    output_dir: Path,
+    split_name: str,
+    examples: list[dict],
+    class_names: list[str],
+):
+    import cv2
+
+    if not examples:
+        return []
+    pred_images = []
+    label_images = []
+    for example in examples[:4]:
+        image = cv2.imread(str(example["image_path"]))
+        if image is None:
+            continue
+        pred_images.append(draw_boxes(image, example.get("predictions") or [], class_names, True))
+        label_images.append(draw_boxes(image, example.get("ground_truths") or [], class_names, False))
+    written = []
+    for suffix, images in (("pred", pred_images), ("labels", label_images)):
+        sheet = make_contact_sheet(images)
+        if sheet is None:
+            continue
+        path = output_dir / f"{split_name}_batch0_{suffix}.jpg"
+        cv2.imwrite(str(path), sheet)
+        written.append(str(path))
+    return written
+
+
 def box_iou(box_a: list[float], box_b: list[float]) -> float:
     x1 = max(box_a[0], box_b[0])
     y1 = max(box_a[1], box_b[1])
@@ -281,6 +382,108 @@ def match_predictions(predictions: list[dict], ground_truths: dict[int, list[dic
             tp.append(0)
             fp.append(1)
     return tp, fp
+
+
+def confusion_matrix_counts(
+    predictions_by_image: dict[int, list[dict]],
+    ground_truths_by_image: dict[int, list[dict]],
+    class_count: int,
+    confidence_threshold: float,
+    iou_threshold: float = 0.5,
+) -> list[list[int]]:
+    background_index = int(class_count)
+    matrix = [[0 for _ in range(class_count + 1)] for _ in range(class_count + 1)]
+    image_indexes = set(predictions_by_image) | set(ground_truths_by_image)
+    for image_index in image_indexes:
+        predictions = [
+            row
+            for row in predictions_by_image.get(image_index, [])
+            if float(row.get("confidence") or 0.0) >= confidence_threshold
+        ]
+        predictions.sort(key=lambda row: float(row.get("confidence") or 0.0), reverse=True)
+        targets = ground_truths_by_image.get(image_index, [])
+        matched_targets = set()
+        for prediction in predictions:
+            best_index = None
+            best_iou = 0.0
+            for target_index, target in enumerate(targets):
+                if target_index in matched_targets:
+                    continue
+                iou = box_iou(prediction["box"], target["box"])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_index = target_index
+            predicted_class = int(prediction.get("class_id", background_index))
+            if predicted_class < 0 or predicted_class >= class_count:
+                predicted_class = background_index
+            if best_index is not None and best_iou >= iou_threshold:
+                true_class = int(targets[best_index].get("class_id", background_index))
+                if true_class < 0 or true_class >= class_count:
+                    true_class = background_index
+                matrix[true_class][predicted_class] += 1
+                matched_targets.add(best_index)
+            else:
+                matrix[background_index][predicted_class] += 1
+        for target_index, target in enumerate(targets):
+            if target_index in matched_targets:
+                continue
+            true_class = int(target.get("class_id", background_index))
+            if true_class < 0 or true_class >= class_count:
+                true_class = background_index
+            matrix[true_class][background_index] += 1
+    return matrix
+
+
+def save_confusion_matrix(matrix: list[list[int]], class_names: list[str], output_path: Path, normalize: bool = False) -> bool:
+    try:
+        import os
+
+        os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except Exception:
+        return False
+
+    labels = list(class_names) + [BACKGROUND_LABEL]
+    values = np.array(matrix, dtype=float)
+    if normalize:
+        row_sums = values.sum(axis=1, keepdims=True)
+        display_values = np.divide(values, row_sums, out=np.zeros_like(values), where=row_sums != 0)
+    else:
+        display_values = values
+
+    figure_size = max(6.0, min(12.0, 1.0 + len(labels) * 0.7))
+    plt.figure(figsize=(figure_size, figure_size))
+    plt.imshow(display_values, interpolation="nearest", cmap="Blues")
+    plt.title("Normalized confusion matrix" if normalize else "Confusion matrix")
+    plt.colorbar(fraction=0.046, pad=0.04)
+    tick_marks = range(len(labels))
+    plt.xticks(tick_marks, labels, rotation=45, ha="right")
+    plt.yticks(tick_marks, labels)
+    threshold = display_values.max() / 2.0 if display_values.size and display_values.max() > 0 else 0.0
+    for row_index in range(display_values.shape[0]):
+        for col_index in range(display_values.shape[1]):
+            value = display_values[row_index, col_index]
+            text = f"{value:.2f}" if normalize else str(int(value))
+            plt.text(
+                col_index,
+                row_index,
+                text,
+                ha="center",
+                va="center",
+                color="white" if value > threshold else "black",
+                fontsize=8,
+            )
+    plt.ylabel("Actual class")
+    plt.xlabel("Predicted class")
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=160)
+    plt.close()
+    return True
 
 
 def average_precision(tp: list[int], fp: list[int], total_gt: int):
@@ -415,30 +618,41 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def evaluate_rfdetr_split(
+    weights_path: Path,
+    data_path: Path,
+    output_dir: Path,
+    *,
+    split: str = "test",
+    conf: float = 0.25,
+    metrics_filename: str = "test_metrics.json",
+    emit_progress: bool = True,
+) -> dict:
     total_start = time.perf_counter()
-    args = parse_args()
-    weights_path = Path(args.weights).expanduser().resolve()
-    data_path = Path(args.data).expanduser().resolve()
+    weights_path = Path(weights_path).expanduser().resolve()
+    data_path = Path(data_path).expanduser().resolve()
+    output_dir = Path(output_dir).expanduser().resolve()
     if not weights_path.is_file():
         raise FileNotFoundError(f"Weights not found: {weights_path}")
     if not data_path.is_file():
         raise FileNotFoundError(f"Dataset YAML not found: {data_path}")
 
-    run_dir = (Path(args.project).expanduser() / args.name).resolve()
-    run_dir.mkdir(parents=True, exist_ok=True)
-    report_run_dir(run_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def progress(percent: int, stage: str, detail: str):
+        if emit_progress:
+            report_progress(percent, stage, detail)
 
     data_config = load_data_config(data_path)
     class_names = normalize_class_names(data_config.get("names")) or read_class_names(data_path.parent)
     if not class_names:
         raise RuntimeError("Class names were not found in the dataset YAML.")
-    image_entries = resolve_split_image_entries(data_path, data_config, args.split)
+    image_entries = resolve_split_image_entries(data_path, data_config, split)
     image_paths = collect_split_images(image_entries)
     if not image_paths:
-        raise RuntimeError(f"No images were found for the {args.split} split.")
+        raise RuntimeError(f"No images were found for the {split} split.")
 
-    report_progress(5, "initializing", "Loading RF-DETR weights and dataset config.")
+    progress(5, "initializing", "Loading RF-DETR weights and dataset config.")
     model_id = model_id_from_weights(weights_path)
     model = import_model_class(model_id)(pretrain_weights=str(weights_path))
 
@@ -449,9 +663,12 @@ def main():
 
     predictions_by_class: dict[int, list[dict]] = defaultdict(list)
     gts_by_class: dict[int, dict[int, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    predictions_by_image: dict[int, list[dict]] = defaultdict(list)
+    gts_by_image: dict[int, list[dict]] = defaultdict(list)
     images_by_class: defaultdict[int, set[int]] = defaultdict(set)
+    qualitative_examples = []
 
-    report_progress(15, "evaluating", f"Running RF-DETR evaluation on the {args.split} split.")
+    progress(15, "evaluating", f"Running RF-DETR evaluation on the {split} split.")
     synchronize_accelerator()
     evaluation_start = time.perf_counter()
     prediction_threshold = 0.001
@@ -461,22 +678,33 @@ def main():
         if image_bgr is None:
             continue
         height, width = image_bgr.shape[:2]
-        for target in read_yolo_labels(image_label_path(image_path), width, height):
+        image_targets = read_yolo_labels(image_label_path(image_path), width, height)
+        for target in image_targets:
             class_id = int(target["class_id"])
             gts_by_class[class_id][image_index].append(target)
+            gts_by_image[image_index].append(target)
             images_by_class[class_id].add(image_index)
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         detections = model.predict(image_rgb, threshold=prediction_threshold)
+        image_predictions = []
         for prediction in collect_predictions(detections, width, height):
             prediction["image_index"] = image_index
             predictions_by_class[int(prediction["class_id"])].append(prediction)
+            predictions_by_image[image_index].append(prediction)
+            image_predictions.append(prediction)
+        if len(qualitative_examples) < 4 and (image_targets or image_predictions):
+            qualitative_examples.append({
+                "image_path": image_path,
+                "ground_truths": image_targets,
+                "predictions": image_predictions,
+            })
         if image_index == 0 or image_index + 1 == total_images or (image_index + 1) % 10 == 0:
             percent = 15 + int(((image_index + 1) / total_images) * 70)
-            report_progress(percent, "evaluating", f"Evaluated {image_index + 1} of {total_images} images.")
+            progress(percent, "evaluating", f"Evaluated {image_index + 1} of {total_images} images.")
 
     synchronize_accelerator()
     evaluation_seconds = seconds_since(evaluation_start)
-    report_progress(90, "saving_metrics", "Building RF-DETR test metrics.")
+    progress(90, "saving_metrics", "Building RF-DETR metrics and report artifacts.")
 
     observed_class_ids = set(range(len(class_names))) | set(gts_by_class) | set(predictions_by_class)
     per_class = [
@@ -491,6 +719,17 @@ def main():
         for class_id in sorted(observed_class_ids)
     ]
     summary = summarize_metrics(per_class)
+    matrix = confusion_matrix_counts(
+        predictions_by_image,
+        gts_by_image,
+        class_count=len(class_names),
+        confidence_threshold=float(conf),
+    )
+    raw_matrix_path = output_dir / "confusion_matrix.png"
+    normalized_matrix_path = output_dir / "confusion_matrix_normalized.png"
+    save_confusion_matrix(matrix, class_names, raw_matrix_path, normalize=False)
+    save_confusion_matrix(matrix, class_names, normalized_matrix_path, normalize=True)
+    qualitative_paths = save_qualitative_artifacts(output_dir, split, qualitative_examples, class_names)
     total_seconds = seconds_since(total_start)
     payload = {
         "backend": "rfdetr",
@@ -502,28 +741,52 @@ def main():
         "macro_f1": summary["macro_f1"],
         "weighted_f1": summary["weighted_f1"],
         "per_class": per_class,
-        "split": args.split,
+        "split": split,
         "weights": str(weights_path),
         "dataset_yaml": str(data_path),
-        "run_dir": str(run_dir),
+        "run_dir": str(output_dir),
+        "artifacts": {
+            "confusion_matrix": str(raw_matrix_path) if raw_matrix_path.is_file() else "",
+            "confusion_matrix_normalized": str(normalized_matrix_path) if normalized_matrix_path.is_file() else "",
+            "qualitative_images": qualitative_paths,
+        },
         "roc_auc": {
             "mode": "not_available",
-            "split": args.split,
+            "split": split,
             "classes": [],
-            "note": "ROC-AUC is not generated by the RF-DETR test runner.",
+            "note": "ROC-AUC is not generated by the RF-DETR evaluation runner.",
         },
         "timing": build_speed_payload(
             image_count=total_images,
             evaluation_seconds=evaluation_seconds,
             total_seconds=total_seconds,
         ),
-        "note": "RF-DETR test metrics are computed from RF-DETR predictions matched to YOLO labels.",
+        "note": "RF-DETR evaluation metrics are computed from RF-DETR predictions matched to YOLO labels.",
     }
 
-    output_path = run_dir / "test_metrics.json"
+    output_path = output_dir / metrics_filename
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"Saved test metrics to {output_path}", flush=True)
-    report_progress(100, "complete", "Model testing complete.")
+    print(f"Saved RF-DETR evaluation metrics to {output_path}", flush=True)
+    progress(100, "complete", "RF-DETR evaluation artifacts complete.")
+    return payload
+
+
+def main():
+    args = parse_args()
+    weights_path = Path(args.weights).expanduser().resolve()
+    data_path = Path(args.data).expanduser().resolve()
+    run_dir = (Path(args.project).expanduser() / args.name).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    report_run_dir(run_dir)
+    evaluate_rfdetr_split(
+        weights_path,
+        data_path,
+        run_dir,
+        split=args.split,
+        conf=float(args.conf),
+        metrics_filename="test_metrics.json",
+        emit_progress=True,
+    )
 
 
 if __name__ == "__main__":

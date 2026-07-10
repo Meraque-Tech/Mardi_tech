@@ -176,6 +176,9 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("test_rfdetr.py", app_source)
         self.assertIn('training_metrics.get("training_completed") is False', app_source)
         self.assertIn('training_completed=existing_metrics.get("training_completed")', app_source)
+        self.assertIn("generate_rfdetr_report_artifacts", train_source)
+        self.assertIn("validation_metrics.json", train_source)
+        self.assertIn("generate_report_artifacts=True", train_source)
 
     def test_dfine_nano_backend_is_exposed_with_backend_specific_controls(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
@@ -208,11 +211,14 @@ class CollapsibleSectionTests(unittest.TestCase):
     def test_rfdetr_progress_and_results_refresh_are_supported(self):
         script = APP_JS.read_text(encoding="utf-8")
         app_source = APP_PY.read_text(encoding="utf-8")
+        test_source = (WEB_DIR.parent / "train" / "test_rfdetr.py").read_text(encoding="utf-8")
 
         self.assertIn("RFDETR_VALIDATION_PROGRESS_RE", app_source)
         self.assertIn("Val\\s+\\(Epoch\\s+(\\d+)\\s*/\\s*(\\d+)\\)", app_source)
         self.assertIn("force=is_rfdetr_run(run_dir)", app_source)
         self.assertIn("Progress updates when validation metrics are logged", app_source)
+        self.assertIn("confusion_matrix_counts", test_source)
+        self.assertIn("save_qualitative_artifacts", test_source)
 
         self.assertIn("progress.detail", script)
         self.assertIn("Running epoch", script)

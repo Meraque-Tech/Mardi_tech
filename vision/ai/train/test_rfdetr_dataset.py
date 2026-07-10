@@ -12,7 +12,7 @@ from vision.ai.train.train_rfdetr import (
     write_results_csv,
     write_web_metrics,
 )
-from vision.ai.train.test_rfdetr import class_metrics, summarize_metrics
+from vision.ai.train.test_rfdetr import class_metrics, confusion_matrix_counts, summarize_metrics
 
 
 def write_label(path: Path):
@@ -260,3 +260,29 @@ def test_rfdetr_test_metrics_match_exact_prediction():
     assert row["map50"] == 1.0
     assert row["map50_95"] == 1.0
     assert summary["weighted_f1"] == 1.0
+
+
+def test_rfdetr_confusion_matrix_tracks_background_errors():
+    predictions_by_image = {
+        0: [
+            {"class_id": 0, "confidence": 0.9, "box": [10.0, 10.0, 30.0, 30.0]},
+            {"class_id": 1, "confidence": 0.8, "box": [50.0, 50.0, 70.0, 70.0]},
+        ],
+        1: [
+            {"class_id": 1, "confidence": 0.7, "box": [10.0, 10.0, 30.0, 30.0]},
+        ],
+    }
+    ground_truths_by_image = {
+        0: [
+            {"class_id": 0, "box": [10.0, 10.0, 30.0, 30.0]},
+        ],
+        1: [
+            {"class_id": 0, "box": [80.0, 80.0, 100.0, 100.0]},
+        ],
+    }
+
+    matrix = confusion_matrix_counts(predictions_by_image, ground_truths_by_image, 2, 0.25)
+
+    assert matrix[0][0] == 1
+    assert matrix[0][2] == 1
+    assert matrix[2][1] == 2
