@@ -198,6 +198,22 @@ def write_dfine_config(
     base_config = (dfine_root / MODEL_CONFIGS[args.model]).resolve()
     train_ann = coco_dir / "annotations" / "instances_train2017.json"
     val_ann = coco_dir / "annotations" / "instances_val2017.json"
+    warmup_steps = max(0, int(round(float(getattr(args, "warmup_epochs", 0.0) or 0.0))))
+    use_cosine_lr = bool(getattr(args, "cos_lr", False))
+    if use_cosine_lr:
+        lr_scheduler = {
+            "type": "CosineAnnealingLR",
+            "T_max": max(1, int(args.epochs)),
+            "eta_min": 0.0,
+        }
+    else:
+        # This is the scheduler used by the official D-FINE optimizer include.
+        lr_scheduler = {
+            "type": "MultiStepLR",
+            "milestones": [500],
+            "gamma": 0.1,
+        }
+
     payload: dict[str, Any] = {
         "__include__": [str(base_config)],
         "output_dir": str(run_dir),
@@ -230,8 +246,14 @@ def write_dfine_config(
             "betas": [0.9, 0.999],
             "weight_decay": float(args.weight_decay),
         },
+        "lr_scheduler": lr_scheduler,
         "eval_spatial_size": [int(args.imgsz), int(args.imgsz)],
     }
+    if warmup_steps > 0:
+        payload["lr_warmup_scheduler"] = {
+            "type": "LinearWarmup",
+            "warmup_duration": warmup_steps,
+        }
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     return config_path
 

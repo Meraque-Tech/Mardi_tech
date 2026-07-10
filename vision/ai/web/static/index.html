@@ -542,7 +542,7 @@
               <h3>Schedule</h3>
             <div class="grid three">
               <label>
-                <span class="tooltip-label" tabindex="0" data-tooltip="Warmup duration in epochs. Helps stabilize training at the beginning.">Warmup epochs</span>
+                <span id="warmup-label" class="tooltip-label" tabindex="0" data-tooltip="Warmup duration in epochs. Helps stabilize training at the beginning.">Warmup epochs</span>
                 <input id="warmup-epochs" type="number" min="0" step="0.1" value="3.0">
               </label>
               <label data-ultralytics-only>
@@ -551,7 +551,7 @@
               </label>
               <label class="checkbox-row inline-check">
                 <input id="cos-lr" type="checkbox">
-                <span class="tooltip-label" tabindex="0" data-tooltip="Use cosine learning-rate scheduling for smoother LR decay.">Cosine LR</span>
+                <span id="cos-lr-label" class="tooltip-label" tabindex="0" data-tooltip="Use cosine learning-rate scheduling for smoother LR decay.">Cosine LR</span>
               </label>
             </div>
             </div>

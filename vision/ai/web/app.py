@@ -160,7 +160,7 @@ DFINE_DEFAULTS = {
     "batch": 4,
     "lr0": 4e-4,
     "weight_decay": 1e-4,
-    "warmup_epochs": 0.0,
+    "warmup_epochs": 500.0,
     "cos_lr": False,
 }
 MODEL_REGISTRY = {

@@ -203,6 +203,10 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('run_dfine_inference', infer_source)
 
         self.assertIn('const DFINE_DEFAULTS = {', script)
+        self.assertIn('"warmup-epochs": 500', script)
+        self.assertIn('warmupLabel.textContent = isDfine ? "Warmup steps" : "Warmup epochs"', script)
+        self.assertIn('warmup_duration', train_source)
+        self.assertIn('CosineAnnealingLR', train_source)
         self.assertIn('projectTask: "dfine"', script)
         self.assertIn('backend: "dfine"', script)
         self.assertIn('dfine: "runs/dfine"', script)

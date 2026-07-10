@@ -146,7 +146,7 @@ const DFINE_DEFAULTS = {
   batch: 4,
   lr0: 0.0004,
   "weight-decay": 0.0001,
-  "warmup-epochs": 0,
+  "warmup-epochs": 500,
   "cos-lr": false,
 };
 
@@ -392,6 +392,28 @@ function applyModelFamilyDefaults() {
     Object.entries(RFDETR_DEFAULTS).forEach(([id, value]) => setControlValue(id, value));
   } else if (projectTask === "dfine") {
     Object.entries(DFINE_DEFAULTS).forEach(([id, value]) => setControlValue(id, value));
+  } else {
+    setControlValue("warmup-epochs", CONTROL_DEFAULTS["warmup-epochs"]);
+    setControlValue("cos-lr", CONTROL_DEFAULTS["cos-lr"]);
+  }
+}
+
+function syncScheduleControlLabels() {
+  const isDfine = taskForModelSize($("model-size").value) === "dfine";
+  const warmupLabel = $("warmup-label");
+  const warmupInput = $("warmup-epochs");
+  const cosLabel = $("cos-lr-label");
+  if (warmupLabel) {
+    warmupLabel.textContent = isDfine ? "Warmup steps" : "Warmup epochs";
+    warmupLabel.dataset.tooltip = isDfine
+      ? "D-FINE LinearWarmup duration in optimizer steps. Official D-FINE configs use warmup_duration."
+      : "Warmup duration in epochs. Helps stabilize training at the beginning.";
+  }
+  if (warmupInput) {
+    warmupInput.step = isDfine ? "1" : "0.1";
+  }
+  if (cosLabel) {
+    cosLabel.textContent = isDfine ? "Cosine LR scheduler" : "Cosine LR";
   }
 }
 
@@ -407,6 +429,7 @@ function syncModelFamilyControls() {
       control.disabled = locked || !isUltralytics;
     });
   });
+  syncScheduleControlLabels();
 }
 
 function selectedModelSpec() {

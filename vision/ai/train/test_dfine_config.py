@@ -25,7 +25,17 @@ def test_dfine_web_config_converts_pil_images_to_tensors(tmp_path):
     coco_dir = tmp_path / "coco"
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    args = Namespace(model="dfine-n", epochs=3, batch=4, workers=2, imgsz=640, lr0=0.0004, weight_decay=0.0001)
+    args = Namespace(
+        model="dfine-n",
+        epochs=3,
+        batch=4,
+        workers=2,
+        imgsz=640,
+        lr0=0.0004,
+        weight_decay=0.0001,
+        warmup_epochs=500,
+        cos_lr=False,
+    )
 
     generated = write_dfine_config(run_dir, dfine_root, coco_dir, 3, args)
 
@@ -38,6 +48,38 @@ def test_dfine_web_config_converts_pil_images_to_tensors(tmp_path):
     assert {"type": "ConvertPILImage", "dtype": "float32", "scale": True} in val_ops
     assert {"type": "ConvertBoxes", "fmt": "cxcywh", "normalize": True} in train_ops
     assert payload["train_dataloader"]["collate_fn"]["type"] == "BatchImageCollateFunction"
+    assert payload["lr_scheduler"] == {"type": "MultiStepLR", "milestones": [500], "gamma": 0.1}
+    assert payload["lr_warmup_scheduler"] == {"type": "LinearWarmup", "warmup_duration": 500}
+
+
+def test_dfine_web_config_supports_cosine_scheduler(tmp_path):
+    dfine_root = tmp_path / "D-FINE"
+    config_path = dfine_root / "configs" / "dfine" / "custom" / "dfine_hgnetv2_n_custom.yml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("output_dir: ./output\n", encoding="utf-8")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    args = Namespace(
+        model="dfine-n",
+        epochs=100,
+        batch=4,
+        workers=2,
+        imgsz=640,
+        lr0=0.0004,
+        weight_decay=0.0001,
+        warmup_epochs=250,
+        cos_lr=True,
+    )
+
+    generated = write_dfine_config(run_dir, dfine_root, tmp_path / "coco", 3, args)
+
+    payload = yaml.safe_load(generated.read_text(encoding="utf-8"))
+    assert payload["lr_scheduler"] == {
+        "type": "CosineAnnealingLR",
+        "T_max": 100,
+        "eta_min": 0.0,
+    }
+    assert payload["lr_warmup_scheduler"] == {"type": "LinearWarmup", "warmup_duration": 250}
 
 
 def test_dfine_progress_line_is_normalized_for_web_metrics():
