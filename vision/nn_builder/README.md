@@ -118,27 +118,38 @@ MNIST, `sequence_classify`) with:
 
 - **Confusion matrix** — rows = true label, cols = predicted, shaded by count.
 - **Precision / Recall / F1** — macro-averaged across classes.
-- **ROC-AUC** — binary one-vs-the-other for 2-class problems, macro one-vs-rest
-  for multi-class (MNIST); requires `scikit-learn` (already in
-  `requirements.txt`) and is reported as `n/a` if a class is entirely absent
-  from that particular held-out split.
+- **ROC curve + AUC** — the actual FPR-vs-TPR curve (not just the scalar), with
+  a dashed random-chance baseline. Binary problems get one curve; multi-class
+  (e.g. MNIST) gets one curve per class if there are ≤6 classes, or a single
+  macro-averaged curve above that (10 overlapping ROC curves for MNIST's
+  digits would just be spaghetti — see `references/anti-patterns.md` in the
+  dataviz skill on why identity-encoded series don't scale past a handful).
+- **mAP** — mean Average Precision the *classification* way: per-class area
+  under the one-vs-rest precision-recall curve, averaged over classes (the
+  same computation multi-label/classification benchmarks like PASCAL VOC's
+  classification task report as "mAP"). This is *not* detection mAP (which
+  averages AP over IoU-matched bounding boxes) — this tool has no detection
+  dataset/head, so only the classification variant is offered. Both need
+  `scikit-learn` (already in `requirements.txt`) and report `n/a`/are skipped
+  if a class is entirely absent from that particular held-out split.
+- **Sample Predictions** (image tasks only, e.g. MNIST) — an actual gallery of
+  held-out digit images with their predicted label, bordered green if correct
+  and red if wrong (with the true label shown alongside when it's wrong). This
+  is the "let me actually see what the model classified" view — the numbers
+  above tell you *how much* it got wrong, this shows *what*.
 
 This is computed server-side in [nn_graph/metrics.py](nn_graph/metrics.py) and
 streamed once over `/ws` as `train/eval` right before `train/done`. The
 exported standalone `train.py` ([codegen.py](nn_graph/codegen.py)) prints the
-same report to stdout after its training loop.
+confusion matrix / precision / recall / F1 / ROC-AUC / mAP to stdout after its
+training loop (no image gallery there — it's a console script).
 
 **Not covered:** `sequence_copy` is a per-timestep prediction task, not
-single-label classification, so it has no confusion matrix/ROC-AUC. **mAP**
-(mean average precision) is an object-detection/retrieval metric — it needs
-bounding boxes or ranked retrieval results, neither of which the current
-classification-only datasets produce, so it isn't computed. If an object-
-detection dataset/head gets added later, mAP belongs in `metrics.py` alongside
-these.
-
-For CNN/image graphs specifically: the confusion matrix is the main tool for
-spotting *which* classes get confused (e.g. digit 4 vs 9), which a single
-accuracy number hides.
+single-label classification, so it has no confusion matrix/ROC/mAP. Detection
+mAP (IoU-matched bounding boxes) isn't offered, since there's no detection
+dataset/head in this tool yet — if one gets added, it belongs in `metrics.py`
+alongside the classification mAP above, as a distinctly-named metric (the two
+are not interchangeable).
 
 ## Early stopping, regularization & other training controls
 

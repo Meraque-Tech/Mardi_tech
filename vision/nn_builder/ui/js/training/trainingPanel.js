@@ -4,6 +4,8 @@ import wsClient from "../ws/ws_client.js";
 import { MiniLineChart } from "./lossChart.js";
 import { DecisionBoundary } from "./decisionBoundary.js";
 import { ConfusionMatrix } from "./confusionMatrix.js";
+import { RocCurve } from "./rocCurve.js";
+import { SamplePredictions } from "./samplePredictions.js";
 
 const TOY_2D = new Set(["circle", "xor", "gaussian", "spiral"]);
 const ALL_DATASETS = ["circle", "xor", "gaussian", "spiral", "mnist", "sequence_copy", "sequence_classify"];
@@ -22,6 +24,8 @@ export class TrainingPanel {
     });
     this.boundary = new DecisionBoundary(this.root.querySelector("#boundary-canvas"));
     this.confusion = new ConfusionMatrix(this.root.querySelector("#confusion-canvas"));
+    this.roc = new RocCurve(this.root.querySelector("#roc-canvas"));
+    this.samples = new SamplePredictions(this.root.querySelector("#sample-grid"));
 
     this._wireControls();
     this._wireWs();
@@ -29,13 +33,17 @@ export class TrainingPanel {
     this._syncFromGraph();
   }
 
-  // Canvases are sized from their parent's clientWidth, which is 0 while the
-  // Training tab is display:none — call this right after the tab is shown.
+  // Canvases are sized from their parent's clientWidth, which is 0 while
+  // their card is display:none (Training tab hidden, or eval-card not shown
+  // yet) — call this right after the tab/card becomes visible, or the
+  // canvas locks in at 0x0 until something else (e.g. a page reload)
+  // happens to trigger a resize.
   resize() {
     this.lossChart._resize();
     this.accChart._resize();
     this.boundary._resize();
     this.confusion._resize();
+    this.roc._resize();
   }
 
   _html() {
@@ -94,17 +102,28 @@ export class TrainingPanel {
         </div>
         <div class="viz-card" id="eval-card" style="display:none;">
           <h4>Test-set Evaluation <span id="eval-n" style="font-weight:400; text-transform:none; color:var(--ink-muted);"></span></h4>
-          <div class="viz-row" style="grid-template-columns: 1fr 1.2fr;">
-            <div class="stat-tiles" style="grid-template-columns: repeat(2, 1fr);">
-              <div class="stat-tile"><div class="stat-label">Precision</div><div class="stat-value tabular" id="metric-precision">–</div></div>
-              <div class="stat-tile"><div class="stat-label">Recall</div><div class="stat-value tabular" id="metric-recall">–</div></div>
-              <div class="stat-tile"><div class="stat-label">F1</div><div class="stat-value tabular" id="metric-f1">–</div></div>
-              <div class="stat-tile accent"><div class="stat-label">ROC-AUC</div><div class="stat-value tabular" id="metric-auc">–</div></div>
-            </div>
+          <div class="stat-tiles" style="grid-template-columns: repeat(5, 1fr); margin-bottom: 1rem;">
+            <div class="stat-tile"><div class="stat-label">Precision</div><div class="stat-value tabular" id="metric-precision">–</div></div>
+            <div class="stat-tile"><div class="stat-label">Recall</div><div class="stat-value tabular" id="metric-recall">–</div></div>
+            <div class="stat-tile"><div class="stat-label">F1</div><div class="stat-value tabular" id="metric-f1">–</div></div>
+            <div class="stat-tile accent"><div class="stat-label">ROC-AUC</div><div class="stat-value tabular" id="metric-auc">–</div></div>
+            <div class="stat-tile accent"><div class="stat-label">mAP</div><div class="stat-value tabular" id="metric-map">–</div></div>
+          </div>
+          <div class="viz-row" style="grid-template-columns: 1fr 1fr;">
             <div class="boundary-wrap">
+              <div class="section-title" style="align-self:flex-start;">Confusion Matrix</div>
               <canvas id="confusion-canvas" width="280" height="280"></canvas>
               <div class="boundary-legend"><span>predicted →, true ↓ · shade = count</span></div>
             </div>
+            <div class="boundary-wrap">
+              <div class="section-title" style="align-self:flex-start;">ROC Curve</div>
+              <canvas id="roc-canvas" width="280" height="280"></canvas>
+              <div class="boundary-legend"><span>dashed = random-chance baseline</span></div>
+            </div>
+          </div>
+          <div id="sample-card" style="margin-top:1rem; display:none;">
+            <div class="section-title" style="margin-bottom:0.5rem;">Sample Predictions <span style="font-weight:400; text-transform:none; color:var(--ink-muted);">(green border = correct)</span></div>
+            <div class="sample-grid" id="sample-grid"></div>
           </div>
         </div>
       </div>
@@ -204,14 +223,32 @@ export class TrainingPanel {
       this.boundary.draw(data.values);
     });
     wsClient.subscribe("train/eval", (data) => {
+      const fmt = (v) => (v === null || v === undefined ? "n/a" : v.toFixed(3));
       const card = this.root.querySelector("#eval-card");
       card.style.display = "";
       this.root.querySelector("#eval-n").textContent = `(n=${data.num_samples})`;
-      this.root.querySelector("#metric-precision").textContent = data.precision.toFixed(3);
-      this.root.querySelector("#metric-recall").textContent = data.recall.toFixed(3);
-      this.root.querySelector("#metric-f1").textContent = data.f1.toFixed(3);
-      this.root.querySelector("#metric-auc").textContent = data.roc_auc !== null && data.roc_auc !== undefined ? data.roc_auc.toFixed(3) : "n/a";
+      this.root.querySelector("#metric-precision").textContent = fmt(data.precision);
+      this.root.querySelector("#metric-recall").textContent = fmt(data.recall);
+      this.root.querySelector("#metric-f1").textContent = fmt(data.f1);
+      this.root.querySelector("#metric-auc").textContent = fmt(data.roc_auc);
+      this.root.querySelector("#metric-map").textContent = fmt(data.map);
+
+      // These canvases live inside a card that was display:none until the
+      // line above -- resize them now that they have real dimensions, or
+      // they draw onto a stale 0x0 canvas and only "fix themselves" on the
+      // next full page reload (when everything resizes from scratch).
+      this.confusion._resize();
+      this.roc._resize();
       this.confusion.draw(data.confusion_matrix);
+      this.roc.draw(data.roc_curve);
+
+      const sampleCard = this.root.querySelector("#sample-card");
+      if (data.samples && data.samples.length) {
+        sampleCard.style.display = "";
+        this.samples.draw(data.samples);
+      } else {
+        sampleCard.style.display = "none";
+      }
     });
     wsClient.subscribe("train/error", (data) => this._error([{ message: data.message }]));
   }

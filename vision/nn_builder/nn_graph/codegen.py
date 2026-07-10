@@ -308,14 +308,22 @@ def _print_classification_report(model, loader, task):
     print(f"precision(macro)={np.mean(precisions):.4f}  recall(macro)={np.mean(recalls):.4f}  f1(macro)={np.mean(f1s):.4f}")
 
     try:
-        from sklearn.metrics import roc_auc_score
+        from sklearn.metrics import average_precision_score, roc_auc_score
         if num_classes == 2:
             auc = roc_auc_score(y_true, y_prob[:, 1])
         else:
             auc = roc_auc_score(y_true, y_prob, multi_class="ovr", average="macro", labels=list(range(num_classes)))
         print(f"roc_auc(macro)={auc:.4f}")
+
+        aps = []
+        for c in range(num_classes):
+            y_true_c = (y_true == c).astype(int)
+            if 0 < y_true_c.sum() < len(y_true_c):
+                aps.append(average_precision_score(y_true_c, y_prob[:, c]))
+        if aps:
+            print(f"mAP (mean per-class average precision)={np.mean(aps):.4f}")
     except (ImportError, ValueError):
-        print("roc_auc: unavailable (install scikit-learn, or too few classes present in this split)")
+        print("roc_auc/mAP: unavailable (install scikit-learn, or too few classes present in this split)")
 '''
 
 _HELPERS = '''

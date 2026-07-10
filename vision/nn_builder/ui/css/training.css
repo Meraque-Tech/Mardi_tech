@@ -133,3 +133,30 @@ canvas.chart-canvas { width: 100%; display: block; cursor: crosshair; }
   width: 90px; height: 8px; border-radius: 4px;
   background: linear-gradient(90deg, var(--status-critical), #383835 50%, var(--accent));
 }
+
+.sample-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 0.5rem;
+}
+.sample-cell {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  background: var(--surface-2);
+}
+.sample-canvas {
+  width: 48px;
+  height: 48px;
+  image-rendering: pixelated;
+  border-radius: 3px;
+}
+.sample-label {
+  font-size: 0.66rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

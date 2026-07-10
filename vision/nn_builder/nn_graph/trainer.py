@@ -12,7 +12,7 @@ from torch import nn, optim
 
 from .builder import build_module_from_graph, config_node
 from .datasets import build_dataset
-from .metrics import evaluate_classification, is_classification_task
+from .metrics import collect_image_samples, evaluate_classification, is_classification_task
 
 
 def make_optimizer(params, cfg):
@@ -215,6 +215,8 @@ class TrainingSession:
             if not self._stop.is_set() and bundle.val_loader is not None and is_classification_task(bundle.task):
                 eval_metrics = evaluate_classification(module, bundle.val_loader, bundle.num_classes)
                 if eval_metrics is not None:
+                    if bundle.task == "image":
+                        eval_metrics["samples"] = collect_image_samples(module, bundle.val_loader)
                     self.on_message("train/eval", {"session_id": self.session_id, **eval_metrics})
 
             self.on_message("train/done", {
