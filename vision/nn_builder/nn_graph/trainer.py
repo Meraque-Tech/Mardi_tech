@@ -12,6 +12,7 @@ from torch import nn, optim
 
 from .builder import build_module_from_graph, config_node
 from .datasets import build_dataset
+from .metrics import evaluate_classification, is_classification_task
 
 
 def make_optimizer(params, cfg):
@@ -137,8 +138,17 @@ class TrainingSession:
             bundle = build_dataset(dataset_cfg)
             epochs = int(tc.get("epochs", 20))
             progress_every = int(tc.get("progress_every", 1))
+            grad_clip_norm = float(tc.get("grad_clip_norm", 0.0))
+            early_stopping = bool(tc.get("early_stopping", False))
+            patience = int(tc.get("early_stopping_patience", 5))
+            min_delta = float(tc.get("early_stopping_min_delta", 0.0001))
+
+            best_val_loss = float("inf")
+            epochs_no_improve = 0
+            early_stopped = False
 
             step = 0
+            epoch = -1
             for epoch in range(epochs):
                 if self._stop.is_set():
                     break
@@ -152,6 +162,8 @@ class TrainingSession:
                     pred = module(xb)
                     loss_val = compute_loss(loss_fn, pred, yb, bundle.task)
                     loss_val.backward()
+                    if grad_clip_norm > 0:
+                        nn.utils.clip_grad_norm_(module.parameters(), grad_clip_norm)
                     opt.step()
 
                     step += 1
@@ -174,6 +186,7 @@ class TrainingSession:
                 if self._stop.is_set():
                     break
 
+                val_loss = None
                 if bundle.val_loader is not None:
                     val_loss, val_acc = self._evaluate(module, loss_fn, bundle)
                     self.on_message("train/progress", {
@@ -189,7 +202,24 @@ class TrainingSession:
                         "grid_size": len(grid), "values": grid,
                     })
 
-            self.on_message("train/done", {"session_id": self.session_id, "final_epoch": epoch})
+                if early_stopping and val_loss is not None:
+                    if val_loss < best_val_loss - min_delta:
+                        best_val_loss = val_loss
+                        epochs_no_improve = 0
+                    else:
+                        epochs_no_improve += 1
+                        if epochs_no_improve >= patience:
+                            early_stopped = True
+                            break
+
+            if not self._stop.is_set() and bundle.val_loader is not None and is_classification_task(bundle.task):
+                eval_metrics = evaluate_classification(module, bundle.val_loader, bundle.num_classes)
+                if eval_metrics is not None:
+                    self.on_message("train/eval", {"session_id": self.session_id, **eval_metrics})
+
+            self.on_message("train/done", {
+                "session_id": self.session_id, "final_epoch": epoch, "early_stopped": early_stopped,
+            })
         except Exception as exc:  # noqa: BLE001 - surface to UI without killing the server
             self.on_message("train/error", {"session_id": self.session_id, "message": str(exc)})
         finally:

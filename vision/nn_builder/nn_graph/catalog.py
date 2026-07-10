@@ -301,6 +301,10 @@ NODE_CATALOG = {
             _p("epochs", P_INT, 20, min=1, max=1000),
             _p("seed", P_INT, 0, min=0, max=2**31 - 1),
             _p("progress_every", P_INT, 1, min=1, max=200),
+            _p("early_stopping", P_BOOL, False),
+            _p("early_stopping_patience", P_INT, 5, min=1, max=200),
+            _p("early_stopping_min_delta", P_FLOAT, 0.0001, min=0.0, max=1.0),
+            _p("grad_clip_norm", P_FLOAT, 0.0, min=0.0, max=100.0),
         ],
     },
 }

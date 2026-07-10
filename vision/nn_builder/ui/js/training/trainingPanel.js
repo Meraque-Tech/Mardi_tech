@@ -3,6 +3,7 @@ import * as api from "../graph/graphIO.js";
 import wsClient from "../ws/ws_client.js";
 import { MiniLineChart } from "./lossChart.js";
 import { DecisionBoundary } from "./decisionBoundary.js";
+import { ConfusionMatrix } from "./confusionMatrix.js";
 
 const TOY_2D = new Set(["circle", "xor", "gaussian", "spiral"]);
 const ALL_DATASETS = ["circle", "xor", "gaussian", "spiral", "mnist", "sequence_copy", "sequence_classify"];
@@ -20,6 +21,7 @@ export class TrainingPanel {
       color: "#0ca30c", label: "accuracy", format: (v) => v.toFixed(3),
     });
     this.boundary = new DecisionBoundary(this.root.querySelector("#boundary-canvas"));
+    this.confusion = new ConfusionMatrix(this.root.querySelector("#confusion-canvas"));
 
     this._wireControls();
     this._wireWs();
@@ -33,6 +35,7 @@ export class TrainingPanel {
     this.lossChart._resize();
     this.accChart._resize();
     this.boundary._resize();
+    this.confusion._resize();
   }
 
   _html() {
@@ -86,6 +89,21 @@ export class TrainingPanel {
               <div class="boundary-legend">
                 <span>class 0</span><span class="ramp"></span><span>class 1</span>
               </div>
+            </div>
+          </div>
+        </div>
+        <div class="viz-card" id="eval-card" style="display:none;">
+          <h4>Test-set Evaluation <span id="eval-n" style="font-weight:400; text-transform:none; color:var(--ink-muted);"></span></h4>
+          <div class="viz-row" style="grid-template-columns: 1fr 1.2fr;">
+            <div class="stat-tiles" style="grid-template-columns: repeat(2, 1fr);">
+              <div class="stat-tile"><div class="stat-label">Precision</div><div class="stat-value tabular" id="metric-precision">–</div></div>
+              <div class="stat-tile"><div class="stat-label">Recall</div><div class="stat-value tabular" id="metric-recall">–</div></div>
+              <div class="stat-tile"><div class="stat-label">F1</div><div class="stat-value tabular" id="metric-f1">–</div></div>
+              <div class="stat-tile accent"><div class="stat-label">ROC-AUC</div><div class="stat-value tabular" id="metric-auc">–</div></div>
+            </div>
+            <div class="boundary-wrap">
+              <canvas id="confusion-canvas" width="280" height="280"></canvas>
+              <div class="boundary-legend"><span>predicted →, true ↓ · shade = count</span></div>
             </div>
           </div>
         </div>
@@ -155,6 +173,7 @@ export class TrainingPanel {
     this.root.querySelector("#btn-play").addEventListener("click", async () => {
       this.lossChart.reset();
       this.accChart.reset();
+      this.root.querySelector("#eval-card").style.display = "none";
       const res = await api.trainStart(this.graph.toJSON());
       if (!res.ok) this._error(res.errors);
     });
@@ -183,6 +202,16 @@ export class TrainingPanel {
     });
     wsClient.subscribe("train/boundary", (data) => {
       this.boundary.draw(data.values);
+    });
+    wsClient.subscribe("train/eval", (data) => {
+      const card = this.root.querySelector("#eval-card");
+      card.style.display = "";
+      this.root.querySelector("#eval-n").textContent = `(n=${data.num_samples})`;
+      this.root.querySelector("#metric-precision").textContent = data.precision.toFixed(3);
+      this.root.querySelector("#metric-recall").textContent = data.recall.toFixed(3);
+      this.root.querySelector("#metric-f1").textContent = data.f1.toFixed(3);
+      this.root.querySelector("#metric-auc").textContent = data.roc_auc !== null && data.roc_auc !== undefined ? data.roc_auc.toFixed(3) : "n/a";
+      this.confusion.draw(data.confusion_matrix);
     });
     wsClient.subscribe("train/error", (data) => this._error([{ message: data.message }]));
   }

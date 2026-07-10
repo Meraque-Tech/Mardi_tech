@@ -180,6 +180,11 @@ def _build_dataset(cfg):
 
     if kind in _TOY_2D_FNS:
         X, y = _TOY_2D_FNS[kind](int(cfg.get("num_samples", 500)), float(cfg.get("noise", 0.0)), rng)
+        # X/y are generated class-contiguous (e.g. spiral: all class 1, then all
+        # class 0) -- shuffle before splitting or the held-out set can end up
+        # single-class, which breaks accuracy/confusion-matrix/ROC-AUC on it.
+        perm = rng.permutation(len(X))
+        X, y = X[perm], y[perm]
         n_train = int(len(X) * train_ratio)
         Xt, yt = torch.from_numpy(X), torch.from_numpy(y)
         train_ds = TensorDataset(Xt[:n_train], yt[:n_train])
@@ -246,6 +251,71 @@ def _compute_accuracy(pred, target, task):
         else:
             labels = (torch.sigmoid(pred.squeeze(-1)) > 0.5).long()
         return (labels == target).float().mean().item()
+
+def _evaluate(model, loss_fn, loader, task):
+    model.eval()
+    total_loss, total_acc, n = 0.0, 0.0, 0
+    with torch.no_grad():
+        for xb, yb in loader:
+            pred = model(xb)
+            total_loss += _compute_loss(loss_fn, pred, yb, task).item()
+            total_acc += _compute_accuracy(pred, yb, task)
+            n += 1
+    model.train()
+    return total_loss / max(n, 1), total_acc / max(n, 1)
+
+_CLASSIFICATION_TASKS = {"2d", "image", "sequence_classify"}
+
+def _print_classification_report(model, loader, task):
+    """Confusion matrix + precision/recall/F1 (+ ROC-AUC if scikit-learn is
+    installed) over the held-out split. Not computed for sequence_copy (a
+    per-timestep task, not single-label classification). mAP is an object-
+    detection/retrieval metric and doesn't apply to these datasets."""
+    if task not in _CLASSIFICATION_TASKS:
+        return
+    model.eval()
+    y_true, y_pred, y_prob = [], [], []
+    with torch.no_grad():
+        for xb, yb in loader:
+            pred = model(xb)
+            if pred.dim() > 1 and pred.size(-1) > 1:
+                prob = torch.softmax(pred, dim=-1)
+                labels = prob.argmax(dim=-1)
+            else:
+                p1 = torch.sigmoid(pred.squeeze(-1))
+                prob = torch.stack([1 - p1, p1], dim=-1)
+                labels = (p1 > 0.5).long()
+            y_true.append(yb.numpy()); y_pred.append(labels.numpy()); y_prob.append(prob.numpy())
+    model.train()
+    if not y_true:
+        return
+    y_true, y_pred, y_prob = np.concatenate(y_true), np.concatenate(y_pred), np.concatenate(y_prob)
+    num_classes = y_prob.shape[-1]
+
+    cm = np.zeros((num_classes, num_classes), dtype=np.int64)
+    for t, p in zip(y_true, y_pred):
+        cm[t, p] += 1
+    print("\\nConfusion matrix (rows=true, cols=predicted):")
+    print(cm)
+
+    precisions, recalls, f1s = [], [], []
+    for c in range(num_classes):
+        tp = cm[c, c]; fp = cm[:, c].sum() - tp; fn = cm[c, :].sum() - tp
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+        precisions.append(prec); recalls.append(rec); f1s.append(f1)
+    print(f"precision(macro)={np.mean(precisions):.4f}  recall(macro)={np.mean(recalls):.4f}  f1(macro)={np.mean(f1s):.4f}")
+
+    try:
+        from sklearn.metrics import roc_auc_score
+        if num_classes == 2:
+            auc = roc_auc_score(y_true, y_prob[:, 1])
+        else:
+            auc = roc_auc_score(y_true, y_prob, multi_class="ovr", average="macro", labels=list(range(num_classes)))
+        print(f"roc_auc(macro)={auc:.4f}")
+    except (ImportError, ValueError):
+        print("roc_auc: unavailable (install scikit-learn, or too few classes present in this split)")
 '''
 
 _HELPERS = '''
@@ -326,6 +396,12 @@ def main():
     optimizer = _make_optimizer(model.parameters(), OPTIMIZER_CFG)
     loss_fn = _make_loss(LOSS_CFG)
     epochs = int(TRAIN_CFG.get("epochs", 20))
+    grad_clip_norm = float(TRAIN_CFG.get("grad_clip_norm", 0.0))
+    early_stopping = bool(TRAIN_CFG.get("early_stopping", False))
+    patience = int(TRAIN_CFG.get("early_stopping_patience", 5))
+    min_delta = float(TRAIN_CFG.get("early_stopping_min_delta", 0.0001))
+
+    best_val_loss, epochs_no_improve = float("inf"), 0
 
     for epoch in range(epochs):
         model.train()
@@ -335,11 +411,34 @@ def main():
             pred = model(xb)
             loss = _compute_loss(loss_fn, pred, yb, task)
             loss.backward()
+            if grad_clip_norm > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
             optimizer.step()
             total_loss += loss.item()
             total_acc += _compute_accuracy(pred, yb, task)
             n += 1
-        print(f"epoch {{epoch+1}}/{{epochs}}  loss={{total_loss/max(n,1):.4f}}  acc={{total_acc/max(n,1):.4f}}")
+
+        msg = f"epoch {{epoch+1}}/{{epochs}}  loss={{total_loss/max(n,1):.4f}}  acc={{total_acc/max(n,1):.4f}}"
+        val_loss = None
+        if val_loader is not None:
+            val_loss, val_acc = _evaluate(model, loss_fn, val_loader, task)
+            msg += f"  val_loss={{val_loss:.4f}}  val_acc={{val_acc:.4f}}"
+        print(msg)
+
+        if early_stopping and val_loss is not None:
+            if val_loss < best_val_loss - min_delta:
+                best_val_loss, epochs_no_improve = val_loss, 0
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= patience:
+                    print(f"Early stopping at epoch {{epoch+1}} (no val_loss improvement for {{patience}} epochs)")
+                    break
+
+    print("\\n--- Test-set evaluation (held-out split) ---")
+    if val_loader is not None:
+        _print_classification_report(model, val_loader, task)
+    else:
+        print("No held-out split available (train_ratio was 1.0)")
 
 
 if __name__ == "__main__":

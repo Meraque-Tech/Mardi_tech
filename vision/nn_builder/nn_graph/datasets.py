@@ -123,7 +123,7 @@ def build_dataset(params):
         num_samples = int(params.get("num_samples", 500))
         noise = float(params.get("noise", 0.0))
         X, y = make_2d_dataset(kind, num_samples, noise, seed)
-        return _split_tensor_dataset(X, y, batch_size, train_ratio, num_classes=2, task="2d", x_range=(-6, 6))
+        return _split_tensor_dataset(X, y, batch_size, train_ratio, num_classes=2, task="2d", x_range=(-6, 6), seed=seed)
 
     if kind == "mnist":
         from torchvision import datasets, transforms
@@ -158,8 +158,13 @@ def build_dataset(params):
     raise ValueError(f"Unknown dataset kind '{kind}'")
 
 
-def _split_tensor_dataset(X, y, batch_size, train_ratio, num_classes, task, x_range=None):
+def _split_tensor_dataset(X, y, batch_size, train_ratio, num_classes, task, x_range=None, seed=0):
+    # X/y are generated class-contiguous (e.g. spiral/gaussian: all class 1 first,
+    # then all class 0) — shuffle before splitting or the held-out set can end up
+    # single-class, which breaks accuracy/confusion-matrix/ROC-AUC on it.
     n = len(X)
+    perm = np.random.RandomState(seed).permutation(n)
+    X, y = X[perm], y[perm]
     n_train = int(n * train_ratio)
     X_t = torch.from_numpy(X)
     y_t = torch.from_numpy(y)
