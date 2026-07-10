@@ -4,6 +4,7 @@ import { GraphModel } from "./graph/graphModel.js";
 import { NodeCanvasEditor } from "./canvas/interaction.js";
 import { Inspector } from "./panel/inspector.js";
 import { TrainingPanel } from "./training/trainingPanel.js";
+import { DetectPanel } from "./detect/detectPanel.js";
 import * as api from "./graph/graphIO.js";
 
 function starterGraph(graph) {
@@ -57,14 +58,14 @@ function buildPalette(root, editor) {
   }
 }
 
-function wireTabs(onShowTraining) {
+function wireTabs(onShowTab) {
   document.querySelectorAll(".nav-item[data-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".nav-item[data-tab]").forEach((b) => b.classList.remove("active"));
       document.querySelectorAll(".tab-page").forEach((p) => p.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById(btn.dataset.tab).classList.add("active");
-      if (btn.dataset.tab === "training-tab") onShowTraining();
+      onShowTab(btn.dataset.tab);
     });
   });
 }
@@ -105,7 +106,15 @@ async function main() {
   });
 
   const trainingPanel = new TrainingPanel(document.getElementById("training-tab"), graph);
-  wireTabs(() => trainingPanel.resize());
+  const detectPanel = new DetectPanel(document.getElementById("detect-tab"));
+  wireTabs((tab) => {
+    if (tab === "training-tab") trainingPanel.resize();
+    if (tab === "detect-tab") detectPanel.resize();
+    // The graph toolbar (New/Validate/Build/Export/Save/Load) operates on the
+    // node graph, which Detect mode has no concept of -- showing it there
+    // just reads as broken/irrelevant controls.
+    document.getElementById("editor-toolbar").style.display = tab === "detect-tab" ? "none" : "";
+  });
 
   document.getElementById("btn-new").addEventListener("click", () => {
     if (!confirm("Clear the current graph?")) return;

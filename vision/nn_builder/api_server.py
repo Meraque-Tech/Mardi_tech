@@ -15,7 +15,15 @@ Endpoints:
   POST /api/train/stop|pause|resume|step|evaluate
   GET  /api/train/status
   GET  /api/train/download     download the current model's weights as a .pt file
-  WS   /ws                      {topic, data} envelope: train/progress, train/boundary, train/done, train/error
+  GET  /api/detect/models       available pretrained YOLOv8/YOLO11 variants
+  GET  /api/detect/datasets     built-in + custom fine-tuning datasets
+  POST /api/detect/load         load/download a pretrained YOLO checkpoint
+  POST /api/detect/predict      run detection on an uploaded image
+  POST /api/detect/train        fine-tune the loaded model in the background
+  POST /api/detect/stop
+  GET  /api/detect/status
+  GET  /api/detect/download     download the fine-tuned weights
+  WS   /ws                      {topic, data} envelope: train/*, detect/*
 """
 
 import argparse
@@ -23,6 +31,7 @@ import io
 import json
 import os
 import re
+import tempfile
 import threading
 
 import torch
@@ -32,6 +41,7 @@ from flask_sock import Sock
 from nn_graph.builder import build_module_from_graph, export_state_dict
 from nn_graph.catalog import catalog_payload
 from nn_graph.codegen import graph_to_train_py
+from nn_graph.detection import DetectionSession, list_datasets, list_models
 from nn_graph.schema import GraphError, graph_from_dict, validate_graph
 from nn_graph.trainer import TrainingSession
 from nn_graph.validation import dry_run
@@ -48,6 +58,9 @@ ws_lock = threading.Lock()
 
 _session: TrainingSession = None
 _session_lock = threading.Lock()
+
+_detect_session: DetectionSession = None
+_detect_lock = threading.Lock()
 
 
 def broadcast(topic, data):
@@ -268,6 +281,97 @@ def train_download():
         buffer, as_attachment=True, download_name=f"{name}_state_dict.pt",
         mimetype="application/octet-stream",
     )
+
+
+# ---------------------------------------------------------------------------
+# Object detection (pretrained YOLOv8/YOLO11 via ultralytics) -- a separate
+# workflow from the classification graph builder above; see nn_graph/detection.py.
+# ---------------------------------------------------------------------------
+
+def _get_detect_session():
+    global _detect_session
+    if _detect_session is None:
+        _detect_session = DetectionSession(broadcast)
+    return _detect_session
+
+
+@app.get("/api/detect/models")
+def detect_models():
+    return jsonify(list_models())
+
+
+@app.get("/api/detect/datasets")
+def detect_datasets():
+    return jsonify(list_datasets())
+
+
+@app.post("/api/detect/load")
+def detect_load():
+    body = request.get_json(silent=True) or {}
+    model_id = body.get("model_id")
+    with _detect_lock:
+        session = _get_detect_session()
+        result = session.load(model_id)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.post("/api/detect/predict")
+def detect_predict():
+    if _detect_session is None or _detect_session.model is None:
+        return jsonify({"ok": False, "error": "No model loaded — click Load Model first."}), 409
+    if "image" not in request.files:
+        return jsonify({"ok": False, "error": "No image uploaded"}), 400
+    conf = float(request.form.get("conf", 0.25))
+    file = request.files["image"]
+    suffix = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        file.save(tmp.name)
+        tmp_path = tmp.name
+    try:
+        result = _detect_session.predict(tmp_path, conf=conf)
+    finally:
+        os.remove(tmp_path)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.post("/api/detect/train")
+def detect_train():
+    body = request.get_json(silent=True) or {}
+    with _detect_lock:
+        session = _get_detect_session()
+        result = session.start_training(
+            dataset_id=body.get("dataset_id", "coco8"),
+            epochs=int(body.get("epochs", 10)),
+            imgsz=int(body.get("imgsz", 640)),
+            batch=int(body.get("batch", 8)),
+        )
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.post("/api/detect/stop")
+def detect_stop():
+    if _detect_session is None:
+        return jsonify({"error": "no session"}), 409
+    _detect_session.stop_training()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/detect/status")
+def detect_status():
+    if _detect_session is None:
+        return jsonify({"loaded": False, "training": False})
+    return jsonify(_detect_session.status)
+
+
+@app.get("/api/detect/download")
+def detect_download():
+    if _detect_session is None or not _detect_session.last_weights_path:
+        return jsonify({"error": "No fine-tuned weights yet — run a training pass first."}), 409
+    path = _detect_session.last_weights_path
+    if not os.path.isfile(path):
+        return jsonify({"error": "Weights file no longer exists on disk"}), 404
+    name = re.sub(r"[^a-zA-Z0-9_-]", "_", _detect_session.model_id or "model")
+    return send_file(path, as_attachment=True, download_name=f"{name}_finetuned.pt")
 
 
 if __name__ == "__main__":

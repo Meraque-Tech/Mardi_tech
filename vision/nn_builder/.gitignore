@@ -1,4 +1,5 @@
 .cache/
+.cache_ultralytics/
 __pycache__/
 *.pyc
 /.venv

@@ -4,7 +4,9 @@ A drag-and-drop visual neural-network builder: nodes are PyTorch layers/ops
 (Conv, Pool, Linear, RNN/LSTM/GRU, Transformer blocks, activations), edges are
 tensor connections. The backend turns the graph into a real `torch.nn.Module`,
 can train it live (2D toy datasets à la playground.tensorflow.org, MNIST, or a
-synthetic sequence task), and can export a standalone `train.py`.
+synthetic sequence task), and can export a standalone `train.py`. A separate
+**Detect** tab covers pretrained object detection (YOLOv8/YOLO11 via
+`ultralytics`) — see "Object detection" below.
 
 ## Run locally (no Docker)
 
@@ -236,6 +238,56 @@ configure beyond dropping them into the graph:
   underlying `nn.CrossEntropyLoss` manually today (a `class_weights` param on
   the `loss` node would be the natural place to add it).
 
+## Object detection: YOLOv8 / YOLO11 (pretrained, fine-tunable)
+
+The **Detect** tab is a deliberately separate workflow from the node-graph
+editor above. YOLO models don't decompose into the atomic Conv/Pool/Linear
+nodes the graph builder uses for training from scratch — they're normally
+loaded pretrained and fine-tuned, and they need bounding-box datasets,
+detection losses + NMS, and detection mAP (IoU-matched boxes), none of which
+the classification pipeline (`nn_graph/builder.py`/`trainer.py`/`metrics.py`)
+has. So `nn_graph/detection.py` wraps the `ultralytics` package directly
+instead of forcing YOLO through the generic graph engine.
+
+**Workflow:**
+1. Pick a model — **YOLOv8** or **YOLO11**, sizes n/s/m/l/x (n = fastest/smallest,
+   x = most accurate/slowest) — and click **Load Model**. COCO-pretrained
+   weights download automatically on first use (cached under
+   `.cache_ultralytics/`, gitignored).
+2. **Test on an image**: drag any photo into the drop zone. Real inference
+   runs immediately — bounding boxes, class labels, and confidences drawn
+   right on the image — no training required. This is the fastest way to
+   confirm the whole pipeline actually works.
+3. **Fine-tune**: pick a dataset — built-in `coco8` (8 images, a few-second
+   sanity check) or `coco128` (128 images, a real if tiny fine-tuning pass),
+   or drop your own `data.yaml` (standard Ultralytics/YOLO format: an
+   `images/`+`labels/` directory pair with YOLO-format `.txt` label files)
+   into `detect_datasets/` — set epochs/imgsz/batch, and press **Play**. Loss
+   and real detection mAP@0.5 / mAP@0.5:0.95 stream live via the same `/ws`
+   envelope as the classification trainer, on topics `detect/progress`,
+   `detect/done`, `detect/error`.
+4. **Download .pt** grabs the fine-tuned weights (`best.pt` from that run).
+
+**This is where real object-detection mAP lives** — IoU-matched bounding
+boxes at the 0.5 and 0.5:0.95 thresholds, exactly what YOLO/COCO benchmarks
+report. It's computed by Ultralytics' own validator, not by this tool, and is
+a fundamentally different calculation from the classification mAP in
+`nn_graph/metrics.py` (mean per-class average precision over class
+probabilities, no boxes involved) — see that module's docstring for why the
+two aren't interchangeable, and don't compare the numbers across tabs.
+
+**Known limitations:**
+- **Stop is best-effort**: Ultralytics has no public mid-run cancel API, so
+  Stop works by shrinking `trainer.epochs` inside the `on_fit_epoch_end`
+  callback — it finishes the epoch already in progress, then exits, rather
+  than cancelling instantly.
+- **No pause/step/resume** for fine-tuning (unlike the classification
+  trainer) — Ultralytics' training loop is a single blocking call per run,
+  not something this tool drives batch-by-batch.
+- Custom dataset validation is minimal — malformed `data.yaml`/label files
+  surface as whatever error Ultralytics itself raises, broadcast via
+  `detect/error`, rather than a friendly pre-check.
+
 ## Layout
 
 - `nn_graph/catalog.py` — single source of truth for every node type + params (served via `GET /api/catalog`).
@@ -246,6 +298,9 @@ configure beyond dropping them into the graph:
 - `nn_graph/metrics.py` — post-training evaluation: confusion matrix, precision/recall/F1, ROC-AUC.
 - `nn_graph/trainer.py` — background-thread training session (play/pause/step/stop, early stopping, grad clipping) streaming metrics over `/ws`.
 - `nn_graph/codegen.py` — exports a standalone, dependency-free `train.py`.
+- `nn_graph/detection.py` — pretrained YOLOv8/YOLO11 object-detection workflow via `ultralytics` (separate from the classification pipeline above).
 - `api_server.py` — Flask + flask-sock REST/WS backend.
-- `ui/` — vanilla JS (no build step) node-graph editor + training dashboard, styled to match `race_nav/server/agv_dashboard`.
+- `ui/` — vanilla JS (no build step) node-graph editor + training dashboard + detect dashboard, styled to match `race_nav/server/agv_dashboard`.
 - `saved_graphs/` — server-side saved architectures (gitignored).
+- `detect_datasets/` — custom YOLO-format `data.yaml` datasets you provide for fine-tuning (gitignored).
+- `.cache_ultralytics/` — pretrained weights, fine-tuning runs, and auto-downloaded sample datasets for the Detect tab (gitignored, kept separate from `.cache/`'s MNIST cache).

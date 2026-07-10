@@ -10,4 +10,6 @@ services:
     volumes:
       - ./saved_graphs:/app/saved_graphs
       - ./.cache:/app/.cache
+      - ./.cache_ultralytics:/app/.cache_ultralytics
+      - ./detect_datasets:/app/detect_datasets
     restart: unless-stopped

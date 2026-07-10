@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/graph.css">
   <link rel="stylesheet" href="css/training.css">
+  <link rel="stylesheet" href="css/detect.css">
 </head>
 <body>
   <header class="header">
@@ -36,9 +37,13 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
       Training
     </button>
+    <button class="nav-item" data-tab="detect-tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M3 14h3v3M21 10h-3V7"/></svg>
+      Detect
+    </button>
   </nav>
 
-  <nav class="nav-bar toolbar">
+  <nav class="nav-bar toolbar" id="editor-toolbar">
     <button class="btn" id="btn-new" title="Start a new blank graph">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
       New
@@ -83,6 +88,8 @@
     </section>
 
     <section id="training-tab" class="tab-page"></section>
+
+    <section id="detect-tab" class="tab-page"></section>
   </main>
 
   <div id="toast" class="toast" style="display:none;"></div>
