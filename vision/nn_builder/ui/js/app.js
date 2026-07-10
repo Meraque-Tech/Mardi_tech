@@ -57,13 +57,14 @@ function buildPalette(root, editor) {
   }
 }
 
-function wireTabs() {
+function wireTabs(onShowTraining) {
   document.querySelectorAll(".nav-item[data-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".nav-item[data-tab]").forEach((b) => b.classList.remove("active"));
       document.querySelectorAll(".tab-page").forEach((p) => p.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById(btn.dataset.tab).classList.add("active");
+      if (btn.dataset.tab === "training-tab") onShowTraining();
     });
   });
 }
@@ -103,8 +104,8 @@ async function main() {
     editor.render();
   });
 
-  wireTabs();
-  new TrainingPanel(document.getElementById("training-tab"), graph);
+  const trainingPanel = new TrainingPanel(document.getElementById("training-tab"), graph);
+  wireTabs(() => trainingPanel.resize());
 
   document.getElementById("btn-new").addEventListener("click", () => {
     if (!confirm("Clear the current graph?")) return;

@@ -4,15 +4,27 @@ export const NODE_WIDTH = 160;
 export const NODE_HEIGHT = 48;
 export const PORT_RADIUS = 6;
 
-const FAMILY_COLORS = {
-  struct: "#94a3b8",
-  cnn: "#38bdf8",
-  ann: "#a78bfa",
-  rnn: "#34d399",
-  transformer: "#f59e0b",
-  activation: "#f472b6",
-  config: "#ef4444",
-};
+// Reads the validated categorical palette straight from CSS custom properties
+// (defined once in css/style.css) so colors have a single source of truth.
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+let _familyColors = null;
+function familyColors() {
+  if (_familyColors) return _familyColors;
+  _familyColors = {
+    struct: cssVar("--fam-struct", "#3987e5"),
+    cnn: cssVar("--fam-cnn", "#199e70"),
+    ann: cssVar("--fam-ann", "#c98500"),
+    rnn: cssVar("--fam-rnn", "#4caf3f"),
+    transformer: cssVar("--fam-transformer", "#9085e9"),
+    activation: cssVar("--fam-activation", "#d55181"),
+    config: cssVar("--fam-config", "#d95926"),
+  };
+  return _familyColors;
+}
 
 function nodePortCount(node) {
   const spec = getSpec(node.type);
@@ -86,6 +98,8 @@ export function render(ctx, canvas, viewport, graphModel, opts = {}) {
   ctx.save();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  const colors = familyColors();
+
   // edges
   for (const e of graphModel.edges.values()) {
     const srcNode = graphModel.nodes.get(e.source.node);
@@ -96,47 +110,65 @@ export function render(ctx, canvas, viewport, graphModel, opts = {}) {
     const idx = incoming.findIndex((x) => x.id === e.id);
     const total = Math.max(1, nodePortCount({ ...tgtNode, _incomingCount: incoming.length }));
     const p2 = inputPortScreenPos(viewport, tgtNode, idx, total);
-    drawBezier(ctx, p1.x, p1.y, p2.x, p2.y, "rgba(56,189,248,0.55)");
+    drawBezier(ctx, p1.x, p1.y, p2.x, p2.y, "rgba(90,160,239,0.45)");
   }
 
   if (dragEdge) {
-    drawBezier(ctx, dragEdge.x1, dragEdge.y1, dragEdge.x2, dragEdge.y2, "rgba(255,255,255,0.5)");
+    drawBezier(ctx, dragEdge.x1, dragEdge.y1, dragEdge.x2, dragEdge.y2, "rgba(255,255,255,0.45)");
   }
 
   // nodes
   for (const node of graphModel.nodes.values()) {
     const spec = getSpec(node.type) || {};
-    const color = FAMILY_COLORS[spec.family] || "#94a3b8";
+    const color = colors[spec.family] || colors.struct;
     const r = nodeScreenRect(viewport, node);
+    const selected = node.id === selectedId;
 
-    ctx.fillStyle = "#151933";
-    ctx.strokeStyle = node.id === selectedId ? "#00d4ff" : "rgba(255,255,255,0.12)";
-    ctx.lineWidth = node.id === selectedId ? 2 : 1;
-    roundRect(ctx, r.x, r.y, r.w, r.h, 8);
+    if (selected) {
+      ctx.save();
+      ctx.shadowColor = "rgba(90,160,239,0.55)";
+      ctx.shadowBlur = 14 * viewport.scale;
+    }
+
+    ctx.fillStyle = "#1c1e22";
+    ctx.strokeStyle = selected ? "#5aa0ef" : "rgba(255,255,255,0.12)";
+    ctx.lineWidth = selected ? 1.5 : 1;
+    roundRect(ctx, r.x, r.y, r.w, r.h, 9 * viewport.scale);
     ctx.fill();
+    if (selected) ctx.restore();
     ctx.stroke();
 
+    // family accent bar (rounded top only)
+    ctx.save();
+    roundRectClip(ctx, r.x, r.y, r.w, r.h, 9 * viewport.scale);
     ctx.fillStyle = color;
-    roundRect(ctx, r.x, r.y, r.w, 5 * viewport.scale, 4);
-    ctx.fill();
-
-    ctx.fillStyle = "#e0e0e0";
-    ctx.font = `${12 * viewport.scale}px -apple-system, Segoe UI, sans-serif`;
-    ctx.textBaseline = "middle";
-    ctx.fillText(spec.label || node.type, r.x + 10 * viewport.scale, r.y + r.h / 2, r.w - 20 * viewport.scale);
+    ctx.fillRect(r.x, r.y, r.w, 4 * viewport.scale);
+    ctx.restore();
 
     if (errorNodeIds.has(node.id)) {
-      ctx.fillStyle = "#ef4444";
+      ctx.strokeStyle = "#e35b5b";
+      ctx.lineWidth = 1.5;
+      roundRect(ctx, r.x, r.y, r.w, r.h, 9 * viewport.scale);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `600 ${12 * viewport.scale}px -apple-system, Segoe UI, sans-serif`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(spec.label || node.type, r.x + 11 * viewport.scale, r.y + r.h / 2 + 2 * viewport.scale, r.w - 22 * viewport.scale);
+
+    if (errorNodeIds.has(node.id)) {
+      ctx.fillStyle = "#e35b5b";
       ctx.beginPath();
-      ctx.arc(r.x + r.w - 8 * viewport.scale, r.y + 8 * viewport.scale, 4 * viewport.scale, 0, Math.PI * 2);
+      ctx.arc(r.x + r.w - 9 * viewport.scale, r.y + 9 * viewport.scale, 3.5 * viewport.scale, 0, Math.PI * 2);
       ctx.fill();
     }
 
     const shape = shapes[node.id];
     if (shape) {
-      ctx.fillStyle = "#64748b";
-      ctx.font = `${10 * viewport.scale}px monospace`;
-      ctx.fillText(`[${shape.join(",")}]`, r.x, r.y + r.h + 12 * viewport.scale);
+      ctx.fillStyle = "#898781";
+      ctx.font = `${9.5 * viewport.scale}px "SF Mono", Consolas, monospace`;
+      ctx.fillText(`[${shape.join(", ")}]`, r.x, r.y + r.h + 13 * viewport.scale);
     }
 
     // ports
@@ -156,8 +188,13 @@ export function render(ctx, canvas, viewport, graphModel, opts = {}) {
   ctx.restore();
 }
 
+function roundRectClip(ctx, x, y, w, h, r) {
+  roundRect(ctx, x, y, w, h, r);
+  ctx.clip();
+}
+
 function drawPort(ctx, p, color) {
-  ctx.fillStyle = "#0a0e27";
+  ctx.fillStyle = "#16171a";
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.beginPath();

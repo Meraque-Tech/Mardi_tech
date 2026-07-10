@@ -1,7 +1,7 @@
 import { getSpec } from "../nodes/node_defs.js";
 import * as api from "../graph/graphIO.js";
 import wsClient from "../ws/ws_client.js";
-import { LossChart } from "./lossChart.js";
+import { MiniLineChart } from "./lossChart.js";
 import { DecisionBoundary } from "./decisionBoundary.js";
 
 const TOY_2D = new Set(["circle", "xor", "gaussian", "spiral"]);
@@ -13,7 +13,12 @@ export class TrainingPanel {
     this.graph = graphModel;
     this.root.innerHTML = this._html();
 
-    this.lossChart = new LossChart(this.root.querySelector("#loss-canvas"));
+    this.lossChart = new MiniLineChart(this.root.querySelector("#loss-canvas"), {
+      color: "#3987e5", label: "loss", format: (v) => v.toFixed(4),
+    });
+    this.accChart = new MiniLineChart(this.root.querySelector("#acc-canvas"), {
+      color: "#0ca30c", label: "accuracy", format: (v) => v.toFixed(3),
+    });
     this.boundary = new DecisionBoundary(this.root.querySelector("#boundary-canvas"));
 
     this._wireControls();
@@ -22,34 +27,67 @@ export class TrainingPanel {
     this._syncFromGraph();
   }
 
+  // Canvases are sized from their parent's clientWidth, which is 0 while the
+  // Training tab is display:none — call this right after the tab is shown.
+  resize() {
+    this.lossChart._resize();
+    this.accChart._resize();
+    this.boundary._resize();
+  }
+
   _html() {
     return `
       <div id="training-controls">
-        <h3>Dataset</h3>
+        <div class="section-title">Dataset</div>
         <div class="dataset-grid" id="dataset-grid"></div>
-        <h3>Hyperparameters</h3>
+        <div class="section-title">Hyperparameters</div>
         <div id="config-form"></div>
-        <h3>Controls</h3>
+        <div class="section-title">Controls</div>
         <div class="controls-row">
-          <button class="btn primary" id="btn-play">Play</button>
-          <button class="btn" id="btn-pause">Pause</button>
-          <button class="btn" id="btn-step">Step</button>
-          <button class="btn danger" id="btn-stop">Stop</button>
+          <button class="btn primary" id="btn-play">${icon("play")} Play</button>
+          <button class="btn" id="btn-pause">${icon("pause")} Pause</button>
+        </div>
+        <div class="controls-row">
+          <button class="btn" id="btn-step">${icon("step")} Step</button>
+          <button class="btn danger" id="btn-stop">${icon("stop")} Stop</button>
         </div>
       </div>
       <div id="training-viz">
-        <div class="viz-card">
-          <h4>Loss / Accuracy</h4>
-          <div class="metrics-row">
-            <span>epoch <span class="val" id="metric-epoch">-</span></span>
-            <span>loss <span class="val" id="metric-loss">-</span></span>
-            <span>accuracy <span class="val" id="metric-acc">-</span></span>
+        <div class="stat-tiles">
+          <div class="stat-tile">
+            <div class="stat-label">Epoch</div>
+            <div class="stat-value tabular" id="metric-epoch">–</div>
           </div>
-          <canvas class="chart-canvas" id="loss-canvas"></canvas>
+          <div class="stat-tile accent">
+            <div class="stat-label">Loss</div>
+            <div class="stat-value tabular" id="metric-loss">–</div>
+          </div>
+          <div class="stat-tile good">
+            <div class="stat-label">Accuracy</div>
+            <div class="stat-value tabular" id="metric-acc">–</div>
+          </div>
         </div>
-        <div class="viz-card" id="boundary-card">
-          <h4>Decision Boundary</h4>
-          <canvas id="boundary-canvas" width="320" height="320"></canvas>
+        <div class="viz-row">
+          <div class="viz-card">
+            <h4>Loss &amp; Accuracy</h4>
+            <div class="chart-stack">
+              <div class="chart-block">
+                <canvas class="chart-canvas" id="loss-canvas"></canvas>
+              </div>
+              <div class="chart-block">
+                <canvas class="chart-canvas" id="acc-canvas"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="viz-card" id="boundary-card">
+            <h4>Decision Boundary</h4>
+            <div class="boundary-wrap">
+              <canvas id="boundary-canvas" width="300" height="300"></canvas>
+              <div class="boundary-legend">
+                <span>class 0</span><span class="ramp"></span><span>class 1</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -116,6 +154,7 @@ export class TrainingPanel {
   _wireControls() {
     this.root.querySelector("#btn-play").addEventListener("click", async () => {
       this.lossChart.reset();
+      this.accChart.reset();
       const res = await api.trainStart(this.graph.toJSON());
       if (!res.ok) this._error(res.errors);
     });
@@ -137,9 +176,10 @@ export class TrainingPanel {
   _wireWs() {
     wsClient.subscribe("train/progress", (data) => {
       this.root.querySelector("#metric-epoch").textContent = data.epoch;
-      this.root.querySelector("#metric-loss").textContent = data.loss?.toFixed(4);
-      this.root.querySelector("#metric-acc").textContent = data.accuracy !== undefined ? data.accuracy.toFixed(3) : "-";
-      this.lossChart.push({ step: data.step, loss: data.loss, accuracy: data.accuracy });
+      this.root.querySelector("#metric-loss").textContent = data.loss?.toFixed(4) ?? "–";
+      this.root.querySelector("#metric-acc").textContent = data.accuracy !== undefined ? data.accuracy.toFixed(3) : "–";
+      this.lossChart.push(data.step, data.loss);
+      this.accChart.push(data.step, data.accuracy);
     });
     wsClient.subscribe("train/boundary", (data) => {
       this.boundary.draw(data.values);
@@ -152,6 +192,16 @@ export class TrainingPanel {
     this.boundary.setSamplePoints(pts, [-6, 6]);
     this.boundary.draw(null);
   }
+}
+
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>',
+  step: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l8 7-8 7zM16 5h2v14h-2z"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>',
+};
+function icon(name) {
+  return ICONS[name] || "";
 }
 
 // Lightweight client-side mirrors of nn_graph/datasets.py's 2D generators, used
