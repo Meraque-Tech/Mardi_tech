@@ -2567,6 +2567,8 @@ def read_run_metrics(run_dir: Path) -> dict:
         "results_csv": str(results_path),
         "backend": backend,
         "training_completed": training_completed,
+        "overall_metric_source": (web_metrics.get("overall") or {}).get("source"),
+        "metric_sources": web_metrics.get("metric_sources"),
         "per_class_source": web_metrics.get("per_class_source"),
         "per_class_note": web_metrics.get("per_class_note"),
         "epoch": int(float_value(row, "epoch") or 0),

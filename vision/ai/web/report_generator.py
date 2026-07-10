@@ -1,4 +1,4 @@
-"""PDF report generation for completed YOLO training and test runs."""
+"""PDF report generation for completed model training and test runs."""
 
 from __future__ import annotations
 
@@ -82,6 +82,27 @@ def _metric_labels(metrics: dict | None) -> dict:
             if key in labels and value
         })
     return labels
+
+
+def _report_family(context: dict | None = None, metrics: dict | None = None) -> str:
+    family = ""
+    if isinstance(metrics, dict):
+        family = str(metrics.get("backend") or "").strip().lower()
+    if not family and isinstance(context, dict):
+        family = str(context.get("family") or "").strip().lower()
+    return family if family in {"dfine", "rfdetr", "ultralytics"} else "ultralytics"
+
+
+def _backend_display_name(family: str) -> str:
+    return {
+        "dfine": "D-FINE",
+        "rfdetr": "RF-DETR",
+        "ultralytics": "Ultralytics YOLO",
+    }.get(family, "Model")
+
+
+def _exported_training_images_label() -> str:
+    return "Exported images used for training"
 
 
 def _count(value) -> str:
@@ -379,17 +400,29 @@ def _label_quality_rows(summary: dict) -> list[list]:
 def _short_config_rows(context: dict, run_dir: Path) -> list[list]:
     hyperparameters = context.get("hyperparameters") or _load_yaml(run_dir / "args.yaml")
     rows = [["Setting", "Value"]]
-    family = str(context.get("family") or hyperparameters.get("family") or "").lower()
+    family = _report_family(context, {"backend": hyperparameters.get("family")})
     if family == "rfdetr":
         settings = (
             ("Epochs", "epochs"),
             ("Image size", "imgsz"),
             ("Batch size", "batch"),
+            ("Workers", "workers"),
             ("Initial LR", "lr0"),
             ("Weight decay", "weight_decay"),
             ("Warmup epochs", "warmup_epochs"),
             ("Cosine LR", "cos_lr"),
             ("Early-stopping patience", "patience"),
+            ("Transfer-learning checkpoint", "model"),
+            ("Random seed", "seed"),
+        )
+    elif family == "dfine":
+        settings = (
+            ("Epochs", "epochs"),
+            ("Image size", "imgsz"),
+            ("Batch size", "batch"),
+            ("Workers", "workers"),
+            ("Initial LR", "lr0"),
+            ("Weight decay", "weight_decay"),
             ("Transfer-learning checkpoint", "model"),
             ("Random seed", "seed"),
         )
@@ -411,7 +444,7 @@ def _short_config_rows(context: dict, run_dir: Path) -> list[list]:
         value = _first_present(hyperparameters.get(key), context.get(key))
         if _nonempty(value):
             rows.append([label, value])
-    if family == "rfdetr":
+    if family in {"dfine", "rfdetr"}:
         return rows
     augmentation_keys = ("mosaic", "mixup", "copy_paste", "degrees", "translate", "scale", "fliplr", "flipud", "hsv_h", "hsv_s", "hsv_v")
     augmentation = [
@@ -422,6 +455,60 @@ def _short_config_rows(context: dict, run_dir: Path) -> list[list]:
     if augmentation:
         rows.append(["Runtime augmentation", ", ".join(augmentation)])
     return rows
+
+
+def _filtered_hyperparameters(context: dict, run_dir: Path) -> dict:
+    hyperparameters = context.get("hyperparameters") or _load_yaml(run_dir / "args.yaml")
+    family = _report_family(context, {"backend": hyperparameters.get("family")})
+    ignored = {"dataset_yaml"}
+    if family == "rfdetr":
+        allowed = {
+            "family",
+            "task",
+            "model",
+            "model_size",
+            "epochs",
+            "imgsz",
+            "batch",
+            "workers",
+            "lr0",
+            "weight_decay",
+            "warmup_epochs",
+            "cos_lr",
+            "optimizer",
+            "patience",
+            "seed",
+            "device",
+            "project",
+            "name",
+            "requested_name",
+            "resume",
+            "save_period",
+        }
+        return {key: value for key, value in hyperparameters.items() if key in allowed and key not in ignored}
+    if family == "dfine":
+        allowed = {
+            "family",
+            "task",
+            "model",
+            "model_size",
+            "epochs",
+            "imgsz",
+            "batch",
+            "workers",
+            "lr0",
+            "weight_decay",
+            "optimizer",
+            "seed",
+            "device",
+            "project",
+            "name",
+            "requested_name",
+            "resume",
+            "save_period",
+        }
+        return {key: value for key, value in hyperparameters.items() if key in allowed and key not in ignored}
+    return {key: value for key, value in hyperparameters.items() if key not in ignored}
 
 
 def _training_behaviour_text(metrics: dict) -> str:
@@ -461,6 +548,176 @@ def _validation_test_text(validation: dict, test: dict) -> str:
     largest = max(deltas, key=lambda item: abs(item[1]))
     direction = "higher" if largest[1] >= 0 else "lower"
     return f"The largest validation-to-test shift is {largest[0]}, which is {abs(largest[1]):.4f} {direction} on the test set."
+
+
+def _has_metric_value(rows: list[dict], key: str) -> bool:
+    return any(_to_float(row.get(key)) is not None for row in rows)
+
+
+def _per_class_table_rows(metrics: dict) -> tuple[list[list], list[float]]:
+    classes = metrics.get("per_class") or []
+    columns = [
+        ("class_name", "Class", 42 * 1.0, "text"),
+        ("instances", "Instances", 24 * 1.0, "count"),
+    ]
+    optional = (
+        ("precision", "Precision", 26 * 1.0),
+        ("recall", "Recall", 24 * 1.0),
+        ("f1", "F1", 22 * 1.0),
+        ("map50", "AP50", 24 * 1.0),
+        ("map50_95", "AP50-95", 28 * 1.0),
+    )
+    for key, label, width in optional:
+        if _has_metric_value(classes, key):
+            columns.append((key, label, width, "metric"))
+    if len(columns) <= 2:
+        return [], []
+    rows = [[label for _key, label, _width, _kind in columns]]
+    for row in classes:
+        formatted = []
+        for key, _label, _width, kind in columns:
+            if kind == "metric":
+                formatted.append(_metric(row.get(key)))
+            elif kind == "count":
+                formatted.append(row.get(key, 0))
+            else:
+                formatted.append(row.get(key, "N/A"))
+        rows.append(formatted)
+    widths = [width for _key, _label, width, _kind in columns]
+    total_width = sum(widths)
+    if total_width > 175:
+        scale = 175 / total_width
+        widths = [width * scale for width in widths]
+    return rows, widths
+
+
+def _runtime_environment_rows(context: dict) -> list[list]:
+    environment = context.get("environment") or {}
+    if not environment:
+        return []
+    family = _report_family(context)
+    rows = [["Python", environment.get("python")]]
+    if family == "rfdetr":
+        rows.append(["RF-DETR", environment.get("rfdetr")])
+    elif family == "dfine":
+        rows.append(["D-FINE repo", environment.get("dfine_repo")])
+    else:
+        rows.append(["Ultralytics", environment.get("ultralytics")])
+    rows.append(["PyTorch", environment.get("torch")])
+    gpu_names = ", ".join(str(item.get("name")) for item in environment.get("gpus", []) if item.get("name")) or "Unavailable"
+    rows.append(["GPU", gpu_names])
+    rows.append(["Platform", environment.get("platform")])
+    return rows
+
+
+def _metric_source_rows(metrics: dict) -> list[list]:
+    family = _report_family(metrics=metrics)
+    if family == "ultralytics":
+        return []
+    rows = [["Metric group", "Source"]]
+    sources = metrics.get("metric_sources") or {}
+    labels = {
+        "train_loss": "Training loss",
+        "val_loss": "Validation loss",
+        "precision": "Precision",
+        "recall": "Recall",
+        "map50": "mAP50",
+        "map50_95": "mAP50-95",
+        "per_class": "Per-class metrics",
+    }
+    for key, label in labels.items():
+        value = sources.get(key)
+        if _nonempty(value):
+            rows.append([label, value])
+    if len(rows) == 1 and _nonempty(metrics.get("overall_metric_source")):
+        rows.append(["Overall metrics", metrics.get("overall_metric_source")])
+    if _nonempty(metrics.get("per_class_source")) and not any(row[0] == "Per-class metrics" for row in rows[1:]):
+        rows.append(["Per-class metrics", metrics.get("per_class_source")])
+    roc_note = (metrics.get("roc_auc") or {}).get("note")
+    if _nonempty(roc_note):
+        rows.append(["ROC-AUC", roc_note])
+    return rows if len(rows) > 1 else []
+
+
+def _safe_plot_metric_series(output_path: Path, title: str, ylabel: str, series: list[tuple[str, list[int], list[float]]]) -> bool:
+    series = [(label, epochs, values) for label, epochs, values in series if epochs and values]
+    if not series:
+        return False
+    try:
+        import os
+
+        os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        plt.figure(figsize=(8, 4.8))
+        for label, epochs, values in series:
+            plt.plot(epochs, values, marker="o", linewidth=2, markersize=3, label=label)
+        plt.title(title)
+        plt.xlabel("Epoch")
+        plt.ylabel(ylabel)
+        plt.grid(True, alpha=0.25)
+        plt.legend()
+        plt.tight_layout()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(output_path, dpi=160)
+        plt.close()
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_report_metric_plots(run_dir: Path, metrics: dict) -> None:
+    history = metrics.get("history") or []
+    if not history:
+        return
+    metric_path = run_dir / "accuracy_by_epoch.png"
+    if not metric_path.is_file():
+        map50_epochs, map50_values = [], []
+        map95_epochs, map95_values = [], []
+        for row in history:
+            epoch = _to_int(row.get("epoch"))
+            if epoch is None:
+                continue
+            map50 = _to_float(row.get("map50"))
+            map95 = _to_float(row.get("map50_95"))
+            if map50 is not None:
+                map50_epochs.append(epoch)
+                map50_values.append(map50)
+            if map95 is not None:
+                map95_epochs.append(epoch)
+                map95_values.append(map95)
+        _safe_plot_metric_series(
+            metric_path,
+            f"{metrics.get('metric_label') or 'Detection performance'} by epoch",
+            metrics.get("metric_label") or "Metric",
+            [("mAP50", map50_epochs, map50_values), ("mAP50-95", map95_epochs, map95_values)],
+        )
+
+    loss_path = run_dir / "loss_by_epoch.png"
+    if not loss_path.is_file():
+        train_epochs, train_values = [], []
+        val_epochs, val_values = [], []
+        for row in history:
+            epoch = _to_int(row.get("epoch"))
+            if epoch is None:
+                continue
+            train_loss = _to_float(row.get("training_loss"))
+            val_loss = _to_float(row.get("testing_loss"))
+            if train_loss is not None:
+                train_epochs.append(epoch)
+                train_values.append(train_loss)
+            if val_loss is not None:
+                val_epochs.append(epoch)
+                val_values.append(val_loss)
+        _safe_plot_metric_series(
+            loss_path,
+            "Training and validation loss by epoch",
+            "Loss",
+            [("Training loss", train_epochs, train_values), ("Validation loss", val_epochs, val_values)],
+        )
 
 
 def _dataset_root(yaml_path: Path, config: dict) -> Path:
@@ -683,7 +940,7 @@ def _add_dataset(builder: _ReportBuilder, run_dir: Path, context: dict):
     builder.table([
         ["Dataset YAML", yaml_value or "Unavailable"],
         ["Dataset root", summary.get("dataset_root", "Unavailable")],
-        ["Exported images used by YOLOv8", summary.get("total_images", "N/A")],
+        [_exported_training_images_label(), summary.get("total_images", "N/A")],
         ["Classes", summary.get("class_count", len(summary.get("classes") or []))],
         ["Split strategy", summary.get("split_strategy", "N/A")],
         ["Split seed", summary.get("split_seed", "N/A")],
@@ -783,6 +1040,7 @@ def _add_executive_summary(
 
 def _add_model_dataset_overview(builder: _ReportBuilder, context: dict):
     summary = context.get("dataset_summary") or {}
+    family = _report_family(context)
     pre_augmentation = summary.get("pre_augmentation") or {}
     ratios = summary.get("split_ratios") or {}
     splits = summary.get("splits") or {}
@@ -792,9 +1050,10 @@ def _add_model_dataset_overview(builder: _ReportBuilder, context: dict):
     builder.paragraph(_text(_dataset_summary_text(context)))
     rows = [
         ["Item", "Value"],
-        ["YOLOv8 model variant", context.get("model", "N/A")],
+        ["Model family", _backend_display_name(family)],
+        ["Model variant", context.get("model", "N/A")],
         ["Original images", pre_augmentation.get("total_images", "Unavailable")],
-        ["Exported images used by YOLOv8", summary.get("total_images", "N/A")],
+        [_exported_training_images_label(), summary.get("total_images", "N/A")],
         ["Augmentation multiplier", pre_augmentation.get("augmentation_multiplier", "N/A")],
         ["Dataset source", context.get("dataset_source", "Prepared dataset")],
         ["Dataset version", context.get("dataset_version", "N/A")],
@@ -868,6 +1127,7 @@ def _add_training_configuration(builder: _ReportBuilder, run_dir: Path, context:
 
 def _add_training_behaviour(builder: _ReportBuilder, run_dir: Path, metrics: dict):
     labels = _metric_labels(metrics)
+    _ensure_report_metric_plots(run_dir, metrics)
     builder.heading("Training Behaviour")
     builder.paragraph(_text(_training_behaviour_text(metrics)))
     best = metrics.get("best") or {}
@@ -896,6 +1156,7 @@ def _add_training_behaviour(builder: _ReportBuilder, run_dir: Path, metrics: dic
 
 def _add_validation_performance(builder: _ReportBuilder, run_dir: Path, metrics: dict):
     labels = _metric_labels(metrics)
+    family = _report_family(metrics=metrics)
     builder.heading("Validation Performance")
     builder.table([
         ["Metric", "Final validation value"],
@@ -906,12 +1167,9 @@ def _add_validation_performance(builder: _ReportBuilder, run_dir: Path, metrics:
         ["Macro F1", _metric(metrics.get("macro_f1"))],
         ["Weighted F1", _metric(metrics.get("weighted_f1"))],
     ], widths=[90 * builder.mm, 85 * builder.mm])
-    if metrics.get("backend") == "rfdetr":
+    if family in {"dfine", "rfdetr"} and metrics.get("per_class_note"):
         builder.paragraph(
-            _text(
-                metrics.get("per_class_note")
-                or "RF-DETR metrics are parsed from Lightning/RF-DETR validation logs. ROC-AUC is not generated by this backend."
-            ),
+            _text(metrics.get("per_class_note")),
             "Small",
         )
 
@@ -927,11 +1185,11 @@ def _add_validation_performance(builder: _ReportBuilder, run_dir: Path, metrics:
             "Small",
         )
     if classes:
-        builder.table(
-            [["Class", "Instances", "Precision", "Recall", "F1", "AP50", "AP50-95"]]
-            + [[row.get("class_name"), row.get("instances", 0), _metric(row.get("precision")), _metric(row.get("recall")), _metric(row.get("f1")), _metric(row.get("map50")), _metric(row.get("map50_95"))] for row in classes],
-            widths=[40 * builder.mm, 22 * builder.mm, 23 * builder.mm, 22 * builder.mm, 21 * builder.mm, 23 * builder.mm, 25 * builder.mm],
-        )
+        rows, widths = _per_class_table_rows(metrics)
+        if rows:
+            builder.table(rows, widths=[width * builder.mm for width in widths])
+        elif metrics.get("per_class_note"):
+            builder.paragraph(_text(metrics.get("per_class_note")), "Small")
 
     for filename, caption in (
         ("confusion_matrix_normalized.png", "Normalized validation confusion matrix"),
@@ -955,7 +1213,12 @@ def _add_validation_performance(builder: _ReportBuilder, run_dir: Path, metrics:
             builder.image(roc_path)
 
 
-def _add_qualitative_results(builder: _ReportBuilder, run_dir: Path, test_dir: Path | None = None):
+def _add_qualitative_results(
+    builder: _ReportBuilder,
+    run_dir: Path,
+    test_dir: Path | None = None,
+    metrics: dict | None = None,
+):
     builder.heading("Qualitative Results")
     candidates = []
     for directory, label in ((run_dir, "Validation"), (test_dir, "Test")):
@@ -965,9 +1228,17 @@ def _add_qualitative_results(builder: _ReportBuilder, run_dir: Path, test_dir: P
             for path in sorted(directory.glob(pattern))[:2]:
                 candidates.append((path, f"{label} example: {path.name}"))
     if not candidates:
-        builder.paragraph(
-            "No representative prediction images were available. Review confusion matrices and per-class metrics for error analysis."
-        )
+        family = _report_family(metrics=metrics)
+        if family in {"dfine", "rfdetr"}:
+            builder.paragraph(
+                f"No representative prediction images were available for this {_backend_display_name(family)} training run. "
+                "Training-only reports include prediction examples only when validation visualization artifacts exist; "
+                "use Model Testing for test-set prediction artifacts."
+            )
+        else:
+            builder.paragraph(
+                "No representative prediction images were available. Review confusion matrices and per-class metrics for error analysis."
+            )
         return
     for path, caption in candidates[:6]:
         builder.heading(caption, 3)
@@ -1029,27 +1300,26 @@ def _add_technical_appendix(
         ["Completed epoch", metrics.get("epoch")],
     ], widths=[45 * builder.mm, 130 * builder.mm])
 
-    environment = context.get("environment") or {}
-    if environment:
-        gpu_names = ", ".join(str(item.get("name")) for item in environment.get("gpus", []) if item.get("name")) or "Unavailable"
+    environment_rows = _runtime_environment_rows(context)
+    if environment_rows:
         builder.heading("Runtime Environment", 3)
-        builder.table([
-            ["Python", environment.get("python")],
-            ["Ultralytics", environment.get("ultralytics")],
-            ["PyTorch", environment.get("torch")],
-            ["GPU", gpu_names],
-            ["Platform", environment.get("platform")],
-        ], widths=[45 * builder.mm, 130 * builder.mm], header=False)
+        builder.table(environment_rows, widths=[45 * builder.mm, 130 * builder.mm], header=False)
+
+    metric_source_rows = _metric_source_rows(metrics)
+    if metric_source_rows:
+        builder.heading("Metric Sources", 3)
+        builder.table(metric_source_rows, widths=[55 * builder.mm, 120 * builder.mm])
 
     builder.heading("Complete Hyperparameters")
-    hyperparameters = context.get("hyperparameters") or _load_yaml(run_dir / "args.yaml")
-    ignored = {"dataset_yaml"}
-    rows = [["Parameter", "Value"]] + [[key, value] for key, value in sorted(hyperparameters.items()) if key not in ignored]
+    hyperparameters = _filtered_hyperparameters(context, run_dir)
+    rows = [["Parameter", "Value"]] + [[key, value] for key, value in sorted(hyperparameters.items())]
     builder.table(rows, widths=[70 * builder.mm, 105 * builder.mm])
 
     _add_dataset(builder, run_dir, context)
 
+    _ensure_report_metric_plots(run_dir, metrics)
     builder.heading("Additional Training Plots")
+    found_plot = False
     for filename, caption in (
         ("accuracy_by_epoch.png", "Detection performance by epoch"),
         ("loss_by_epoch.png", "Training and validation loss by epoch"),
@@ -1059,8 +1329,13 @@ def _add_technical_appendix(
     ):
         path = run_dir / filename
         if path.is_file():
+            found_plot = True
             builder.heading(caption, 3)
             builder.image(path)
+    if not found_plot:
+        builder.paragraph(
+            "No additional training plots were available for this run. Some backends only expose scalar metrics unless plot artifacts are generated during training or testing."
+        )
 
     if test_dir and test_metrics:
         builder.heading("Test Run Metadata")
@@ -1097,7 +1372,7 @@ def _add_training(
     _add_training_configuration(builder, run_dir, context)
     _add_training_behaviour(builder, run_dir, metrics)
     _add_validation_performance(builder, run_dir, metrics)
-    _add_qualitative_results(builder, run_dir)
+    _add_qualitative_results(builder, run_dir, metrics=metrics)
     if include_conclusion:
         _add_conclusion_and_recommendation(builder, context, metrics, test_metrics)
     if include_appendix:
@@ -1182,11 +1457,11 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
                 ),
                 "Small",
             )
-        builder.table(
-            [["Class", "Instances", "Precision", "Recall", "F1", "AP50", "AP50-95"]]
-            + [[row.get("class_name"), row.get("instances", 0), _metric(row.get("precision")), _metric(row.get("recall")), _metric(row.get("f1")), _metric(row.get("map50")), _metric(row.get("map50_95"))] for row in classes],
-            widths=[40 * builder.mm, 22 * builder.mm, 23 * builder.mm, 22 * builder.mm, 21 * builder.mm, 23 * builder.mm, 25 * builder.mm],
-        )
+        rows, widths = _per_class_table_rows(metrics)
+        if rows:
+            builder.table(rows, widths=[width * builder.mm for width in widths])
+        elif metrics.get("per_class_note"):
+            builder.paragraph(_text(metrics.get("per_class_note")), "Small")
     auc_classes = (metrics.get("roc_auc") or {}).get("classes") or []
     if auc_classes:
         builder.heading("Per-Class Test ROC-AUC")

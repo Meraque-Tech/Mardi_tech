@@ -594,9 +594,19 @@ class CollapsibleSectionTests(unittest.TestCase):
         source = REPORT_GENERATOR.read_text(encoding="utf-8")
 
         self.assertIn('family == "rfdetr"', source)
+        self.assertIn('family == "dfine"', source)
         self.assertIn('("Weight decay", "weight_decay")', source)
         self.assertIn('("Warmup epochs", "warmup_epochs")', source)
-        self.assertIn('if family == "rfdetr":\n        return rows', source)
+        self.assertIn('if family in {"dfine", "rfdetr"}:', source)
+        self.assertIn('"Exported images used for training"', source)
+        self.assertNotIn('["YOLOv8 model variant"', source)
+        self.assertNotIn('["Exported images used by YOLOv8"', source)
+        self.assertIn("def _runtime_environment_rows", source)
+        self.assertIn("def _filtered_hyperparameters", source)
+        self.assertIn("def _metric_source_rows", source)
+        self.assertIn("def _per_class_table_rows", source)
+        self.assertIn('"D-FINE repo"', source)
+        self.assertIn('"RF-DETR"', source)
 
     def test_report_downloads_use_response_filename(self):
         script = APP_JS.read_text(encoding="utf-8")
