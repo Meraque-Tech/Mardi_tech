@@ -188,6 +188,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         script = APP_JS.read_text(encoding="utf-8")
         app_source = APP_PY.read_text(encoding="utf-8")
         train_source = (WEB_DIR.parent / "train" / "train_dfine.py").read_text(encoding="utf-8")
+        test_source = (WEB_DIR.parent / "train" / "test_dfine.py").read_text(encoding="utf-8")
         infer_source = (WEB_DIR / "infer_dfine.py").read_text(encoding="utf-8")
 
         self.assertIn('optgroup label="Detection - D-FINE"', markup)
@@ -210,6 +211,19 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("current_step", app_source)
         self.assertIn("progress_percent", app_source)
         self.assertIn("dfine_progress_marker", train_source)
+        self.assertIn("generate_dfine_report_artifacts", train_source)
+        self.assertIn("validation_metrics.json", train_source)
+        self.assertIn("generate_report_artifacts=True", train_source)
+        self.assertIn("generate_dfine_report_artifacts", app_source)
+        self.assertIn("dfine_report_artifacts_ready", app_source)
+        self.assertIn("ensure_dfine_report_artifacts_for_report", app_source)
+        self.assertIn("ensure_model_report_artifacts_for_report(run_dir)", app_source)
+        self.assertIn('float_value(web_overall, "precision")', app_source)
+        self.assertIn('float_value(web_overall, "map50_95")', app_source)
+        self.assertIn("YAMLConfig", test_source)
+        self.assertIn("confusion_matrix_counts", test_source)
+        self.assertIn("save_qualitative_artifacts", test_source)
+        self.assertIn("merge_post_training_validation_metrics", train_source)
 
     def test_rfdetr_progress_and_results_refresh_are_supported(self):
         script = APP_JS.read_text(encoding="utf-8")
@@ -628,8 +642,8 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('responseDownloadFilename(response, "training_and_test_report.pdf")', script)
         self.assertNotIn('saveBlobWithBrowserDownload(await response.blob(), "training_report.pdf")', script)
         self.assertNotIn('saveBlobWithBrowserDownload(await response.blob(), "training_and_test_report.pdf")', script)
-        self.assertIn("ensure_rfdetr_report_artifacts_for_report(run_dir)\n    metrics = read_run_metrics(run_dir)", app_source)
-        self.assertIn("ensure_rfdetr_report_artifacts_for_report(training_dir)\n    training_metrics_payload = read_run_metrics(training_dir)", app_source)
+        self.assertIn("ensure_model_report_artifacts_for_report(run_dir)\n    metrics = read_run_metrics(run_dir)", app_source)
+        self.assertIn("ensure_model_report_artifacts_for_report(training_dir)\n    training_metrics_payload = read_run_metrics(training_dir)", app_source)
 
 
 if __name__ == "__main__":

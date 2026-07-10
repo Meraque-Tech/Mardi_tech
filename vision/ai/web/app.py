@@ -33,6 +33,7 @@ from .infer_yolo import InferenceStopped, run_yolo_inference
 from .infer_rfdetr import run_rfdetr_inference
 from .infer_dfine import run_dfine_inference
 from .stratified_split import SPLIT_NAMES, stratified_split
+from vision.ai.train.train_dfine import generate_dfine_report_artifacts
 from vision.ai.train.train_rfdetr import RFDETR_RUN_LOG, finalize_rfdetr_artifacts, generate_rfdetr_report_artifacts
 
 
@@ -2398,6 +2399,15 @@ def is_rfdetr_run(run_dir: Path) -> bool:
     return family == "rfdetr"
 
 
+def is_dfine_run(run_dir: Path) -> bool:
+    parts = {part.lower() for part in run_dir.parts}
+    if "dfine" in parts:
+        return True
+    context = read_json_object(run_dir / TRAINING_REPORT_CONTEXT_FILE)
+    family = str(context.get("family") or context.get("hyperparameters", {}).get("family") or "").lower()
+    return family == "dfine"
+
+
 def rfdetr_class_names_from_context(context: dict) -> list[str]:
     summary = context.get("dataset_summary") if isinstance(context.get("dataset_summary"), dict) else {}
     classes = summary.get("classes")
@@ -2529,6 +2539,34 @@ def rfdetr_report_weights_available(run_dir: Path) -> bool:
     return (run_dir / "weights" / "best.pt").is_file() or (run_dir / "weights" / "last.pt").is_file()
 
 
+def dfine_report_artifacts_ready(run_dir: Path) -> bool:
+    return (
+        (run_dir / "validation_metrics.json").is_file()
+        and (run_dir / "confusion_matrix.png").is_file()
+        and (run_dir / "confusion_matrix_normalized.png").is_file()
+        and any(run_dir.glob("val_batch*_pred.jpg"))
+        and any(run_dir.glob("val_batch*_labels.jpg"))
+    )
+
+
+def dfine_report_dataset_yaml(run_dir: Path, context: dict | None = None) -> Path | None:
+    context = context if isinstance(context, dict) else load_training_report_context(run_dir)
+    dataset_value = context.get("dataset_yaml")
+    if not dataset_value:
+        return None
+    dataset_path = Path(str(dataset_value)).expanduser()
+    if not dataset_path.is_absolute():
+        dataset_path = (REPO_ROOT / dataset_path).resolve()
+    return dataset_path if dataset_path.is_file() else None
+
+
+def dfine_report_weights_available(run_dir: Path) -> bool:
+    return (
+        ((run_dir / "weights" / "best.pt").is_file() or (run_dir / "weights" / "last.pt").is_file())
+        and (run_dir / "dfine_web_config.yml").is_file()
+    )
+
+
 def ensure_rfdetr_report_artifacts_for_report(run_dir: Path) -> bool:
     if not is_rfdetr_run(run_dir):
         return False
@@ -2556,6 +2594,39 @@ def ensure_rfdetr_report_artifacts_for_report(run_dir: Path) -> bool:
     except Exception:
         return False
     return rfdetr_report_artifacts_ready(run_dir)
+
+
+def ensure_dfine_report_artifacts_for_report(run_dir: Path) -> bool:
+    if not is_dfine_run(run_dir):
+        return False
+    if dfine_report_artifacts_ready(run_dir):
+        return True
+    if current_status()["running"]:
+        return False
+
+    existing_metrics = read_web_metrics(run_dir)
+    if existing_metrics.get("training_completed") is False:
+        return False
+    if not dfine_report_weights_available(run_dir):
+        return False
+
+    context = load_training_report_context(run_dir)
+    dataset_yaml = dfine_report_dataset_yaml(run_dir, context)
+    if dataset_yaml is None:
+        return False
+
+    try:
+        generate_dfine_report_artifacts(run_dir, dataset_yaml)
+    except Exception:
+        return False
+    return dfine_report_artifacts_ready(run_dir)
+
+
+def ensure_model_report_artifacts_for_report(run_dir: Path) -> bool:
+    return (
+        ensure_rfdetr_report_artifacts_for_report(run_dir)
+        or ensure_dfine_report_artifacts_for_report(run_dir)
+    )
 
 
 def read_run_metrics(run_dir: Path) -> dict:
@@ -2589,6 +2660,11 @@ def read_run_metrics(run_dir: Path) -> dict:
     map50_95 = float_value(row, profile["map50_95_key"]) if profile.get("map50_95_key") else None
     web_metrics = read_web_metrics(run_dir)
     backend = web_metrics.get("backend") or family_for_runs_root(run_dir.parent)
+    web_overall = web_metrics.get("overall") if isinstance(web_metrics.get("overall"), dict) else {}
+    precision = precision if precision is not None else float_value(web_overall, "precision")
+    recall = recall if recall is not None else float_value(web_overall, "recall")
+    map50 = map50 if map50 is not None else float_value(web_overall, "map50")
+    map50_95 = map50_95 if map50_95 is not None else float_value(web_overall, "map50_95")
     class_metrics = {
         "macro_f1": web_metrics.get("macro_f1"),
         "weighted_f1": web_metrics.get("weighted_f1"),
@@ -6171,7 +6247,7 @@ def download_combined_test_report():
         )
     training_dir = Path(training_dir_value).expanduser().resolve()
     ensure_runs_path(training_dir)
-    ensure_rfdetr_report_artifacts_for_report(training_dir)
+    ensure_model_report_artifacts_for_report(training_dir)
     training_metrics_payload = read_run_metrics(training_dir)
     if not training_metrics_payload.get("available"):
         raise HTTPException(status_code=409, detail="The linked training run has no completed metrics.")
@@ -6540,7 +6616,7 @@ def download_training_report(request: WeightRequest):
     if current_status()["running"]:
         raise HTTPException(status_code=409, detail="Wait for training to finish before generating the report.")
     run_dir = resolve_run_dir(request.project, request.name)
-    ensure_rfdetr_report_artifacts_for_report(run_dir)
+    ensure_model_report_artifacts_for_report(run_dir)
     metrics = read_run_metrics(run_dir)
     if not metrics.get("available"):
         raise HTTPException(status_code=409, detail="The selected training run has no completed metrics.")

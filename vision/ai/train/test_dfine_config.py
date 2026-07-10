@@ -2,11 +2,13 @@
 
 from argparse import Namespace
 import csv
+import json
 
 import yaml
 
 from vision.ai.train.train_dfine import (
     dfine_progress_marker,
+    merge_post_training_validation_metrics,
     parse_dfine_coco_ap_line,
     parse_dfine_progress_line,
     upsert_live_result,
@@ -91,3 +93,54 @@ def test_dfine_live_results_are_preserved_by_finalization(tmp_path):
             "metrics/mAP50-95(B)": "",
         }
     ]
+
+
+def test_dfine_post_training_validation_metrics_fill_web_results(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    write_results_csv(run_dir, 3)
+    (run_dir / "web_metrics.json").write_text(
+        json.dumps({
+            "backend": "dfine",
+            "overall": {"precision": None, "recall": None, "map50": None, "map50_95": None},
+            "per_class": [],
+            "training_completed": True,
+        }),
+        encoding="utf-8",
+    )
+    payload = {
+        "precision": 0.71,
+        "recall": 0.62,
+        "map50": 0.83,
+        "map50_95": 0.41,
+        "macro_f1": 0.66,
+        "weighted_f1": 0.68,
+        "split": "val",
+        "note": "computed",
+        "per_class": [
+            {
+                "class_name": "pothole",
+                "precision": 0.71,
+                "recall": 0.62,
+                "f1": 0.66,
+                "map50": 0.83,
+                "map50_95": 0.41,
+            }
+        ],
+        "artifacts": {"confusion_matrix": "confusion_matrix.png"},
+    }
+
+    merge_post_training_validation_metrics(run_dir, payload)
+
+    with (run_dir / "results.csv").open("r", encoding="utf-8", newline="") as file:
+        row = list(csv.DictReader(file))[-1]
+    assert row["metrics/precision(B)"] == "0.71"
+    assert row["metrics/recall(B)"] == "0.62"
+    assert row["metrics/mAP50(B)"] == "0.83"
+    assert row["metrics/mAP50-95(B)"] == "0.41"
+
+    web_metrics = yaml.safe_load((run_dir / "web_metrics.json").read_text(encoding="utf-8"))
+    assert web_metrics["overall"]["source"] == "post_training_validation"
+    assert web_metrics["per_class_source"] == "post_training_validation"
+    assert web_metrics["macro_f1"] == 0.66
+    assert web_metrics["weighted_f1"] == 0.68
