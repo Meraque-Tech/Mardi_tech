@@ -89,6 +89,8 @@ class TrainingSession:
         self.thread = None
         self.lock = threading.Lock()
         self.status = {"running": False, "epoch": 0, "step": 0, "paused": False}
+        self.module = None  # last-built model, kept around so "Test" can re-evaluate without retraining
+        self.bundle = None
 
     def start(self):
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -136,6 +138,8 @@ class TrainingSession:
             opt = make_optimizer(module.parameters(), optimizer_cfg)
             loss_fn = make_loss(loss_cfg)
             bundle = build_dataset(dataset_cfg)
+            self.module = module
+            self.bundle = bundle
             epochs = int(tc.get("epochs", 20))
             progress_every = int(tc.get("progress_every", 1))
             grad_clip_norm = float(tc.get("grad_clip_norm", 0.0))
@@ -212,12 +216,8 @@ class TrainingSession:
                             early_stopped = True
                             break
 
-            if not self._stop.is_set() and bundle.val_loader is not None and is_classification_task(bundle.task):
-                eval_metrics = evaluate_classification(module, bundle.val_loader, bundle.num_classes)
-                if eval_metrics is not None:
-                    if bundle.task == "image":
-                        eval_metrics["samples"] = collect_image_samples(module, bundle.val_loader)
-                    self.on_message("train/eval", {"session_id": self.session_id, **eval_metrics})
+            if not self._stop.is_set():
+                self.evaluate_now()
 
             self.on_message("train/done", {
                 "session_id": self.session_id, "final_epoch": epoch, "early_stopped": early_stopped,
@@ -227,6 +227,26 @@ class TrainingSession:
         finally:
             with self.lock:
                 self.status["running"] = False
+
+    def evaluate_now(self):
+        """Re-runs test-set evaluation against whatever model is currently
+        built (the last completed/in-progress training run), without
+        retraining. Powers the UI's on-demand "Test" button as well as the
+        automatic post-training evaluation above."""
+        if self.module is None or self.bundle is None:
+            return {"ok": False, "error": "No trained model yet — press Play at least once first."}
+        if self.bundle.val_loader is None:
+            return {"ok": False, "error": "No held-out split to test against (train_ratio was 1.0)."}
+        if not is_classification_task(self.bundle.task):
+            return {"ok": False, "error": f"Test-set evaluation isn't computed for task '{self.bundle.task}'."}
+
+        eval_metrics = evaluate_classification(self.module, self.bundle.val_loader, self.bundle.num_classes)
+        if eval_metrics is None:
+            return {"ok": False, "error": "Held-out split is empty."}
+        if self.bundle.task == "image":
+            eval_metrics["samples"] = collect_image_samples(self.module, self.bundle.val_loader)
+        self.on_message("train/eval", {"session_id": self.session_id, **eval_metrics})
+        return {"ok": True}
 
     def _evaluate(self, module, loss_fn, bundle):
         module.eval()

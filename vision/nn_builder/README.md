@@ -138,6 +138,14 @@ MNIST, `sequence_classify`) with:
   is the "let me actually see what the model classified" view — the numbers
   above tell you *how much* it got wrong, this shows *what*.
 
+There's also a standalone **Test** button next to Play/Pause/Step/Stop that
+re-runs this same evaluation against whatever model is currently built,
+without retraining — useful for re-checking after tweaking something that
+doesn't affect the weights, or repeatedly sanity-checking mid-experimentation.
+It calls `POST /api/train/evaluate`, which reuses the last-built model kept on
+the `TrainingSession` (`nn_graph/trainer.py`'s `evaluate_now()`); it errors
+cleanly (no crash) if nothing has been trained yet this session.
+
 This is computed server-side in [nn_graph/metrics.py](nn_graph/metrics.py) and
 streamed once over `/ws` as `train/eval` right before `train/done`. The
 exported standalone `train.py` ([codegen.py](nn_graph/codegen.py)) prints the

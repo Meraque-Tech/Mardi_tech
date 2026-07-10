@@ -62,6 +62,9 @@ export class TrainingPanel {
           <button class="btn" id="btn-step">${icon("step")} Step</button>
           <button class="btn danger" id="btn-stop">${icon("stop")} Stop</button>
         </div>
+        <div class="controls-row">
+          <button class="btn" id="btn-test" title="Re-evaluate the current model on the held-out split, without retraining">${icon("test")} Test</button>
+        </div>
       </div>
       <div id="training-viz">
         <div class="stat-tiles">
@@ -199,6 +202,16 @@ export class TrainingPanel {
     this.root.querySelector("#btn-pause").addEventListener("click", () => api.trainPause());
     this.root.querySelector("#btn-step").addEventListener("click", () => api.trainStep());
     this.root.querySelector("#btn-stop").addEventListener("click", () => api.trainStop());
+    this.root.querySelector("#btn-test").addEventListener("click", async () => {
+      const btn = this.root.querySelector("#btn-test");
+      btn.disabled = true;
+      try {
+        const res = await api.trainEvaluate();
+        if (!res.ok) this._error([{ message: res.error || "Test failed" }]);
+      } finally {
+        btn.disabled = false;
+      }
+    });
   }
 
   _error(errors) {
@@ -265,6 +278,7 @@ const ICONS = {
   pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>',
   step: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l8 7-8 7zM16 5h2v14h-2z"/></svg>',
   stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>',
+  test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3h6M10 3v5.5L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8.5V3"/><path d="M7.5 14h9"/></svg>',
 };
 function icon(name) {
   return ICONS[name] || "";

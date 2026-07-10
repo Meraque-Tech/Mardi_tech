@@ -236,6 +236,15 @@ def train_step():
     return _with_session(lambda s: s.step())
 
 
+@app.post("/api/train/evaluate")
+def train_evaluate():
+    with _session_lock:
+        if _session is None:
+            return jsonify({"ok": False, "error": "No trained model yet — press Play at least once first."}), 409
+        result = _session.evaluate_now()
+        return jsonify(result), (200 if result.get("ok") else 400)
+
+
 @app.get("/api/train/status")
 def train_status():
     if _session is None:

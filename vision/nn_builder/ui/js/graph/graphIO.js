@@ -55,6 +55,9 @@ export function trainResume() {
 export function trainStep() {
   return postJSON("/api/train/step", {});
 }
+export function trainEvaluate() {
+  return postJSON("/api/train/evaluate", {});
+}
 export async function trainStatus() {
   const res = await fetch("/api/train/status");
   return res.json();
