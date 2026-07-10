@@ -272,7 +272,8 @@ def graph_to_train_py(graph, train_config=None):
         node = module.node_by_id[nid]
         if node["type"] in CONFIG_TYPES:
             continue
-        mod = module._mods.get(_key(nid))  # noqa: SLF001 - internal but same-package
+        mkey = _key(nid)
+        mod = module._mods[mkey] if mkey in module._mods else None  # noqa: SLF001 - internal but same-package
         ctor = _ctor_line(nid, node, mod)
         if ctor:
             ctor_lines.append("        " + ctor)

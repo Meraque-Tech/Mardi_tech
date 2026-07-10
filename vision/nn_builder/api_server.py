@@ -37,7 +37,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 SAVED_GRAPHS_DIR = os.path.join(BASE, "saved_graphs")
 os.makedirs(SAVED_GRAPHS_DIR, exist_ok=True)
 
-app = Flask(__name__, static_folder="ui")
+app = Flask(__name__, static_folder="ui", static_url_path="")
 sock = Sock(app)
 
 ws_clients = []
