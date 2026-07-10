@@ -12,21 +12,24 @@ Endpoints:
   GET  /api/graphs/<name>       load a graph
   DELETE /api/graphs/<name>     delete a graph
   POST /api/train/start         start a background training session
-  POST /api/train/stop|pause|resume|step
+  POST /api/train/stop|pause|resume|step|evaluate
   GET  /api/train/status
+  GET  /api/train/download     download the current model's weights as a .pt file
   WS   /ws                      {topic, data} envelope: train/progress, train/boundary, train/done, train/error
 """
 
 import argparse
+import io
 import json
 import os
 import re
 import threading
 
-from flask import Flask, jsonify, request, send_from_directory
+import torch
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_sock import Sock
 
-from nn_graph.builder import build_module_from_graph
+from nn_graph.builder import build_module_from_graph, export_state_dict
 from nn_graph.catalog import catalog_payload
 from nn_graph.codegen import graph_to_train_py
 from nn_graph.schema import GraphError, graph_from_dict, validate_graph
@@ -250,6 +253,21 @@ def train_status():
     if _session is None:
         return jsonify({"running": False})
     return jsonify({"session_id": _session.session_id, **_session.status})
+
+
+@app.get("/api/train/download")
+def train_download():
+    if _session is None or _session.module is None:
+        return jsonify({"error": "No trained model yet — press Play at least once first."}), 409
+    state_dict = export_state_dict(_session.module)
+    buffer = io.BytesIO()
+    torch.save(state_dict, buffer)
+    buffer.seek(0)
+    name = re.sub(r"[^a-zA-Z0-9_-]", "_", (_session.graph.get("meta") or {}).get("name") or "model")
+    return send_file(
+        buffer, as_attachment=True, download_name=f"{name}_state_dict.pt",
+        mimetype="application/octet-stream",
+    )
 
 
 if __name__ == "__main__":

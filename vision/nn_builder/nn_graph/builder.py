@@ -223,6 +223,43 @@ class GraphModule(nn.Module):
             shapes[nid] = tuple(values[nid].shape)
         return values[self.output_id], shapes, None
 
+    def named_node_modules(self):
+        """Yields (node_id, submodule) pairs using the *inner* module for
+        wrapper types (LazyRecurrent -> its real nn.RNN/LSTM/GRU,
+        SelfAttentionBlock -> its nn.MultiheadAttention), and skipping
+        positional_encoding (a non-trainable buffer with no equivalent
+        submodule in the exported train.py -- see codegen.py). This makes the
+        result line up with the exported script's flat `self.<node_id> = ...`
+        naming, so a downloaded checkpoint's keys (`<node_id>.<param>`) load
+        straight into `GeneratedModel` from Export .py."""
+        for nid, node in self.node_by_id.items():
+            if node["type"] == "positional_encoding":
+                continue
+            key = _key(nid)
+            if key not in self._mods:
+                continue
+            mod = self._mods[key]
+            inner_attr = _INNER_MODULE_ATTR.get(node["type"])
+            if inner_attr is not None:
+                mod = getattr(mod, inner_attr, None)
+                if mod is None:  # e.g. LazyRecurrent never materialized
+                    continue
+            yield nid, mod
+
+
+_INNER_MODULE_ATTR = {"rnn": "rnn", "lstm": "rnn", "gru": "rnn", "multihead_attention": "mha"}
+
+
+def export_state_dict(module):
+    """Flat '<node_id>.<param>' state_dict matching the exported train.py's
+    GeneratedModel class, so `model.load_state_dict(torch.load(path))` works
+    directly there."""
+    out = {}
+    for nid, mod in module.named_node_modules():
+        for pname, pval in mod.state_dict().items():
+            out[f"{nid}.{pname}"] = pval
+    return out
+
 
 def make_dummy_input(input_node, batch=2, device="cpu"):
     params = input_node.get("params", {})

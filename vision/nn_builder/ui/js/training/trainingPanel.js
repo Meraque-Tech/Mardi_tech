@@ -63,7 +63,10 @@ export class TrainingPanel {
           <button class="btn danger" id="btn-stop">${icon("stop")} Stop</button>
         </div>
         <div class="controls-row">
-          <button class="btn" id="btn-test" title="Re-evaluate the current model on the held-out split, without retraining">${icon("test")} Test</button>
+          <button class="btn" id="btn-test" title="Re-evaluate the current model on a fresh random batch, without retraining">${icon("test")} Test</button>
+        </div>
+        <div class="controls-row">
+          <button class="btn" id="btn-download-pt" title="Download the current model's weights as a .pt file">${icon("download")} Download .pt</button>
         </div>
       </div>
       <div id="training-viz">
@@ -212,6 +215,16 @@ export class TrainingPanel {
         btn.disabled = false;
       }
     });
+    this.root.querySelector("#btn-download-pt").addEventListener("click", async () => {
+      const btn = this.root.querySelector("#btn-download-pt");
+      btn.disabled = true;
+      try {
+        const res = await api.downloadCheckpoint();
+        if (!res.ok) this._error([{ message: res.error }]);
+      } finally {
+        btn.disabled = false;
+      }
+    });
   }
 
   _error(errors) {
@@ -279,6 +292,7 @@ const ICONS = {
   step: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l8 7-8 7zM16 5h2v14h-2z"/></svg>',
   stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>',
   test: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3h6M10 3v5.5L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8.5V3"/><path d="M7.5 14h9"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>',
 };
 function icon(name) {
   return ICONS[name] || "";

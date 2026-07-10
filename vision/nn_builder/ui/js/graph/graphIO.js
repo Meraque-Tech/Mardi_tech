@@ -62,3 +62,22 @@ export async function trainStatus() {
   const res = await fetch("/api/train/status");
   return res.json();
 }
+
+export async function downloadCheckpoint() {
+  const res = await fetch("/api/train/download");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    return { ok: false, error: err.error || "Download failed" };
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") || "";
+  const match = /filename="?([^";]+)"?/.exec(cd);
+  const filename = match ? match[1] : "model_state_dict.pt";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  return { ok: true };
+}

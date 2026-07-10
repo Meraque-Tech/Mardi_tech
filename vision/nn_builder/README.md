@@ -165,6 +165,40 @@ dataset/head in this tool yet — if one gets added, it belongs in `metrics.py`
 alongside the classification mAP above, as a distinctly-named metric (the two
 are not interchangeable).
 
+## Downloading trained weights
+
+A **Download .pt** button sits next to Test in the Training tab. It calls
+`GET /api/train/download`, which serializes the current model's weights
+(`torch.save(state_dict, ...)`) and streams them back as an attachment named
+`<graph_name>_state_dict.pt`. Like Test, it needs a model to already exist
+(press Play at least once first) or it errors cleanly instead of crashing.
+
+The checkpoint's keys are deliberately remapped (`nn_graph/builder.py`'s
+`export_state_dict()`) to match the flat `self.<node_id> = ...` naming used by
+the exported `train.py`'s `GeneratedModel` class from **Export .py** — not the
+nested `self._mods["node__<id>"]` naming this tool uses internally. That means
+the two downloads are meant to be used together:
+
+```bash
+# 1. Export .py  -> train.py       (the architecture, as plain PyTorch code)
+# 2. Download .pt -> model_state_dict.pt   (the weights you just trained in the UI)
+
+python3 - <<'EOF'
+import torch
+from train import GeneratedModel
+
+model = GeneratedModel()
+model.load_state_dict(torch.load("model_state_dict.pt"))
+model.eval()
+EOF
+```
+
+This was verified end-to-end: `load_state_dict(..., strict=True)` succeeds
+with zero missing/unexpected keys for CNN, MLP, and residual graphs alike.
+(Positional-encoding nodes are the one deliberate exception — they're
+non-trainable and regenerated deterministically in the exported code, so
+they're excluded from the checkpoint rather than mismatched.)
+
 ## Early stopping, regularization & other training controls
 
 The **Training Config** node (in the Training tab's hyperparameter panel) has:
