@@ -12,6 +12,7 @@ from vision.ai.train.train_rfdetr import (
     write_results_csv,
     write_web_metrics,
 )
+from vision.ai.train.test_rfdetr import class_metrics, summarize_metrics
 
 
 def write_label(path: Path):
@@ -230,3 +231,32 @@ def test_prepare_rfdetr_dataset_keeps_roboflow_style_layout(tmp_path):
     assert (adapter / "train" / "labels").is_dir()
     assert (adapter / "valid" / "images").is_dir()
     assert (adapter / "valid" / "labels").is_dir()
+
+
+def test_rfdetr_test_metrics_match_exact_prediction():
+    predictions = [
+        {
+            "image_index": 0,
+            "class_id": 0,
+            "confidence": 0.9,
+            "box": [10.0, 10.0, 30.0, 30.0],
+        }
+    ]
+    ground_truths = {
+        0: [
+            {
+                "class_id": 0,
+                "box": [10.0, 10.0, 30.0, 30.0],
+            }
+        ]
+    }
+
+    row = class_metrics(0, "pineapple", predictions, ground_truths, 1, 0.25)
+    summary = summarize_metrics([row])
+
+    assert row["precision"] == 1.0
+    assert row["recall"] == 1.0
+    assert row["f1"] == 1.0
+    assert row["map50"] == 1.0
+    assert row["map50_95"] == 1.0
+    assert summary["weighted_f1"] == 1.0

@@ -4665,8 +4665,9 @@ async function downloadTrainingReport() {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.detail || `Report generation failed: ${response.status}`);
     }
-    saveBlobWithBrowserDownload(await response.blob(), "training_report.pdf");
-    setMessage("Downloading training_report.pdf.");
+    const filename = responseDownloadFilename(response, "training_report.pdf");
+    saveBlobWithBrowserDownload(await response.blob(), filename);
+    setMessage(`Downloading ${filename}.`);
   } catch (error) {
     setMessage(error.message, true);
   } finally {
@@ -4869,8 +4870,9 @@ async function downloadCombinedReport() {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.detail || `Report generation failed: ${response.status}`);
     }
-    saveBlobWithBrowserDownload(await response.blob(), "training_and_test_report.pdf");
-    setMessage("Downloading training_and_test_report.pdf.");
+    const filename = responseDownloadFilename(response, "training_and_test_report.pdf");
+    saveBlobWithBrowserDownload(await response.blob(), filename);
+    setMessage(`Downloading ${filename}.`);
   } catch (error) {
     setMessage(error.message, true);
   } finally {

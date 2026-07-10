@@ -42,6 +42,7 @@ TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_yolov8.py"
 RFDETR_TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_rfdetr.py"
 DFINE_TRAIN_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "train_dfine.py"
 TEST_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "test_yolov8.py"
+RFDETR_TEST_SCRIPT = REPO_ROOT / "vision" / "ai" / "train" / "test_rfdetr.py"
 STATIC_DIR = WEB_DIR / "static"
 LOG_DIR = WEB_DIR / "logs"
 LOG_FILE = LOG_DIR / "current.log"
@@ -561,6 +562,13 @@ def training_report_download_filename(run_dir: Path) -> str:
     if match is None:
         return "training_report.pdf"
     return f"training_report_{match.group('timestamp')}.pdf"
+
+
+def combined_report_download_filename(test_dir: Path) -> str:
+    match = TIMESTAMPED_RUN_SUFFIX_RE.match(test_dir.name)
+    if match is None:
+        return "training_and_test_report.pdf"
+    return f"training_and_test_report_{match.group('timestamp')}.pdf"
 
 
 def is_known_training_project_default(project: str) -> bool:
@@ -2471,6 +2479,7 @@ def ensure_rfdetr_web_artifacts(run_dir: Path, force: bool = False):
     if log_path is None:
         return
     context = read_json_object(run_dir / TRAINING_REPORT_CONTEXT_FILE)
+    existing_metrics = read_web_metrics(run_dir)
     try:
         finalize_rfdetr_artifacts(
             run_dir,
@@ -2479,7 +2488,7 @@ def ensure_rfdetr_web_artifacts(run_dir: Path, force: bool = False):
             epochs=rfdetr_epochs_from_context(context),
             log_path=log_path,
             dataset_audit=rfdetr_dataset_audit_from_context(context),
-            training_completed=None,
+            training_completed=existing_metrics.get("training_completed"),
             quiet=True,
         )
     except Exception:
@@ -2539,12 +2548,16 @@ def read_run_metrics(run_dir: Path) -> dict:
         else "Macro and weighted F1 are calculated from final per-class validation rows when available. "
         + loss_note(losses)
     )
+    training_completed = web_metrics.get("training_completed")
+    if training_completed is False:
+        metrics_note = "Training did not complete successfully; checkpoints and metrics may be partial. " + metrics_note
 
     return {
         "available": True,
         "run_dir": str(run_dir),
         "results_csv": str(results_path),
         "backend": backend,
+        "training_completed": training_completed,
         "per_class_source": web_metrics.get("per_class_source"),
         "per_class_note": web_metrics.get("per_class_note"),
         "epoch": int(float_value(row, "epoch") or 0),
@@ -5745,6 +5758,25 @@ def start_test(
     else:
         raise HTTPException(status_code=400, detail="Unknown weight source.")
 
+    test_backend = family_for_weight_path(weights_path) if source_training_run else "ultralytics"
+    if test_backend == "dfine":
+        raise HTTPException(
+            status_code=400,
+            detail="Model Testing is not available for D-FINE weights yet.",
+        )
+    if test_backend not in {"ultralytics", "rfdetr"}:
+        test_backend = "ultralytics"
+    if test_backend == "rfdetr" and source_training_run:
+        training_metrics = read_web_metrics(source_training_run)
+        if training_metrics.get("training_completed") is False:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "This RF-DETR run did not complete successfully. "
+                    "Resume training or choose a completed RF-DETR run before testing."
+                ),
+            )
+
     if dataset_source == "prepared":
         if not prepared_dataset_yaml:
             raise HTTPException(status_code=400, detail="Prepare a dataset before using the prepared test split.")
@@ -5800,6 +5832,7 @@ def start_test(
         "run_dir": "",
         "weights_source": weight_source,
         "weights_label": weights_label,
+        "backend": test_backend,
         "dataset_source": dataset_source,
         "dataset_yaml": str(dataset_yaml),
         "dataset_root": dataset_info.get("dataset_root", ""),
@@ -5813,6 +5846,7 @@ def start_test(
             "weights_label": weights_label,
             "weights_path": str(weights_path),
             "training_run_dir": str(source_training_run) if source_training_run else "",
+            "backend": test_backend,
             "dataset_source": dataset_source,
             "dataset_yaml": str(dataset_yaml),
             "dataset_root": dataset_info.get("dataset_root", ""),
@@ -5829,9 +5863,10 @@ def start_test(
     TEST_LOG_FILE.write_text("", encoding="utf-8")
     timestamp = datetime.now(MYT).strftime("%Y%m%d-%H%M%S")
     test_log_file = LOG_DIR / f"test-{timestamp}.log"
+    test_script = RFDETR_TEST_SCRIPT if test_backend == "rfdetr" else TEST_SCRIPT
     cmd = [
         TRAINING_PYTHON,
-        str(TEST_SCRIPT),
+        str(test_script),
         "--weights",
         str(weights_path),
         "--data",
@@ -5858,6 +5893,7 @@ def start_test(
         "Model testing started.\n"
         f"Command: {' '.join(cmd)}\n"
         f"Weights: {weights_label}\n"
+        f"Backend: {test_backend}\n"
         f"Dataset: {dataset_info.get('source_split', 'test')} split from {dataset_info.get('dataset_root', dataset_yaml)}\n\n"
     )
     TEST_LOG_FILE.write_text(header, encoding="utf-8")
@@ -5981,7 +6017,11 @@ def download_combined_test_report():
         raise HTTPException(status_code=500, detail="PDF reporting requires the reportlab dependency. Rebuild the container image.") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not generate the combined report: {exc}") from exc
-    return FileResponse(report_path, media_type="application/pdf", filename="training_and_test_report.pdf")
+    return FileResponse(
+        report_path,
+        media_type="application/pdf",
+        filename=combined_report_download_filename(test_dir),
+    )
 
 
 @app.get("/api/test/artifacts/view/{artifact}")

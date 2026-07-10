@@ -171,6 +171,11 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('projectTask: "rfdetr"', script)
         self.assertIn('"compute_val_loss": True', train_source)
         self.assertIn("model.train(**supported_train_kwargs(model, train_kwargs))", train_source)
+        self.assertIn("RFDETR_TEST_SCRIPT", app_source)
+        self.assertIn('test_backend == "rfdetr"', app_source)
+        self.assertIn("test_rfdetr.py", app_source)
+        self.assertIn('training_metrics.get("training_completed") is False', app_source)
+        self.assertIn('training_completed=existing_metrics.get("training_completed")', app_source)
 
     def test_dfine_nano_backend_is_exposed_with_backend_specific_controls(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
@@ -587,6 +592,14 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('("Weight decay", "weight_decay")', source)
         self.assertIn('("Warmup epochs", "warmup_epochs")', source)
         self.assertIn('if family == "rfdetr":\n        return rows', source)
+
+    def test_report_downloads_use_response_filename(self):
+        script = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn('responseDownloadFilename(response, "training_report.pdf")', script)
+        self.assertIn('responseDownloadFilename(response, "training_and_test_report.pdf")', script)
+        self.assertNotIn('saveBlobWithBrowserDownload(await response.blob(), "training_report.pdf")', script)
+        self.assertNotIn('saveBlobWithBrowserDownload(await response.blob(), "training_and_test_report.pdf")', script)
 
 
 if __name__ == "__main__":
