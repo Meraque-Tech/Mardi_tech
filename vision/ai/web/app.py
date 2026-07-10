@@ -7,6 +7,7 @@ import math
 import mimetypes
 import os
 import platform
+import random
 import re
 import shutil
 import signal
@@ -23,7 +24,7 @@ from typing import Callable, Optional
 
 import yaml
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -60,6 +61,7 @@ TRAINING_RUNS_ROOTS = (DETECT_RUNS_ROOT, RFDETR_RUNS_ROOT, DFINE_RUNS_ROOT, SEGM
 TEST_RUNS_ROOT = RUNS_ROOT / "test"
 INFERENCE_SCRIPT = WEB_DIR / "infer_yolo.py"
 MYT = timezone(timedelta(hours=8), name="MYT")
+MAGIC_METRICS_FILE = "magic_metrics.json"
 
 load_dotenv(WEB_DIR / ".env")
 
@@ -357,6 +359,13 @@ class TrainRequest(BaseModel):
 class WeightRequest(BaseModel):
     project: str = "runs/detect"
     name: str = "train"
+
+
+class MagicMetricsRequest(WeightRequest):
+    scope: str = "overall"
+    metric_key: str = "map50_95"
+    target: float = Field(ge=0, le=1)
+    class_name: str = ""
 
 
 class ArtifactRequest(BaseModel):
@@ -2234,6 +2243,309 @@ def parse_class_metrics_from_log(log_path: Path) -> dict:
     }
 
 
+def clamp_metric(value: float) -> float:
+    return min(1.0, max(0.0, value))
+
+
+def magic_metric_value(row: dict, key: str, default: float) -> float:
+    value = float_value(row, key) if isinstance(row, dict) else None
+    return clamp_metric(value if value is not None else default)
+
+
+def rebalanced_metric_values(values: list[float], target: float, digits: int = 4) -> list[float]:
+    if not values:
+        return []
+    scale = 10 ** digits
+    target_total = int(round(target * scale)) * len(values)
+    integers = [min(scale, max(0, int(round(value * scale)))) for value in values]
+    difference = target_total - sum(integers)
+    while difference:
+        step = 1 if difference > 0 else -1
+        progressed = False
+        for index, value in enumerate(integers):
+            if step > 0 and value >= scale:
+                continue
+            if step < 0 and value <= 0:
+                continue
+            integers[index] += step
+            difference -= step
+            progressed = True
+            if difference == 0:
+                break
+        if not progressed:
+            break
+    return [value / scale for value in integers]
+
+
+def adjusted_f1_summary(classes: list[dict]) -> tuple[Optional[float], Optional[float]]:
+    if not classes:
+        return None, None
+    macro_f1 = sum(magic_metric_value(row, "f1", 0.0) for row in classes) / len(classes)
+    total_instances = sum(max(0, int(row.get("instances") or 0)) for row in classes)
+    if total_instances:
+        weighted_f1 = sum(
+            magic_metric_value(row, "f1", 0.0) * max(0, int(row.get("instances") or 0))
+            for row in classes
+        ) / total_instances
+    else:
+        weighted_f1 = macro_f1
+    return format_metric(macro_f1), format_metric(weighted_f1)
+
+
+MAGIC_OVERALL_METRICS = {
+    "map50_95": "mAP50-95",
+    "map50": "mAP50",
+    "precision": "Precision",
+    "recall": "Recall",
+    "macro_f1": "Macro F1",
+    "weighted_f1": "Weighted F1",
+}
+MAGIC_PER_CLASS_METRICS = {
+    "map50_95": "AP50-95",
+    "map50": "AP50",
+    "precision": "Precision",
+    "recall": "Recall",
+    "f1": "F1",
+}
+
+
+def magic_adjustment_label(scope: str, metric_key: str, class_name: str = "") -> str:
+    if scope == "per_class":
+        metric_label = MAGIC_PER_CLASS_METRICS.get(metric_key, metric_key)
+        return f"{class_name} {metric_label}".strip()
+    return MAGIC_OVERALL_METRICS.get(metric_key, metric_key)
+
+
+def precision_recall_for_f1(target_f1: float, rng: random.Random) -> tuple[float, float]:
+    target = clamp_metric(target_f1)
+    if target in {0.0, 1.0}:
+        return target, target
+    for _ in range(12):
+        precision = clamp_metric(target + rng.uniform(-0.04, 0.04))
+        if precision <= target / 2:
+            continue
+        recall = (target * precision) / ((2 * precision) - target)
+        if math.isfinite(recall) and 0 <= recall <= 1:
+            return precision, recall
+    return target, target
+
+
+def row_with_f1(row: dict, target_f1: float, rng: random.Random) -> dict:
+    precision, recall = precision_recall_for_f1(target_f1, rng)
+    adjusted = dict(row)
+    adjusted.update({
+        "precision": format_metric(precision),
+        "recall": format_metric(recall),
+        "f1": format_metric(f1_from_precision_recall(precision, recall)),
+    })
+    return adjusted
+
+
+def summarize_adjusted_classes(classes: list[dict], fallback: dict) -> dict:
+    if not classes:
+        return {
+            "precision": fallback.get("precision"),
+            "recall": fallback.get("recall"),
+            "map50": fallback.get("map50"),
+            "map50_95": fallback.get("map50_95"),
+            "macro_f1": fallback.get("macro_f1"),
+            "weighted_f1": fallback.get("weighted_f1"),
+        }
+    macro_f1, weighted_f1 = adjusted_f1_summary(classes)
+    return {
+        "precision": format_metric(sum(magic_metric_value(row, "precision", 0.0) for row in classes) / len(classes)),
+        "recall": format_metric(sum(magic_metric_value(row, "recall", 0.0) for row in classes) / len(classes)),
+        "map50": format_metric(sum(magic_metric_value(row, "map50", 0.0) for row in classes) / len(classes)),
+        "map50_95": format_metric(sum(magic_metric_value(row, "map50_95", 0.0) for row in classes) / len(classes)),
+        "macro_f1": macro_f1,
+        "weighted_f1": weighted_f1,
+    }
+
+
+def base_magic_classes(metrics: dict, rng: random.Random) -> list[dict]:
+    source_classes = metrics.get("per_class") if isinstance(metrics.get("per_class"), list) else []
+    classes = []
+    for row in source_classes:
+        precision = magic_metric_value(row, "precision", magic_metric_value(metrics, "precision", 0.0))
+        recall = magic_metric_value(row, "recall", magic_metric_value(metrics, "recall", 0.0))
+        map50_95 = magic_metric_value(row, "map50_95", magic_metric_value(metrics, "map50_95", 0.0))
+        map50 = max(map50_95, magic_metric_value(row, "map50", magic_metric_value(metrics, "map50", map50_95)))
+        adjusted = dict(row)
+        adjusted.update({
+            "precision": format_metric(precision),
+            "recall": format_metric(recall),
+            "f1": format_metric(f1_from_precision_recall(precision, recall)),
+            "map50": format_metric(map50),
+            "map50_95": format_metric(map50_95),
+        })
+        classes.append(adjusted)
+    return classes
+
+
+def adjust_overall_magic_metric(metrics: dict, metric_key: str, target: float, rng: random.Random) -> tuple[dict, list[dict]]:
+    classes = base_magic_classes(metrics, rng)
+    summary = summarize_adjusted_classes(classes, metrics)
+    if not classes:
+        summary[metric_key] = format_metric(target)
+        if metric_key in {"precision", "recall"}:
+            precision = magic_metric_value(summary, "precision", target)
+            recall = magic_metric_value(summary, "recall", target)
+            summary["macro_f1"] = format_metric(f1_from_precision_recall(precision, recall))
+            summary["weighted_f1"] = summary["macro_f1"]
+        return summary, classes
+
+    if metric_key in {"map50_95", "map50", "precision", "recall"}:
+        current = magic_metric_value(summary, metric_key, target)
+        raw_values = []
+        for row in classes:
+            value = magic_metric_value(row, metric_key, current)
+            raw_values.append(clamp_metric(value + (target - current) + rng.uniform(-0.035, 0.035)))
+        balanced = rebalanced_metric_values(raw_values, target)
+        for row, value in zip(classes, balanced):
+            row[metric_key] = format_metric(value)
+            if metric_key == "map50_95":
+                row["map50"] = format_metric(max(value, magic_metric_value(row, "map50", value)))
+            elif metric_key == "map50":
+                row["map50_95"] = format_metric(min(value, magic_metric_value(row, "map50_95", value)))
+            elif metric_key in {"precision", "recall"}:
+                precision = magic_metric_value(row, "precision", target)
+                recall = magic_metric_value(row, "recall", target)
+                row["f1"] = format_metric(f1_from_precision_recall(precision, recall))
+    elif metric_key in {"macro_f1", "weighted_f1"}:
+        if metric_key == "macro_f1":
+            current = magic_metric_value(summary, "macro_f1", target)
+            raw_values = [
+                clamp_metric(magic_metric_value(row, "f1", current) + (target - current) + rng.uniform(-0.035, 0.035))
+                for row in classes
+            ]
+            f1_values = rebalanced_metric_values(raw_values, target)
+        else:
+            f1_values = [target for _ in classes]
+        classes = [row_with_f1(row, value, rng) for row, value in zip(classes, f1_values)]
+
+    summary = summarize_adjusted_classes(classes, metrics)
+    summary[metric_key] = format_metric(target)
+    if metric_key == "map50":
+        summary["map50_95"] = format_metric(min(magic_metric_value(summary, "map50_95", target), target))
+    elif metric_key == "map50_95":
+        summary["map50"] = format_metric(max(magic_metric_value(summary, "map50", target), target))
+    return summary, classes
+
+
+def adjust_per_class_magic_metric(metrics: dict, metric_key: str, target: float, class_name: str, rng: random.Random) -> tuple[dict, list[dict]]:
+    classes = base_magic_classes(metrics, rng)
+    if not classes:
+        raise HTTPException(status_code=409, detail="The selected run has no per-class metrics to adjust.")
+    matched = False
+    for index, row in enumerate(classes):
+        if str(row.get("class_name") or "") != class_name:
+            continue
+        matched = True
+        if metric_key == "f1":
+            classes[index] = row_with_f1(row, target, rng)
+        else:
+            row[metric_key] = format_metric(target)
+            if metric_key == "map50_95":
+                row["map50"] = format_metric(max(target, magic_metric_value(row, "map50", target)))
+            elif metric_key == "map50":
+                row["map50_95"] = format_metric(min(target, magic_metric_value(row, "map50_95", target)))
+            elif metric_key in {"precision", "recall"}:
+                precision = magic_metric_value(row, "precision", target)
+                recall = magic_metric_value(row, "recall", target)
+                row["f1"] = format_metric(f1_from_precision_recall(precision, recall))
+        break
+    if not matched:
+        raise HTTPException(status_code=404, detail="Selected class was not found in the run metrics.")
+    return summarize_adjusted_classes(classes, metrics), classes
+
+
+def build_magic_metrics_overlay(metrics: dict, scope: str, metric_key: str, target_value: float, class_name: str = "") -> dict:
+    scope = str(scope or "overall").strip().lower()
+    metric_key = str(metric_key or "").strip().lower()
+    target = format_metric(clamp_metric(float(target_value)))
+    if target is None:
+        target = 0.0
+    if scope == "overall" and metric_key not in MAGIC_OVERALL_METRICS:
+        raise HTTPException(status_code=400, detail="Choose a supported overall metric to adjust.")
+    if scope == "per_class" and metric_key not in MAGIC_PER_CLASS_METRICS:
+        raise HTTPException(status_code=400, detail="Choose a supported per-class metric to adjust.")
+
+    rng = random.Random()
+    if scope == "per_class":
+        summary, adjusted_classes = adjust_per_class_magic_metric(metrics, metric_key, target, class_name, rng)
+    else:
+        summary, adjusted_classes = adjust_overall_magic_metric(metrics, metric_key, target, rng)
+
+    label = magic_adjustment_label(scope, metric_key, class_name)
+    note = (
+        "Magic Button adjusted metrics are active. These values are generated from the original run metrics "
+        "for report preview and are not raw validation results."
+    )
+
+    return {
+        "created_at": datetime.now(MYT).isoformat(),
+        "target": format_metric(target),
+        "scope": scope,
+        "metric_key": metric_key,
+        "class_name": class_name,
+        "original": {
+            key: metrics.get(key)
+            for key in ("precision", "recall", "map50", "map50_95", "macro_f1", "weighted_f1")
+        },
+        "metrics": {
+            "precision": summary.get("precision"),
+            "recall": summary.get("recall"),
+            "map50": summary.get("map50"),
+            "map50_95": summary.get("map50_95"),
+            "macro_f1": summary.get("macro_f1"),
+            "weighted_f1": summary.get("weighted_f1"),
+            "per_class": adjusted_classes,
+            "magic_adjusted": True,
+            "magic_target": format_metric(target),
+            "magic_metric_key": metric_key,
+            "magic_scope": scope,
+            "magic_class_name": class_name,
+            "magic_adjustment_label": label,
+            "overall_metric_source": "magic_button",
+            "per_class_source": "magic_button",
+            "note": note,
+        },
+    }
+
+
+def parse_magic_metrics_payload(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Magic Button request body must be a JSON object.")
+    target_value = payload.get("target", payload.get("map50_95"))
+    try:
+        target = float(target_value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Magic Button target must be a number between 0 and 1.") from None
+    if not math.isfinite(target) or target < 0 or target > 1:
+        raise HTTPException(status_code=400, detail="Magic Button target must be a number between 0 and 1.")
+    return {
+        "project": str(payload.get("project") or "runs/detect"),
+        "name": str(payload.get("name") or "train"),
+        "scope": str(payload.get("scope") or "overall"),
+        "metric_key": str(payload.get("metric_key") or "map50_95"),
+        "target": target,
+        "class_name": str(payload.get("class_name") or ""),
+    }
+
+
+def apply_magic_metrics_overlay(run_dir: Path, metrics: dict) -> dict:
+    overlay = read_json_object(run_dir / MAGIC_METRICS_FILE)
+    adjusted = overlay.get("metrics") if isinstance(overlay.get("metrics"), dict) else None
+    if not adjusted:
+        return metrics
+    merged = dict(metrics)
+    merged.update(adjusted)
+    merged["magic_adjusted"] = True
+    merged["magic_created_at"] = overlay.get("created_at")
+    merged["magic_original"] = overlay.get("original") if isinstance(overlay.get("original"), dict) else {}
+    return merged
+
+
 def infer_task_from_results_columns(row: dict) -> str:
     keys = {str(key).strip() for key in row}
     if "metrics/mAP50(M)" in keys or "metrics/mAP50-95(M)" in keys:
@@ -2629,7 +2941,7 @@ def ensure_model_report_artifacts_for_report(run_dir: Path) -> bool:
     )
 
 
-def read_run_metrics(run_dir: Path) -> dict:
+def read_run_metrics(run_dir: Path, include_magic: bool = True) -> dict:
     ensure_rfdetr_web_artifacts(run_dir, force=is_rfdetr_run(run_dir))
     results_path = run_dir / "results.csv"
     if not results_path.is_file():
@@ -2691,7 +3003,7 @@ def read_run_metrics(run_dir: Path) -> dict:
     if training_completed is False:
         metrics_note = "Training did not complete successfully; checkpoints and metrics may be partial. " + metrics_note
 
-    return {
+    result = {
         "available": True,
         "run_dir": str(run_dir),
         "results_csv": str(results_path),
@@ -2727,6 +3039,7 @@ def read_run_metrics(run_dir: Path) -> dict:
         "artifacts": run_artifact_statuses(run_dir),
         "note": metrics_note,
     }
+    return apply_magic_metrics_overlay(run_dir, result) if include_magic else result
 
 
 def validate_split(split: SplitConfig) -> tuple[float, float, float]:
@@ -6600,6 +6913,28 @@ def train_metrics(request: WeightRequest):
         }
 
     result = read_run_metrics(run_dir)
+    result["resolution_type"] = resolution_type
+    return result
+
+
+@app.post("/api/train/metrics/magic")
+def magic_train_metrics(payload: Optional[dict] = Body(default=None)):
+    request = parse_magic_metrics_payload(payload or {})
+    if current_status()["running"]:
+        raise HTTPException(status_code=409, detail="Wait for training to finish before adjusting metrics.")
+    run_dir, resolution_type = resolve_run_dir_details(request["project"], request["name"])
+    metrics = read_run_metrics(run_dir, include_magic=False)
+    if not metrics.get("available"):
+        raise HTTPException(status_code=409, detail="The selected training run has no completed metrics to adjust.")
+    overlay = build_magic_metrics_overlay(
+        metrics,
+        request["scope"],
+        request["metric_key"],
+        request["target"],
+        request["class_name"],
+    )
+    write_json_object(run_dir / MAGIC_METRICS_FILE, overlay)
+    result = apply_magic_metrics_overlay(run_dir, metrics)
     result["resolution_type"] = resolution_type
     return result
 

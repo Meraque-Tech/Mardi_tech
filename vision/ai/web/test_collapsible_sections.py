@@ -12,6 +12,7 @@ INDEX_HTML = Path(__file__).parent / "static" / "index.html"
 WEB_DIR = Path(__file__).parent
 APP_PY = WEB_DIR / "app.py"
 APP_JS = WEB_DIR / "static" / "app.js"
+STYLES = WEB_DIR / "static" / "styles.css"
 REPORT_GENERATOR = WEB_DIR / "report_generator.py"
 DOCKERFILE_CUDA = WEB_DIR / "Dockerfile.cuda"
 TRAIN_WEB_COMPOSE = WEB_DIR / "docker-compose.train_web.yml"
@@ -644,6 +645,66 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertNotIn('saveBlobWithBrowserDownload(await response.blob(), "training_and_test_report.pdf")', script)
         self.assertIn("ensure_model_report_artifacts_for_report(run_dir)\n    metrics = read_run_metrics(run_dir)", app_source)
         self.assertIn("ensure_model_report_artifacts_for_report(training_dir)\n    training_metrics_payload = read_run_metrics(training_dir)", app_source)
+
+    def test_magic_button_adjusts_report_metrics_overlay(self):
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        script = APP_JS.read_text(encoding="utf-8")
+        styles = STYLES.read_text(encoding="utf-8")
+        app_source = APP_PY.read_text(encoding="utf-8")
+
+        self.assertIn('id="download-training-report"', html)
+        self.assertIn('id="magic-metrics"', html)
+        self.assertIn('id="magic-modal"', html)
+        self.assertIn('id="magic-overall-options"', html)
+        self.assertIn('id="magic-per-class-options"', html)
+        self.assertIn('id="magic-class-select"', html)
+        self.assertIn('id="magic-class-select" disabled', html)
+        self.assertIn("Select a per-class metric first", html)
+        self.assertIn('id="magic-target"', html)
+        self.assertLess(html.index('id="download-training-report"'), html.index('id="magic-metrics"'))
+        self.assertIn("button.magic-button", styles)
+        self.assertIn(".magic-dialog", styles)
+        self.assertIn(".magic-option-grid", styles)
+        self.assertIn(".magic-field-disabled", styles)
+        self.assertIn("cursor: not-allowed", styles)
+        self.assertIn("const MAGIC_OVERALL_OPTIONS", script)
+        self.assertIn("const MAGIC_PER_CLASS_OPTIONS", script)
+        self.assertIn("function openMagicMetricsModal", script)
+        self.assertIn("function closeMagicMetricsModal", script)
+        self.assertIn("function errorDetailText", script)
+        self.assertIn("renderMagicOptionGroup", script)
+        self.assertIn("classSelect.disabled = !isPerClass || !hasClasses", script)
+        self.assertIn('classField.classList.toggle("magic-field-disabled", classSelect.disabled)', script)
+        self.assertIn("const index = Number.parseInt($(\"magic-class-select\").value, 10)", script)
+        self.assertIn("option.value = String(index)", script)
+        self.assertIn("Select a per-class metric first", script)
+        self.assertIn("setMagicChoice(button.dataset.magicScope, button.dataset.magicKey)", script)
+        self.assertIn('$("magic-metrics").addEventListener("click", openMagicMetricsModal)', script)
+        self.assertIn('$("magic-apply").addEventListener("click", applyMagicMetrics)', script)
+        self.assertNotIn("window.prompt", script[script.index("function magicCurrentValue"):script.index("async function startTest")])
+        self.assertNotIn("window.confirm", script[script.index("function magicCurrentValue"):script.index("async function startTest")])
+        self.assertIn('"Raw logs, results.csv, and weights stay unchanged."', script)
+        self.assertIn('fetch("/api/train/metrics/magic"', script)
+        self.assertIn("metric_key: choice.key", script)
+        self.assertIn("class_name: classRow?.class_name ||", script)
+        self.assertIn('MAGIC_METRICS_FILE = "magic_metrics.json"', app_source)
+        self.assertIn("class MagicMetricsRequest(WeightRequest):", app_source)
+        self.assertIn('metric_key: str = "map50_95"', app_source)
+        self.assertIn("target: float = Field(ge=0, le=1)", app_source)
+        self.assertIn("def parse_magic_metrics_payload", app_source)
+        self.assertIn("payload.get(\"target\", payload.get(\"map50_95\"))", app_source)
+        self.assertIn('@app.post("/api/train/metrics/magic")', app_source)
+        self.assertIn("def magic_train_metrics(payload: Optional[dict] = Body(default=None))", app_source)
+        self.assertIn("MAGIC_OVERALL_METRICS", app_source)
+        self.assertIn("MAGIC_PER_CLASS_METRICS", app_source)
+        self.assertIn("def build_magic_metrics_overlay", app_source)
+        self.assertIn("def rebalanced_metric_values", app_source)
+        self.assertIn("def adjust_overall_magic_metric", app_source)
+        self.assertIn("def adjust_per_class_magic_metric", app_source)
+        self.assertIn('"magic_target": format_metric(target)', app_source)
+        self.assertIn('"magic_adjusted": True', app_source)
+        self.assertIn("f1_from_precision_recall(precision, recall)", app_source)
+        self.assertIn("return apply_magic_metrics_overlay(run_dir, result) if include_magic else result", app_source)
 
 
 if __name__ == "__main__":

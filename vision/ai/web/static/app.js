@@ -6,6 +6,8 @@ const state = {
   preparationPollRevision: 0,
   pollTimer: null,
   metricsHistory: [],
+  latestMetrics: null,
+  magicChoice: null,
   metricLabels: {},
   performanceChartTitle: "Detection Performance by Epoch",
   metricsAvailable: false,
@@ -2790,6 +2792,23 @@ const DEFAULT_METRIC_LABELS = {
   map50_95: "mAP50-95",
 };
 
+const MAGIC_OVERALL_OPTIONS = [
+  { scope: "overall", key: "map50_95", label: "mAP50-95" },
+  { scope: "overall", key: "map50", label: "mAP50" },
+  { scope: "overall", key: "precision", label: "Precision" },
+  { scope: "overall", key: "recall", label: "Recall" },
+  { scope: "overall", key: "macro_f1", label: "Macro F1" },
+  { scope: "overall", key: "weighted_f1", label: "Weighted F1" },
+];
+
+const MAGIC_PER_CLASS_OPTIONS = [
+  { scope: "per_class", key: "map50_95", label: "AP50-95" },
+  { scope: "per_class", key: "map50", label: "AP50" },
+  { scope: "per_class", key: "precision", label: "Precision" },
+  { scope: "per_class", key: "recall", label: "Recall" },
+  { scope: "per_class", key: "f1", label: "F1" },
+];
+
 function metricLabels(labels = {}) {
   return { ...DEFAULT_METRIC_LABELS, ...(labels || {}) };
 }
@@ -2851,6 +2870,9 @@ function setArtifactButtons(artifacts) {
   $("download-training-report").disabled = !state.metricsAvailable
     || state.running
     || state.downloads.has("training_report");
+  $("magic-metrics").disabled = !state.metricsAvailable
+    || state.running
+    || state.downloads.has("magic_metrics");
 }
 
 function artifactViewUrl(artifact, target, status) {
@@ -3250,9 +3272,26 @@ async function apiJson(url, options = {}) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.detail || payload.message || `Request failed: ${response.status}`);
+    throw new Error(errorDetailText(payload, `Request failed: ${response.status}`));
   }
   return payload;
+}
+
+function errorDetailText(payload, fallback) {
+  const detail = payload?.detail || payload?.message;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => {
+      if (!item || typeof item !== "object") {
+        return String(item);
+      }
+      const location = Array.isArray(item.loc) ? item.loc.join(".") : item.loc;
+      return [location, item.msg].filter(Boolean).join(": ");
+    }).join("; ") || fallback;
+  }
+  if (detail && typeof detail === "object") {
+    return JSON.stringify(detail);
+  }
+  return detail || fallback;
 }
 
 function setTrainingSessionStatus(text, isError = false) {
@@ -4522,6 +4561,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
 
     if (!metrics.available) {
       state.metricsAvailable = false;
+      state.latestMetrics = null;
       applyMetricLabels();
       $("training-results-panel").classList.remove("has-results");
       $("metric-precision").textContent = "-";
@@ -4543,6 +4583,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     }
 
     state.metricsAvailable = true;
+    state.latestMetrics = metrics;
     applyMetricLabels(metrics.metric_labels, metrics.chart_title || "Detection Performance by Epoch");
     $("training-results-panel").classList.add("has-results");
     $("metric-precision").textContent = metricText(metrics.precision);
@@ -4564,6 +4605,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     if (revision !== state.targetRevision) {
       return;
     }
+    state.latestMetrics = null;
     $("training-results-panel").classList.remove("has-results");
     $("metric-precision").textContent = "-";
     $("metric-recall").textContent = "-";
@@ -4674,6 +4716,204 @@ async function downloadTrainingReport() {
     state.downloads.delete("training_report");
     button.textContent = originalText;
     await refreshMetrics();
+  }
+}
+
+function magicCurrentValue(metrics, choice, classChoice) {
+  const source = choice.scope === "per_class" ? classChoice?.row : metrics;
+  const fallbackKeys = {
+    map50_95: ["ap50_95", "AP50-95"],
+    map50: ["ap50", "AP50"],
+  };
+  let value = source ? source[choice.key] : null;
+  if ((value === null || value === undefined) && source) {
+    for (const key of fallbackKeys[choice.key] || []) {
+      if (source[key] !== null && source[key] !== undefined) {
+        value = source[key];
+        break;
+      }
+    }
+  }
+  return value === null || value === undefined ? "" : String(value);
+}
+
+function magicClasses(metrics) {
+  return Array.isArray(metrics?.per_class) ? metrics.per_class : [];
+}
+
+function selectedMagicClass(metrics) {
+  const index = Number.parseInt($("magic-class-select").value, 10);
+  const classes = magicClasses(metrics);
+  return Number.isInteger(index) && classes[index] ? classes[index] : null;
+}
+
+function magicChoiceLabel(choice, classRow = null) {
+  if (!choice) {
+    return "";
+  }
+  if (choice.scope === "per_class") {
+    return `${classRow?.class_name || "Class"} ${choice.label}`;
+  }
+  return choice.label;
+}
+
+function setMagicStatus(text, isError = false) {
+  $("magic-status").textContent = text;
+  $("magic-status").classList.toggle("error", isError);
+}
+
+function renderMagicOptionGroup(containerId, options) {
+  const container = $(containerId);
+  container.innerHTML = options.map((option) => `
+    <button
+      class="secondary magic-option"
+      type="button"
+      data-magic-scope="${option.scope}"
+      data-magic-key="${option.key}"
+    >${escapeHtml(option.label)}</button>
+  `).join("");
+}
+
+function populateMagicClassSelect(metrics) {
+  const select = $("magic-class-select");
+  select.innerHTML = "";
+  const classes = magicClasses(metrics);
+  if (!classes.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No per-class metrics available";
+    select.appendChild(option);
+    return;
+  }
+  classes.forEach((row, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = row.class_name || "Unnamed class";
+    select.appendChild(option);
+  });
+}
+
+function setMagicChoice(scope, key) {
+  state.magicChoice = [...MAGIC_OVERALL_OPTIONS, ...MAGIC_PER_CLASS_OPTIONS]
+    .find((option) => option.scope === scope && option.key === key) || MAGIC_OVERALL_OPTIONS[0];
+  document.querySelectorAll("[data-magic-scope]").forEach((button) => {
+    button.classList.toggle(
+      "active-control",
+      button.dataset.magicScope === state.magicChoice.scope && button.dataset.magicKey === state.magicChoice.key,
+    );
+  });
+  updateMagicModalFields();
+}
+
+function updateMagicModalFields() {
+  const metrics = state.latestMetrics;
+  const choice = state.magicChoice || MAGIC_OVERALL_OPTIONS[0];
+  const isPerClass = choice.scope === "per_class";
+  const classField = $("magic-class-field");
+  const classSelect = $("magic-class-select");
+  const classes = magicClasses(metrics);
+  const hasClasses = classes.length > 0;
+  const previousIndex = Number.parseInt(classSelect.value, 10);
+  classSelect.disabled = !isPerClass || !hasClasses;
+  classField.classList.toggle("magic-field-disabled", classSelect.disabled);
+  if (!isPerClass) {
+    classSelect.innerHTML = '<option value="">Select a per-class metric first</option>';
+  } else if (!hasClasses) {
+    classSelect.innerHTML = '<option value="">No per-class metrics available</option>';
+  } else if (
+    classSelect.options.length !== classes.length
+    || (classSelect.options.length && classSelect.options[0].value === "")
+  ) {
+    populateMagicClassSelect(metrics);
+    if (Number.isInteger(previousIndex) && classes[previousIndex]) {
+      classSelect.value = String(previousIndex);
+    }
+  }
+  const classRow = isPerClass ? selectedMagicClass(metrics) : null;
+  $("magic-apply").disabled = isPerClass && !classRow;
+
+  const currentValue = magicCurrentValue(metrics, choice, classRow);
+  $("magic-target").value = currentValue;
+  $("magic-current").textContent = currentValue === ""
+    ? `${magicChoiceLabel(choice, classRow)} current score: N/A`
+    : `${magicChoiceLabel(choice, classRow)} current score: ${currentValue}`;
+  setMagicStatus("Raw logs, results.csv, and weights stay unchanged.");
+}
+
+function openMagicMetricsModal() {
+  const metrics = state.latestMetrics;
+  if (!metrics?.available) {
+    setMessage("Refresh metrics before using the Magic Button.", true);
+    return;
+  }
+
+  renderMagicOptionGroup("magic-overall-options", MAGIC_OVERALL_OPTIONS);
+  renderMagicOptionGroup("magic-per-class-options", MAGIC_PER_CLASS_OPTIONS);
+  populateMagicClassSelect(metrics);
+  state.magicChoice = state.magicChoice || MAGIC_OVERALL_OPTIONS[0];
+  setMagicChoice(state.magicChoice.scope, state.magicChoice.key);
+  $("magic-modal").hidden = false;
+  $("magic-modal").querySelector(".magic-dialog")?.focus();
+}
+
+function closeMagicMetricsModal() {
+  $("magic-modal").hidden = true;
+  $("magic-apply").disabled = false;
+  $("magic-apply").textContent = "Apply";
+  state.downloads.delete("magic_metrics");
+}
+
+async function applyMagicMetrics() {
+  const metrics = state.latestMetrics;
+  const choice = state.magicChoice;
+  if (!metrics?.available || !choice) {
+    setMagicStatus("Metrics are not available for this run.", true);
+    return;
+  }
+
+  const classRow = choice.scope === "per_class" ? selectedMagicClass(metrics) : null;
+  if (choice.scope === "per_class" && !classRow) {
+    setMagicStatus("Choose a class row.", true);
+    return;
+  }
+  const label = choice.scope === "per_class"
+    ? `${classRow.class_name || "Class"} ${choice.label}`
+    : choice.label;
+  const target = Number($("magic-target").value);
+  if (!Number.isFinite(target) || target < 0 || target > 1) {
+    setMagicStatus("Enter a target score between 0 and 1.", true);
+    return;
+  }
+
+  const button = $("magic-apply");
+  state.downloads.add("magic_metrics");
+  button.disabled = true;
+  button.textContent = "Tweaking...";
+  try {
+    const response = await fetch("/api/train/metrics/magic", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...weightTarget(),
+        scope: choice.scope,
+        metric_key: choice.key,
+        target,
+        class_name: classRow?.class_name || "",
+      }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(errorDetailText(payload, `Metric adjustment failed: ${response.status}`));
+    }
+    closeMagicMetricsModal();
+    setMessage(`Magic Button adjusted ${label} to ${target.toFixed(4)} for reports.`);
+    await refreshMetrics();
+  } catch (error) {
+    setMagicStatus(error.message, true);
+  } finally {
+    state.downloads.delete("magic_metrics");
+    button.disabled = false;
+    button.textContent = "Apply";
   }
 }
 
@@ -5154,6 +5394,28 @@ $("download-accuracy-graph").addEventListener("click", () => downloadArtifact("a
 $("download-loss-graph").addEventListener("click", () => downloadArtifact("loss_graph", "loss_by_epoch.png"));
 $("download-roc-auc-graph").addEventListener("click", () => downloadArtifact("roc_auc_curve", "roc_auc_curve.png"));
 $("download-training-report").addEventListener("click", downloadTrainingReport);
+$("magic-metrics").addEventListener("click", openMagicMetricsModal);
+$("magic-apply").addEventListener("click", applyMagicMetrics);
+$("magic-cancel").addEventListener("click", closeMagicMetricsModal);
+$("magic-close").addEventListener("click", closeMagicMetricsModal);
+document.querySelectorAll("[data-magic-close]").forEach((element) => {
+  element.addEventListener("click", closeMagicMetricsModal);
+});
+$("magic-class-select").addEventListener("change", updateMagicModalFields);
+$("magic-target").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    applyMagicMetrics();
+  }
+});
+["magic-overall-options", "magic-per-class-options"].forEach((id) => {
+  $(id).addEventListener("click", (event) => {
+    const button = event.target.closest("[data-magic-scope]");
+    if (button) {
+      setMagicChoice(button.dataset.magicScope, button.dataset.magicKey);
+    }
+  });
+});
 $("download-run-log").addEventListener("click", () => downloadLog("/api/train/logs/download"));
 $("start-test").addEventListener("click", startTest);
 $("stop-test").addEventListener("click", stopTest);
@@ -5234,6 +5496,9 @@ document.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   handleAnnotationQaReviewKeydown(event);
   if (event.key === "Escape") {
+    if ($("magic-modal") && !$("magic-modal").hidden) {
+      closeMagicMetricsModal();
+    }
     if ($("qa-review-modal") && !$("qa-review-modal").hidden) {
       closeAnnotationQaReview();
     }

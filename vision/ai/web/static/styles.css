@@ -2147,6 +2147,7 @@ textarea:focus {
 }
 
 #download-training-report,
+#magic-metrics,
 #download-combined-report {
   white-space: nowrap;
 }
@@ -2168,6 +2169,185 @@ button.report-download-button:disabled:hover {
   border-color: #8ba9bf;
   background: #8ba9bf;
   color: #fff;
+}
+
+button.magic-button {
+  border-color: #b7791f;
+  background: #d69e2e;
+  color: #1f1300;
+  font-weight: 800;
+}
+
+button.magic-button:hover {
+  border-color: #975a16;
+  background: #b7791f;
+  color: #fff7db;
+}
+
+button.magic-button:disabled,
+button.magic-button:disabled:hover {
+  border-color: #d8c293;
+  background: #e8d8ab;
+  color: #7a6336;
+}
+
+.magic-modal[hidden] {
+  display: none;
+}
+
+.magic-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+}
+
+.magic-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.56);
+}
+
+.magic-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 44px));
+  overflow: auto;
+  border: 1px solid #d8c293;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+}
+
+.magic-header,
+.magic-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.magic-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.magic-kicker {
+  display: block;
+  color: #975a16;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.magic-header h2 {
+  margin: 2px 0 0;
+}
+
+.magic-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.magic-option-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.magic-option-panel h3 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.magic-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px;
+}
+
+.magic-option {
+  min-height: 42px;
+  border: 1px solid #d8dee8;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.magic-option:hover {
+  border-color: #d69e2e;
+  background: #fff8e5;
+}
+
+.magic-option.active-control {
+  border-color: #b7791f;
+  background: #d69e2e;
+  color: #1f1300;
+}
+
+.magic-field {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.magic-field select,
+.magic-field input {
+  width: 100%;
+}
+
+.magic-field-disabled {
+  color: #8a94a6;
+}
+
+.magic-field-disabled select {
+  border-color: #d8dee8;
+  background: #eef1f5;
+  color: #8a94a6;
+  cursor: not-allowed;
+}
+
+.magic-current,
+.magic-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.magic-status.error {
+  color: #b42318;
+  font-weight: 800;
+}
+
+.magic-actions {
+  border-top: 1px solid var(--line);
+  background: #fbfcfd;
+}
+
+.magic-apply-button {
+  min-width: 110px;
+}
+
+@media (max-width: 640px) {
+  .magic-modal {
+    padding: 12px;
+  }
+
+  .magic-header,
+  .magic-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .advanced-group {
