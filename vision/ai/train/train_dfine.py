@@ -55,6 +55,7 @@ EPOCH_RE = re.compile(r"(?:epoch|Epoch)\D+(\d+)(?:\D+(\d+))?")
 DFINE_PROGRESS_RE = re.compile(
     r"^Epoch:\s*\[\s*(?P<epoch>\d+)\s*/\s*(?P<total>\d+)\s*\]\s*"
     r"\[\s*(?P<step>\d+)\s*/\s*(?P<steps>\d+)\s*\].*?"
+    r"(?:^|\s)eta:\s*(?P<eta>\S+).*?"
     r"\blr:\s*(?P<lr>-?\d+(?:\.\d+)?(?:e[+-]?\d+)?).*?"
     r"\bloss:\s*(?P<loss>-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*"
     r"\((?P<loss_avg>-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\)",
@@ -251,10 +252,32 @@ def parse_dfine_progress_line(line: str) -> dict[str, Any] | None:
         "total_epochs": int(match.group("total")),
         "step": int(match.group("step")),
         "total_steps": int(match.group("steps")),
+        "eta": match.group("eta"),
         "lr": lr,
         "train/loss": loss_avg if loss_avg is not None else loss,
+        "train/loss_avg": loss_avg,
         "train/loss_step": loss,
     }
+
+
+def dfine_progress_marker(progress: dict[str, Any], total_epochs: int) -> str:
+    parts = [
+        WEB_PROGRESS_PREFIX,
+        f"epoch={min(int(progress['epoch']), int(total_epochs))}",
+        f"total={int(total_epochs)}",
+        f"step={int(progress['step'])}",
+        f"steps={int(progress['total_steps'])}",
+    ]
+    for key, label in (
+        ("train/loss_step", "loss"),
+        ("train/loss_avg", "loss_avg"),
+        ("lr", "lr"),
+        ("eta", "eta"),
+    ):
+        value = progress.get(key)
+        if value is not None:
+            parts.append(f"{label}={value}")
+    return " ".join(parts)
 
 
 def parse_dfine_coco_ap_line(line: str) -> dict[str, float]:
@@ -369,10 +392,7 @@ def run_dfine_training(
                 latest_metrics_epoch = int(progress["epoch"])
                 upsert_live_result(run_dir, latest_metrics_epoch, {"train/loss": progress.get("train/loss")})
                 write_web_metrics(run_dir, args.model, class_names, conversion_summary, False)
-                print(
-                    f"{WEB_PROGRESS_PREFIX} epoch={min(latest_metrics_epoch, args.epochs)} total={args.epochs}",
-                    flush=True,
-                )
+                print(dfine_progress_marker(progress, args.epochs), flush=True)
                 continue
 
             coco_metrics = parse_dfine_coco_ap_line(clean)

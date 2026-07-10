@@ -191,7 +191,16 @@ MODEL_REGISTRY.update({
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]")
 PROGRESS_LINE_RE = re.compile(r":\s*\d+%\s+.*\b\d+/\d+\b")
-WEB_PROGRESS_RE = re.compile(r"^WEB_TRAINING_PROGRESS\s+epoch=(\d+)\s+total=(\d+)$")
+WEB_PROGRESS_RE = re.compile(r"^WEB_TRAINING_PROGRESS\s+epoch=(\d+)\s+total=(\d+)(?:\s+(?P<fields>.*))?$")
+DFINE_PROGRESS_LOG_RE = re.compile(
+    r"^Epoch:\s*\[\s*(?P<epoch>\d+)\s*/\s*(?P<total>\d+)\s*\]\s*"
+    r"\[\s*(?P<step>\d+)\s*/\s*(?P<steps>\d+)\s*\].*?"
+    r"(?:^|\s)eta:\s*(?P<eta>\S+).*?"
+    r"\blr:\s*(?P<lr>-?\d+(?:\.\d+)?(?:e[+-]?\d+)?).*?"
+    r"\bloss:\s*(?P<loss>-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*"
+    r"\((?P<loss_avg>-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\)",
+    re.IGNORECASE,
+)
 RFDETR_VALIDATION_PROGRESS_RE = re.compile(r"Val\s+\(Epoch\s+(\d+)\s*/\s*(\d+)\)", re.IGNORECASE)
 WEB_TEST_PROGRESS_RE = re.compile(
     r"^WEB_TEST_PROGRESS\s+percent=(\d+)\s+stage=([A-Za-z0-9_-]+)(?:\s+detail=(.*))?$"
@@ -3963,16 +3972,114 @@ def capture_training_run_dir(line: str):
     persist_training_report_context(run_dir)
 
 
+def parse_progress_fields(text: str | None) -> dict[str, str]:
+    fields = {}
+    for item in str(text or "").split():
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if key:
+            fields[key] = value.strip()
+    return fields
+
+
+def progress_number(value):
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def progress_int(value):
+    number = progress_number(value)
+    return int(number) if number is not None else None
+
+
+def dfine_progress_detail(
+    current_epoch: int,
+    total_epochs: int,
+    step: int | None,
+    total_steps: int | None,
+    fields: dict[str, str],
+) -> str:
+    parts = [f"D-FINE epoch {current_epoch}/{total_epochs}"]
+    if step is not None and total_steps:
+        parts.append(f"step {step}/{total_steps}")
+    loss = fields.get("loss")
+    loss_avg = fields.get("loss_avg")
+    if loss:
+        loss_text = f"loss {loss}"
+        if loss_avg:
+            loss_text += f" (avg {loss_avg})"
+        parts.append(loss_text)
+    eta = fields.get("eta")
+    if eta:
+        parts.append(f"ETA {eta}")
+    return " · ".join(parts) + "."
+
+
+def update_training_progress(
+    current_epoch: int,
+    total_epochs: int,
+    fields: dict[str, str] | None = None,
+    *,
+    detail: str = "",
+):
+    if training_run_info is None or current_epoch <= 0 or total_epochs <= 0:
+        return
+
+    fields = fields or {}
+    current_epoch = min(current_epoch, total_epochs)
+    training_run_info["current_epoch"] = current_epoch
+    training_run_info["total_epochs"] = total_epochs
+
+    step = progress_int(fields.get("step"))
+    total_steps = progress_int(fields.get("steps"))
+    if step is not None and total_steps and total_steps > 0:
+        step = max(0, min(step, total_steps))
+        training_run_info["current_step"] = step
+        training_run_info["total_steps"] = total_steps
+        epoch_fraction = step / total_steps
+        progress_percent = ((current_epoch - 1 + epoch_fraction) / total_epochs) * 100
+        training_run_info["progress_percent"] = round(max(0, min(100, progress_percent)), 1)
+        training_run_info["progress_detail"] = detail or dfine_progress_detail(
+            current_epoch,
+            total_epochs,
+            step,
+            total_steps,
+            fields,
+        )
+    else:
+        training_run_info.pop("current_step", None)
+        training_run_info.pop("total_steps", None)
+        training_run_info.pop("progress_percent", None)
+        training_run_info["progress_detail"] = detail
+
+
 def capture_epoch_progress(line: str) -> bool:
     global training_run_info
     match = WEB_PROGRESS_RE.match(line)
     if match is not None:
         current_epoch = int(match.group(1))
         total_epochs = int(match.group(2))
-        if training_run_info is not None and current_epoch > 0 and total_epochs > 0:
-            training_run_info["current_epoch"] = min(current_epoch, total_epochs)
-            training_run_info["total_epochs"] = total_epochs
-            training_run_info["progress_detail"] = ""
+        update_training_progress(current_epoch, total_epochs, parse_progress_fields(match.group("fields")))
+        return True
+
+    match = DFINE_PROGRESS_LOG_RE.match(line)
+    if match is not None:
+        raw_epoch = int(match.group("epoch"))
+        total_epochs = int(match.group("total"))
+        fields = {
+            "step": match.group("step"),
+            "steps": match.group("steps"),
+            "eta": match.group("eta"),
+            "lr": match.group("lr"),
+            "loss": match.group("loss"),
+            "loss_avg": match.group("loss_avg"),
+        }
+        update_training_progress(raw_epoch + 1, total_epochs, fields)
         return True
 
     match = RFDETR_VALIDATION_PROGRESS_RE.search(line)
@@ -3981,10 +4088,11 @@ def capture_epoch_progress(line: str) -> bool:
 
     current_epoch = int(match.group(1))
     total_epochs = int(match.group(2))
-    if training_run_info is not None and current_epoch > 0 and total_epochs > 0:
-        training_run_info["current_epoch"] = min(current_epoch, total_epochs)
-        training_run_info["total_epochs"] = total_epochs
-        training_run_info["progress_detail"] = "RF-DETR validation metrics were updated from the latest validation block."
+    update_training_progress(
+        current_epoch,
+        total_epochs,
+        detail="RF-DETR validation metrics were updated from the latest validation block.",
+    )
     return False
 
 
@@ -4195,7 +4303,10 @@ def epoch_progress(run_info: dict, running: bool) -> dict:
     total = max(0, int(run_info.get("total_epochs") or 0))
     completed = completed_epoch_from_results(run_info)
     current = max(0, int(run_info.get("current_epoch") or 0))
+    step = max(0, int(run_info.get("current_step") or 0))
+    total_steps = max(0, int(run_info.get("total_steps") or 0))
     detail = str(run_info.get("progress_detail") or "").strip()
+    progress_percent = progress_number(run_info.get("progress_percent"))
 
     if running and current == 0 and total:
         current = min(completed + 1, total)
@@ -4210,7 +4321,10 @@ def epoch_progress(run_info: dict, running: bool) -> dict:
     if total:
         current = min(current, total)
         completed = min(completed, total)
-        percent = round((current / total) * 100, 1)
+        if running and progress_percent is not None:
+            percent = round(max(0, min(100, progress_percent)), 1)
+        else:
+            percent = round((current / total) * 100, 1)
     else:
         percent = 0.0
 
@@ -4218,6 +4332,8 @@ def epoch_progress(run_info: dict, running: bool) -> dict:
         "current": current,
         "completed": completed,
         "total": total,
+        "step": step,
+        "steps": total_steps,
         "percent": percent,
         "detail": detail,
     }

@@ -199,6 +199,11 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('backend: "dfine"', script)
         self.assertIn('dfine: "runs/dfine"', script)
         self.assertIn('uploadFamily === "dfine"', script)
+        self.assertIn("DFINE_PROGRESS_LOG_RE", app_source)
+        self.assertIn("parse_progress_fields", app_source)
+        self.assertIn("current_step", app_source)
+        self.assertIn("progress_percent", app_source)
+        self.assertIn("dfine_progress_marker", train_source)
 
     def test_rfdetr_progress_and_results_refresh_are_supported(self):
         script = APP_JS.read_text(encoding="utf-8")

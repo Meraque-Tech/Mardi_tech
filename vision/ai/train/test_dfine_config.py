@@ -6,6 +6,7 @@ import csv
 import yaml
 
 from vision.ai.train.train_dfine import (
+    dfine_progress_marker,
     parse_dfine_coco_ap_line,
     parse_dfine_progress_line,
     upsert_live_result,
@@ -49,9 +50,17 @@ def test_dfine_progress_line_is_normalized_for_web_metrics():
     assert parsed["raw_epoch"] == 0
     assert parsed["step"] == 200
     assert parsed["total_steps"] == 1351
+    assert parsed["eta"] == "0:03:15"
     assert parsed["lr"] == 0.000162
     assert parsed["train/loss"] == 29.0367
+    assert parsed["train/loss_avg"] == 29.0367
     assert parsed["train/loss_step"] == 26.7643
+
+    marker = dfine_progress_marker(parsed, 3)
+    assert marker == (
+        "WEB_TRAINING_PROGRESS epoch=1 total=3 step=200 steps=1351 "
+        "loss=26.7643 loss_avg=29.0367 lr=0.000162 eta=0:03:15"
+    )
 
 
 def test_dfine_live_results_are_preserved_by_finalization(tmp_path):
