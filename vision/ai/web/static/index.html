@@ -1220,6 +1220,7 @@
           <button id="magic-close" class="secondary compact" type="button" aria-label="Close Magic Button">Close</button>
         </div>
         <div class="magic-body">
+          <p class="magic-intro">Choose a score, set its target, and add it to the adjustment set. All listed scores are applied together.</p>
           <section class="magic-option-panel">
             <h3>Overall Metrics</h3>
             <div class="magic-option-grid" id="magic-overall-options"></div>
@@ -1239,11 +1240,26 @@
             <input id="magic-target" type="number" min="0" max="1" step="0.0001">
           </label>
           <p class="magic-current" id="magic-current"></p>
+          <button id="magic-add" class="secondary magic-add-button" type="button">Add score</button>
+          <section class="magic-selection-panel" aria-labelledby="magic-selection-title">
+            <div class="magic-selection-header">
+              <h3 id="magic-selection-title">Selected adjustments</h3>
+              <div class="magic-selection-tools">
+                <span id="magic-selection-count">0 selected</span>
+                <button id="magic-clear" class="secondary compact" type="button" disabled>Clear pending</button>
+              </div>
+            </div>
+            <p id="magic-empty">No scores selected yet.</p>
+            <div id="magic-adjustment-list" class="magic-adjustment-list"></div>
+          </section>
           <p class="magic-status" id="magic-status">Raw logs, results.csv, and weights stay unchanged.</p>
         </div>
         <div class="magic-actions">
-          <button id="magic-cancel" class="secondary" type="button">Cancel</button>
-          <button id="magic-apply" class="primary magic-apply-button" type="button">Apply</button>
+          <button id="magic-reset" class="secondary danger" type="button" disabled>Reset to raw</button>
+          <div class="magic-action-group">
+            <button id="magic-cancel" class="secondary" type="button">Cancel</button>
+            <button id="magic-apply" class="primary magic-apply-button" type="button" disabled>Apply all</button>
+          </div>
         </div>
       </section>
     </div>

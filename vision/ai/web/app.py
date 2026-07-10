@@ -361,10 +361,18 @@ class WeightRequest(BaseModel):
     name: str = "train"
 
 
-class MagicMetricsRequest(WeightRequest):
+class MagicMetricAdjustment(BaseModel):
     scope: str = "overall"
     metric_key: str = "map50_95"
     target: float = Field(ge=0, le=1)
+    class_name: str = ""
+
+
+class MagicMetricsRequest(WeightRequest):
+    adjustments: list[MagicMetricAdjustment] = Field(default_factory=list)
+    scope: str = "overall"
+    metric_key: str = "map50_95"
+    target: Optional[float] = Field(default=None, ge=0, le=1)
     class_name: str = ""
 
 
@@ -2253,12 +2261,16 @@ def magic_metric_value(row: dict, key: str, default: float) -> float:
 
 
 def rebalanced_metric_values(values: list[float], target: float, digits: int = 4) -> list[float]:
+    return rebalanced_metric_total(values, target * len(values), digits)
+
+
+def rebalanced_metric_total(values: list[float], target_total: float, digits: int = 4) -> list[float]:
     if not values:
         return []
     scale = 10 ** digits
-    target_total = int(round(target * scale)) * len(values)
+    target_integer_total = int(round(target_total * scale))
     integers = [min(scale, max(0, int(round(value * scale)))) for value in values]
-    difference = target_total - sum(integers)
+    difference = target_integer_total - sum(integers)
     while difference:
         step = 1 if difference > 0 else -1
         progressed = False
@@ -2382,9 +2394,16 @@ def base_magic_classes(metrics: dict, rng: random.Random) -> list[dict]:
     return classes
 
 
-def adjust_overall_magic_metric(metrics: dict, metric_key: str, target: float, rng: random.Random) -> tuple[dict, list[dict]]:
+def adjust_overall_magic_metric(
+    metrics: dict,
+    metric_key: str,
+    target: float,
+    rng: random.Random,
+    locked_metrics: Optional[set[tuple[str, str]]] = None,
+) -> tuple[dict, list[dict]]:
     classes = base_magic_classes(metrics, rng)
     summary = summarize_adjusted_classes(classes, metrics)
+    locked_metrics = locked_metrics or set()
     if not classes:
         summary[metric_key] = format_metric(target)
         if metric_key in {"precision", "recall"}:
@@ -2396,12 +2415,34 @@ def adjust_overall_magic_metric(metrics: dict, metric_key: str, target: float, r
 
     if metric_key in {"map50_95", "map50", "precision", "recall"}:
         current = magic_metric_value(summary, metric_key, target)
+        free_indexes = [
+            index
+            for index, row in enumerate(classes)
+            if (str(row.get("class_name") or ""), metric_key) not in locked_metrics
+        ]
+        locked_total = sum(
+            magic_metric_value(row, metric_key, current)
+            for index, row in enumerate(classes)
+            if index not in free_indexes
+        )
+        remaining_total = (target * len(classes)) - locked_total
+        if not free_indexes and abs(remaining_total) <= 0.00005:
+            summary[metric_key] = format_metric(target)
+            return summary, classes
+        if not free_indexes or remaining_total < -0.00005 or remaining_total > len(free_indexes) + 0.00005:
+            raise HTTPException(
+                status_code=409,
+                detail=f"The fixed per-class values cannot satisfy the requested {MAGIC_OVERALL_METRICS[metric_key]} target.",
+            )
+        free_target = remaining_total / len(free_indexes)
         raw_values = []
-        for row in classes:
-            value = magic_metric_value(row, metric_key, current)
-            raw_values.append(clamp_metric(value + (target - current) + rng.uniform(-0.035, 0.035)))
-        balanced = rebalanced_metric_values(raw_values, target)
-        for row, value in zip(classes, balanced):
+        free_current = sum(magic_metric_value(classes[index], metric_key, current) for index in free_indexes) / len(free_indexes)
+        for index in free_indexes:
+            value = magic_metric_value(classes[index], metric_key, current)
+            raw_values.append(clamp_metric(value + (free_target - free_current)))
+        balanced = rebalanced_metric_total(raw_values, remaining_total)
+        for index, value in zip(free_indexes, balanced):
+            row = classes[index]
             row[metric_key] = format_metric(value)
             if metric_key == "map50_95":
                 row["map50"] = format_metric(max(value, magic_metric_value(row, "map50", value)))
@@ -2412,16 +2453,45 @@ def adjust_overall_magic_metric(metrics: dict, metric_key: str, target: float, r
                 recall = magic_metric_value(row, "recall", target)
                 row["f1"] = format_metric(f1_from_precision_recall(precision, recall))
     elif metric_key in {"macro_f1", "weighted_f1"}:
+        free_indexes = [
+            index
+            for index, row in enumerate(classes)
+            if (str(row.get("class_name") or ""), "f1") not in locked_metrics
+        ]
+        if not free_indexes:
+            raise HTTPException(status_code=409, detail="The fixed per-class F1 values leave no classes available to rebalance.")
         if metric_key == "macro_f1":
-            current = magic_metric_value(summary, "macro_f1", target)
+            locked_total = sum(
+                magic_metric_value(row, "f1", 0.0)
+                for index, row in enumerate(classes)
+                if index not in free_indexes
+            )
+            remaining_total = (target * len(classes)) - locked_total
+            if remaining_total < -0.00005 or remaining_total > len(free_indexes) + 0.00005:
+                raise HTTPException(status_code=409, detail="The fixed per-class F1 values cannot satisfy the requested Macro F1 target.")
+            free_current = sum(magic_metric_value(classes[index], "f1", target) for index in free_indexes) / len(free_indexes)
+            free_target = remaining_total / len(free_indexes)
             raw_values = [
-                clamp_metric(magic_metric_value(row, "f1", current) + (target - current) + rng.uniform(-0.035, 0.035))
-                for row in classes
+                clamp_metric(magic_metric_value(classes[index], "f1", free_current) + (free_target - free_current))
+                for index in free_indexes
             ]
-            f1_values = rebalanced_metric_values(raw_values, target)
+            f1_values = rebalanced_metric_total(raw_values, remaining_total)
         else:
-            f1_values = [target for _ in classes]
-        classes = [row_with_f1(row, value, rng) for row, value in zip(classes, f1_values)]
+            instance_weights = [max(0, int(row.get("instances") or 0)) for row in classes]
+            if not sum(instance_weights):
+                instance_weights = [1 for _ in classes]
+            locked_total = sum(
+                magic_metric_value(row, "f1", 0.0) * instance_weights[index]
+                for index, row in enumerate(classes)
+                if index not in free_indexes
+            )
+            free_weight = sum(instance_weights[index] for index in free_indexes)
+            remaining_weighted_total = (target * sum(instance_weights)) - locked_total
+            if not free_weight or remaining_weighted_total < -0.00005 or remaining_weighted_total > free_weight + 0.00005:
+                raise HTTPException(status_code=409, detail="The fixed per-class F1 values cannot satisfy the requested Weighted F1 target.")
+            f1_values = [clamp_metric(remaining_weighted_total / free_weight) for _ in free_indexes]
+        for index, value in zip(free_indexes, f1_values):
+            classes[index] = row_with_f1(classes[index], value, rng)
 
     summary = summarize_adjusted_classes(classes, metrics)
     summary[metric_key] = format_metric(target)
@@ -2459,24 +2529,156 @@ def adjust_per_class_magic_metric(metrics: dict, metric_key: str, target: float,
     return summarize_adjusted_classes(classes, metrics), classes
 
 
-def build_magic_metrics_overlay(metrics: dict, scope: str, metric_key: str, target_value: float, class_name: str = "") -> dict:
-    scope = str(scope or "overall").strip().lower()
-    metric_key = str(metric_key or "").strip().lower()
-    target = format_metric(clamp_metric(float(target_value)))
-    if target is None:
-        target = 0.0
+def normalize_magic_adjustment(adjustment: dict) -> dict:
+    if not isinstance(adjustment, dict):
+        raise HTTPException(status_code=400, detail="Each Magic Button adjustment must be a JSON object.")
+    scope = str(adjustment.get("scope") or "overall").strip().lower()
+    metric_key = str(adjustment.get("metric_key") or "map50_95").strip().lower()
+    class_name = str(adjustment.get("class_name") or "").strip()
+    try:
+        target = float(adjustment.get("target"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Every Magic Button target must be a number between 0 and 1.") from None
+    if not math.isfinite(target) or target < 0 or target > 1:
+        raise HTTPException(status_code=400, detail="Every Magic Button target must be a number between 0 and 1.")
     if scope == "overall" and metric_key not in MAGIC_OVERALL_METRICS:
         raise HTTPException(status_code=400, detail="Choose a supported overall metric to adjust.")
     if scope == "per_class" and metric_key not in MAGIC_PER_CLASS_METRICS:
         raise HTTPException(status_code=400, detail="Choose a supported per-class metric to adjust.")
+    if scope not in {"overall", "per_class"}:
+        raise HTTPException(status_code=400, detail="Magic Button scope must be overall or per_class.")
+    if scope == "per_class" and not class_name:
+        raise HTTPException(status_code=400, detail="Choose a class for every per-class adjustment.")
+    return {
+        "scope": scope,
+        "metric_key": metric_key,
+        "target": format_metric(target),
+        "class_name": class_name if scope == "per_class" else "",
+    }
 
-    rng = random.Random()
-    if scope == "per_class":
-        summary, adjusted_classes = adjust_per_class_magic_metric(metrics, metric_key, target, class_name, rng)
+
+def validate_magic_adjustments(adjustments: list[dict]):
+    if not adjustments:
+        raise HTTPException(status_code=400, detail="Add at least one score before applying Magic Button adjustments.")
+    if len(adjustments) > 50:
+        raise HTTPException(status_code=400, detail="Magic Button supports at most 50 adjustments at once.")
+
+    identities = set()
+    grouped: dict[tuple[str, str], dict[str, float]] = {}
+    for adjustment in adjustments:
+        identity = (adjustment["scope"], adjustment["class_name"], adjustment["metric_key"])
+        if identity in identities:
+            raise HTTPException(status_code=400, detail=f"Duplicate Magic Button adjustment: {magic_adjustment_label(adjustment['scope'], adjustment['metric_key'], adjustment['class_name'])}.")
+        identities.add(identity)
+        group_key = (adjustment["scope"], adjustment["class_name"])
+        grouped.setdefault(group_key, {})[adjustment["metric_key"]] = adjustment["target"]
+
+    for (scope, class_name), targets in grouped.items():
+        if "map50" in targets and "map50_95" in targets and targets["map50"] < targets["map50_95"]:
+            label = class_name or "Overall"
+            raise HTTPException(status_code=409, detail=f"{label} AP50 cannot be lower than AP50-95.")
+        if scope == "per_class" and "f1" in targets and ({"precision", "recall"} & targets.keys()):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Choose either F1 or Precision/Recall for {class_name}; F1 is derived automatically when Precision or Recall is adjusted.",
+            )
+
+    overall = grouped.get(("overall", ""), {})
+    if ({"macro_f1", "weighted_f1"} & overall.keys()) and ({"precision", "recall"} & overall.keys()):
+        raise HTTPException(
+            status_code=409,
+            detail="Overall F1 targets cannot be combined with overall Precision or Recall targets because they control the same values.",
+        )
+    if "macro_f1" in overall and "weighted_f1" in overall:
+        raise HTTPException(status_code=409, detail="Choose either Macro F1 or Weighted F1 in one adjustment set.")
+
+
+def magic_locked_metrics(adjustments: list[dict]) -> set[tuple[str, str]]:
+    locked = set()
+    for adjustment in adjustments:
+        if adjustment["scope"] != "per_class":
+            continue
+        class_name = adjustment["class_name"]
+        metric_key = adjustment["metric_key"]
+        locked.add((class_name, metric_key))
+        if metric_key == "f1":
+            locked.update({(class_name, "precision"), (class_name, "recall")})
+        if metric_key in {"precision", "recall"}:
+            locked.add((class_name, "f1"))
+    return locked
+
+
+def verify_magic_adjustment_targets(summary: dict, classes: list[dict], adjustments: list[dict]):
+    class_rows = {str(row.get("class_name") or ""): row for row in classes}
+    for adjustment in adjustments:
+        source = summary if adjustment["scope"] == "overall" else class_rows.get(adjustment["class_name"])
+        if source is None:
+            raise HTTPException(status_code=404, detail=f"Selected class {adjustment['class_name']} was not found in the run metrics.")
+        actual = float_value(source, adjustment["metric_key"])
+        if actual is None or abs(actual - adjustment["target"]) > 0.0002:
+            label = magic_adjustment_label(adjustment["scope"], adjustment["metric_key"], adjustment["class_name"])
+            raise HTTPException(
+                status_code=409,
+                detail=f"The selected combination cannot preserve the requested {label} target. Remove a related target and try again.",
+            )
+
+
+def build_magic_metrics_overlay(
+    metrics: dict,
+    scope,
+    metric_key: Optional[str] = None,
+    target_value: Optional[float] = None,
+    class_name: str = "",
+) -> dict:
+    if isinstance(scope, list):
+        adjustments = [normalize_magic_adjustment(item) for item in scope]
     else:
-        summary, adjusted_classes = adjust_overall_magic_metric(metrics, metric_key, target, rng)
+        adjustments = [normalize_magic_adjustment({
+            "scope": scope,
+            "metric_key": metric_key,
+            "target": target_value,
+            "class_name": class_name,
+        })]
+    validate_magic_adjustments(adjustments)
 
-    label = magic_adjustment_label(scope, metric_key, class_name)
+    rng = random.Random(0)
+    working = dict(metrics)
+    working["per_class"] = base_magic_classes(metrics, rng)
+    summary_keys = ("precision", "recall", "map50", "map50_95", "macro_f1", "weighted_f1")
+
+    per_class_adjustments = [item for item in adjustments if item["scope"] == "per_class"]
+    per_class_order = {"map50_95": 0, "map50": 1, "precision": 2, "recall": 3, "f1": 4}
+    for adjustment in sorted(per_class_adjustments, key=lambda item: per_class_order[item["metric_key"]]):
+        summary, adjusted_classes = adjust_per_class_magic_metric(
+            working,
+            adjustment["metric_key"],
+            adjustment["target"],
+            adjustment["class_name"],
+            rng,
+        )
+        working.update(summary)
+        working["per_class"] = adjusted_classes
+
+    locked_metrics = magic_locked_metrics(adjustments)
+    overall_adjustments = [item for item in adjustments if item["scope"] == "overall"]
+    overall_order = {"map50_95": 0, "map50": 1, "precision": 2, "recall": 3, "macro_f1": 4, "weighted_f1": 5}
+    for adjustment in sorted(overall_adjustments, key=lambda item: overall_order[item["metric_key"]]):
+        summary, adjusted_classes = adjust_overall_magic_metric(
+            working,
+            adjustment["metric_key"],
+            adjustment["target"],
+            rng,
+            locked_metrics,
+        )
+        working.update(summary)
+        working["per_class"] = adjusted_classes
+
+    summary = {key: working.get(key) for key in summary_keys}
+    adjusted_classes = working.get("per_class") or []
+    verify_magic_adjustment_targets(summary, adjusted_classes, adjustments)
+
+    labels = [magic_adjustment_label(item["scope"], item["metric_key"], item["class_name"]) for item in adjustments]
+    first = adjustments[0]
     note = (
         "Magic Button adjusted metrics are active. These values are generated from the original run metrics "
         "for report preview and are not raw validation results."
@@ -2484,13 +2686,14 @@ def build_magic_metrics_overlay(metrics: dict, scope: str, metric_key: str, targ
 
     return {
         "created_at": datetime.now(MYT).isoformat(),
-        "target": format_metric(target),
-        "scope": scope,
-        "metric_key": metric_key,
-        "class_name": class_name,
+        "adjustments": adjustments,
+        "target": first["target"],
+        "scope": first["scope"],
+        "metric_key": first["metric_key"],
+        "class_name": first["class_name"],
         "original": {
-            key: metrics.get(key)
-            for key in ("precision", "recall", "map50", "map50_95", "macro_f1", "weighted_f1")
+            **{key: metrics.get(key) for key in summary_keys},
+            "per_class": [dict(row) for row in metrics.get("per_class") or []],
         },
         "metrics": {
             "precision": summary.get("precision"),
@@ -2501,11 +2704,12 @@ def build_magic_metrics_overlay(metrics: dict, scope: str, metric_key: str, targ
             "weighted_f1": summary.get("weighted_f1"),
             "per_class": adjusted_classes,
             "magic_adjusted": True,
-            "magic_target": format_metric(target),
-            "magic_metric_key": metric_key,
-            "magic_scope": scope,
-            "magic_class_name": class_name,
-            "magic_adjustment_label": label,
+            "magic_adjustments": adjustments,
+            "magic_target": first["target"],
+            "magic_metric_key": first["metric_key"],
+            "magic_scope": first["scope"],
+            "magic_class_name": first["class_name"],
+            "magic_adjustment_label": ", ".join(labels),
             "overall_metric_source": "magic_button",
             "per_class_source": "magic_button",
             "note": note,
@@ -2516,20 +2720,22 @@ def build_magic_metrics_overlay(metrics: dict, scope: str, metric_key: str, targ
 def parse_magic_metrics_payload(payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Magic Button request body must be a JSON object.")
-    target_value = payload.get("target", payload.get("map50_95"))
-    try:
-        target = float(target_value)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Magic Button target must be a number between 0 and 1.") from None
-    if not math.isfinite(target) or target < 0 or target > 1:
-        raise HTTPException(status_code=400, detail="Magic Button target must be a number between 0 and 1.")
+    raw_adjustments = payload.get("adjustments")
+    if raw_adjustments is None:
+        raw_adjustments = [{
+            "scope": payload.get("scope") or "overall",
+            "metric_key": payload.get("metric_key") or "map50_95",
+            "target": payload.get("target", payload.get("map50_95")),
+            "class_name": payload.get("class_name") or "",
+        }]
+    if not isinstance(raw_adjustments, list):
+        raise HTTPException(status_code=400, detail="Magic Button adjustments must be a JSON array.")
+    adjustments = [normalize_magic_adjustment(item) for item in raw_adjustments]
+    validate_magic_adjustments(adjustments)
     return {
         "project": str(payload.get("project") or "runs/detect"),
         "name": str(payload.get("name") or "train"),
-        "scope": str(payload.get("scope") or "overall"),
-        "metric_key": str(payload.get("metric_key") or "map50_95"),
-        "target": target,
-        "class_name": str(payload.get("class_name") or ""),
+        "adjustments": adjustments,
     }
 
 
@@ -2543,6 +2749,7 @@ def apply_magic_metrics_overlay(run_dir: Path, metrics: dict) -> dict:
     merged["magic_adjusted"] = True
     merged["magic_created_at"] = overlay.get("created_at")
     merged["magic_original"] = overlay.get("original") if isinstance(overlay.get("original"), dict) else {}
+    merged["magic_adjustments"] = overlay.get("adjustments") if isinstance(overlay.get("adjustments"), list) else merged.get("magic_adjustments", [])
     return merged
 
 
@@ -6928,13 +7135,21 @@ def magic_train_metrics(payload: Optional[dict] = Body(default=None)):
         raise HTTPException(status_code=409, detail="The selected training run has no completed metrics to adjust.")
     overlay = build_magic_metrics_overlay(
         metrics,
-        request["scope"],
-        request["metric_key"],
-        request["target"],
-        request["class_name"],
+        request["adjustments"],
     )
     write_json_object(run_dir / MAGIC_METRICS_FILE, overlay)
     result = apply_magic_metrics_overlay(run_dir, metrics)
+    result["resolution_type"] = resolution_type
+    return result
+
+
+@app.post("/api/train/metrics/magic/reset")
+def reset_magic_train_metrics(request: WeightRequest):
+    if current_status()["running"]:
+        raise HTTPException(status_code=409, detail="Wait for training to finish before resetting adjusted metrics.")
+    run_dir, resolution_type = resolve_run_dir_details(request.project, request.name)
+    (run_dir / MAGIC_METRICS_FILE).unlink(missing_ok=True)
+    result = read_run_metrics(run_dir, include_magic=False)
     result["resolution_type"] = resolution_type
     return result
 

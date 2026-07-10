@@ -2191,6 +2191,20 @@ button.magic-button:disabled:hover {
   color: #7a6336;
 }
 
+.has-magic-metrics #metric-precision,
+.has-magic-metrics #metric-recall,
+.has-magic-metrics #metric-macro-f1,
+.has-magic-metrics #metric-weighted-f1,
+.has-magic-metrics #metric-map50,
+.has-magic-metrics #metric-map {
+  color: #975a16;
+}
+
+.has-magic-metrics #class-metrics {
+  border-left: 3px solid #d69e2e;
+  padding-left: 10px;
+}
+
 .magic-modal[hidden] {
   display: none;
 }
@@ -2252,6 +2266,12 @@ button.magic-button:disabled:hover {
   display: grid;
   gap: 14px;
   padding: 16px 18px;
+}
+
+.magic-intro {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .magic-option-panel {
@@ -2324,6 +2344,88 @@ button.magic-button:disabled:hover {
   font-size: 13px;
 }
 
+.magic-add-button {
+  justify-self: start;
+  min-width: 120px;
+  border-color: #b7791f;
+}
+
+.magic-selection-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fffaf0;
+}
+
+.magic-selection-header,
+.magic-selection-tools,
+.magic-adjustment-row,
+.magic-adjustment-controls,
+.magic-action-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.magic-selection-header {
+  justify-content: space-between;
+}
+
+.magic-selection-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.magic-selection-header h3,
+.magic-selection-panel p {
+  margin: 0;
+}
+
+.magic-selection-header span,
+.magic-selection-panel p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.magic-adjustment-list {
+  display: grid;
+  gap: 8px;
+}
+
+.magic-adjustment-row {
+  justify-content: space-between;
+  border: 1px solid #ead8ad;
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #fff;
+}
+
+.magic-adjustment-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.magic-adjustment-copy strong,
+.magic-adjustment-copy small {
+  overflow-wrap: anywhere;
+}
+
+.magic-adjustment-copy small {
+  color: var(--muted);
+}
+
+.magic-remove-adjustment {
+  flex: 0 0 auto;
+}
+
+.magic-adjustment-controls {
+  flex: 0 0 auto;
+}
+
 .magic-status.error {
   color: #b42318;
   font-weight: 800;
@@ -2332,6 +2434,10 @@ button.magic-button:disabled:hover {
 .magic-actions {
   border-top: 1px solid var(--line);
   background: #fbfcfd;
+}
+
+.magic-action-group {
+  justify-content: flex-end;
 }
 
 .magic-apply-button {
@@ -2347,6 +2453,11 @@ button.magic-button:disabled:hover {
   .magic-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .magic-action-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 }
 

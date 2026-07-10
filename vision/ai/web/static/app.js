@@ -8,6 +8,7 @@ const state = {
   metricsHistory: [],
   latestMetrics: null,
   magicChoice: null,
+  magicAdjustments: [],
   metricLabels: {},
   performanceChartTitle: "Detection Performance by Epoch",
   metricsAvailable: false,
@@ -2875,6 +2876,15 @@ function setArtifactButtons(artifacts) {
     || state.downloads.has("magic_metrics");
 }
 
+function setMagicAdjustedState(metrics = null) {
+  const adjusted = Boolean(metrics?.magic_adjusted);
+  const count = Array.isArray(metrics?.magic_adjustments) ? metrics.magic_adjustments.length : (adjusted ? 1 : 0);
+  $("training-results-panel").classList.toggle("has-magic-metrics", adjusted);
+  $("magic-metrics").textContent = adjusted && count
+    ? `Magic Button (${count})`
+    : "Magic Button";
+}
+
 function artifactViewUrl(artifact, target, status) {
   const params = new URLSearchParams({
     project: target.project,
@@ -4576,6 +4586,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
       renderClassMetrics([]);
       resetCharts();
       setArtifactButtons(metrics.artifacts || false);
+      setMagicAdjustedState();
       renderConfusionMatrices(metrics.artifacts || {}, target, metrics);
       renderRocAuc({}, metrics.artifacts || {}, target);
       $("metrics-status").textContent = "No results.csv found for this run yet.";
@@ -4598,6 +4609,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     renderClassMetrics(metrics.per_class);
     renderMetricCharts(metrics.history, metrics.metric_labels);
     setArtifactButtons(metrics.artifacts || true);
+    setMagicAdjustedState(metrics);
     renderConfusionMatrices(metrics.artifacts || {}, target, metrics);
     renderRocAuc(metrics.roc_auc || {}, metrics.artifacts || {}, target);
     $("metrics-status").textContent = `Epoch ${metrics.epoch}. ${metrics.note}`;
@@ -4611,6 +4623,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     $("metric-recall").textContent = "-";
     resetCharts();
     setArtifactButtons(false);
+    setMagicAdjustedState();
     renderConfusionMatrices({}, target);
     renderRocAuc({}, {}, target);
     $("metrics-status").textContent = error.message;
@@ -4720,7 +4733,7 @@ async function downloadTrainingReport() {
 }
 
 function magicCurrentValue(metrics, choice, classChoice) {
-  const source = choice.scope === "per_class" ? classChoice?.row : metrics;
+  const source = choice.scope === "per_class" ? classChoice : metrics;
   const fallbackKeys = {
     map50_95: ["ap50_95", "AP50-95"],
     map50: ["ap50", "AP50"],
@@ -4760,6 +4773,96 @@ function magicChoiceLabel(choice, classRow = null) {
 function setMagicStatus(text, isError = false) {
   $("magic-status").textContent = text;
   $("magic-status").classList.toggle("error", isError);
+}
+
+function magicAdjustmentId(adjustment) {
+  return [adjustment.scope, adjustment.class_name || "", adjustment.metric_key].join("::");
+}
+
+function magicExistingAdjustments(metrics) {
+  if (Array.isArray(metrics?.magic_adjustments) && metrics.magic_adjustments.length) {
+    return metrics.magic_adjustments.map((adjustment) => ({
+      scope: adjustment.scope,
+      metric_key: adjustment.metric_key,
+      target: Number(adjustment.target),
+      class_name: adjustment.class_name || "",
+    })).filter((adjustment) => Number.isFinite(adjustment.target));
+  }
+  if (metrics?.magic_adjusted && metrics.magic_metric_key) {
+    return [{
+      scope: metrics.magic_scope || "overall",
+      metric_key: metrics.magic_metric_key,
+      target: Number(metrics.magic_target),
+      class_name: metrics.magic_class_name || "",
+    }].filter((adjustment) => Number.isFinite(adjustment.target));
+  }
+  return [];
+}
+
+function magicOptionForAdjustment(adjustment) {
+  return [...MAGIC_OVERALL_OPTIONS, ...MAGIC_PER_CLASS_OPTIONS]
+    .find((option) => option.scope === adjustment.scope && option.key === adjustment.metric_key);
+}
+
+function renderMagicAdjustments() {
+  const list = $("magic-adjustment-list");
+  const adjustments = state.magicAdjustments;
+  $("magic-selection-count").textContent = `${adjustments.length} selected`;
+  $("magic-empty").hidden = adjustments.length > 0;
+  $("magic-clear").disabled = adjustments.length === 0;
+  list.innerHTML = adjustments.map((adjustment) => {
+    const option = magicOptionForAdjustment(adjustment);
+    const label = adjustment.scope === "per_class"
+      ? `${adjustment.class_name || "Class"} ${option?.label || adjustment.metric_key}`
+      : option?.label || adjustment.metric_key;
+    return `
+      <div class="magic-adjustment-row" data-magic-adjustment-id="${escapeHtml(magicAdjustmentId(adjustment))}">
+        <span class="magic-adjustment-copy">
+          <strong>${escapeHtml(label)}</strong>
+          <small>${adjustment.scope === "per_class" ? "Per-class" : "Overall"} target: ${Number(adjustment.target).toFixed(4)}</small>
+        </span>
+        <span class="magic-adjustment-controls">
+          <button class="secondary compact" type="button" data-magic-edit="${escapeHtml(magicAdjustmentId(adjustment))}">Edit</button>
+          <button class="secondary danger compact magic-remove-adjustment" type="button" data-magic-remove="${escapeHtml(magicAdjustmentId(adjustment))}">Remove</button>
+        </span>
+      </div>`;
+  }).join("");
+  $("magic-apply").disabled = adjustments.length === 0;
+}
+
+function addMagicAdjustment() {
+  const metrics = state.latestMetrics;
+  const choice = state.magicChoice;
+  if (!metrics?.available || !choice) {
+    setMagicStatus("Metrics are not available for this run.", true);
+    return;
+  }
+  const classRow = choice.scope === "per_class" ? selectedMagicClass(metrics) : null;
+  if (choice.scope === "per_class" && !classRow) {
+    setMagicStatus("Choose a class row.", true);
+    return;
+  }
+  const target = Number($("magic-target").value);
+  if (!Number.isFinite(target) || target < 0 || target > 1) {
+    setMagicStatus("Enter a target score between 0 and 1.", true);
+    return;
+  }
+  const adjustment = {
+    scope: choice.scope,
+    metric_key: choice.key,
+    target,
+    class_name: classRow?.class_name || "",
+  };
+  const identity = magicAdjustmentId(adjustment);
+  const existingIndex = state.magicAdjustments.findIndex((item) => magicAdjustmentId(item) === identity);
+  if (existingIndex >= 0) {
+    state.magicAdjustments[existingIndex] = adjustment;
+    setMagicStatus("Updated the selected score target. Apply all to save the complete set.");
+  } else {
+    state.magicAdjustments.push(adjustment);
+    setMagicStatus("Added the score. Apply all to save the complete set.");
+  }
+  renderMagicAdjustments();
 }
 
 function renderMagicOptionGroup(containerId, options) {
@@ -4830,7 +4933,7 @@ function updateMagicModalFields() {
     }
   }
   const classRow = isPerClass ? selectedMagicClass(metrics) : null;
-  $("magic-apply").disabled = isPerClass && !classRow;
+  $("magic-add").disabled = isPerClass && !classRow;
 
   const currentValue = magicCurrentValue(metrics, choice, classRow);
   $("magic-target").value = currentValue;
@@ -4850,38 +4953,30 @@ function openMagicMetricsModal() {
   renderMagicOptionGroup("magic-overall-options", MAGIC_OVERALL_OPTIONS);
   renderMagicOptionGroup("magic-per-class-options", MAGIC_PER_CLASS_OPTIONS);
   populateMagicClassSelect(metrics);
+  state.magicAdjustments = magicExistingAdjustments(metrics);
   state.magicChoice = state.magicChoice || MAGIC_OVERALL_OPTIONS[0];
   setMagicChoice(state.magicChoice.scope, state.magicChoice.key);
+  renderMagicAdjustments();
+  $("magic-reset").disabled = !metrics.magic_adjusted;
   $("magic-modal").hidden = false;
   $("magic-modal").querySelector(".magic-dialog")?.focus();
 }
 
 function closeMagicMetricsModal() {
   $("magic-modal").hidden = true;
-  $("magic-apply").disabled = false;
-  $("magic-apply").textContent = "Apply";
+  $("magic-apply").textContent = "Apply all";
   state.downloads.delete("magic_metrics");
 }
 
 async function applyMagicMetrics() {
   const metrics = state.latestMetrics;
-  const choice = state.magicChoice;
-  if (!metrics?.available || !choice) {
+  const adjustments = state.magicAdjustments;
+  if (!metrics?.available) {
     setMagicStatus("Metrics are not available for this run.", true);
     return;
   }
-
-  const classRow = choice.scope === "per_class" ? selectedMagicClass(metrics) : null;
-  if (choice.scope === "per_class" && !classRow) {
-    setMagicStatus("Choose a class row.", true);
-    return;
-  }
-  const label = choice.scope === "per_class"
-    ? `${classRow.class_name || "Class"} ${choice.label}`
-    : choice.label;
-  const target = Number($("magic-target").value);
-  if (!Number.isFinite(target) || target < 0 || target > 1) {
-    setMagicStatus("Enter a target score between 0 and 1.", true);
+  if (!adjustments.length) {
+    setMagicStatus("Add at least one score before applying.", true);
     return;
   }
 
@@ -4895,10 +4990,7 @@ async function applyMagicMetrics() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...weightTarget(),
-        scope: choice.scope,
-        metric_key: choice.key,
-        target,
-        class_name: classRow?.class_name || "",
+        adjustments,
       }),
     });
     if (!response.ok) {
@@ -4906,14 +4998,42 @@ async function applyMagicMetrics() {
       throw new Error(errorDetailText(payload, `Metric adjustment failed: ${response.status}`));
     }
     closeMagicMetricsModal();
-    setMessage(`Magic Button adjusted ${label} to ${target.toFixed(4)} for reports.`);
+    setMessage(`Magic Button applied ${adjustments.length} adjusted ${adjustments.length === 1 ? "score" : "scores"} for reports.`);
     await refreshMetrics();
   } catch (error) {
     setMagicStatus(error.message, true);
   } finally {
     state.downloads.delete("magic_metrics");
     button.disabled = false;
-    button.textContent = "Apply";
+    button.textContent = "Apply all";
+  }
+}
+
+async function resetMagicMetrics() {
+  const button = $("magic-reset");
+  state.downloads.add("magic_metrics");
+  button.disabled = true;
+  button.textContent = "Resetting...";
+  try {
+    const response = await fetch("/api/train/metrics/magic/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(weightTarget()),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(errorDetailText(payload, `Metric reset failed: ${response.status}`));
+    }
+    state.magicAdjustments = [];
+    closeMagicMetricsModal();
+    setMessage("Magic Button adjustments cleared. Raw validation metrics are active.");
+    await refreshMetrics();
+  } catch (error) {
+    setMagicStatus(error.message, true);
+  } finally {
+    state.downloads.delete("magic_metrics");
+    button.textContent = "Reset to raw";
+    button.disabled = !state.latestMetrics?.magic_adjusted;
   }
 }
 
@@ -5395,7 +5515,14 @@ $("download-loss-graph").addEventListener("click", () => downloadArtifact("loss_
 $("download-roc-auc-graph").addEventListener("click", () => downloadArtifact("roc_auc_curve", "roc_auc_curve.png"));
 $("download-training-report").addEventListener("click", downloadTrainingReport);
 $("magic-metrics").addEventListener("click", openMagicMetricsModal);
+$("magic-add").addEventListener("click", addMagicAdjustment);
 $("magic-apply").addEventListener("click", applyMagicMetrics);
+$("magic-reset").addEventListener("click", resetMagicMetrics);
+$("magic-clear").addEventListener("click", () => {
+  state.magicAdjustments = [];
+  renderMagicAdjustments();
+  setMagicStatus("Cleared the pending adjustment set. Saved adjustments remain active until you apply or reset.");
+});
 $("magic-cancel").addEventListener("click", closeMagicMetricsModal);
 $("magic-close").addEventListener("click", closeMagicMetricsModal);
 document.querySelectorAll("[data-magic-close]").forEach((element) => {
@@ -5405,8 +5532,39 @@ $("magic-class-select").addEventListener("change", updateMagicModalFields);
 $("magic-target").addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
-    applyMagicMetrics();
+    addMagicAdjustment();
   }
+});
+$("magic-adjustment-list").addEventListener("click", (event) => {
+  const editButton = event.target.closest("[data-magic-edit]");
+  if (editButton) {
+    const adjustment = state.magicAdjustments
+      .find((item) => magicAdjustmentId(item) === editButton.dataset.magicEdit);
+    if (!adjustment) {
+      return;
+    }
+    setMagicChoice(adjustment.scope, adjustment.metric_key);
+    if (adjustment.scope === "per_class") {
+      const classIndex = magicClasses(state.latestMetrics)
+        .findIndex((row) => row.class_name === adjustment.class_name);
+      if (classIndex >= 0) {
+        $("magic-class-select").value = String(classIndex);
+        updateMagicModalFields();
+      }
+    }
+    $("magic-target").value = String(adjustment.target);
+    $("magic-target").focus();
+    setMagicStatus("Editing the selected score. Choose Add score to update it in the pending set.");
+    return;
+  }
+  const button = event.target.closest("[data-magic-remove]");
+  if (!button) {
+    return;
+  }
+  state.magicAdjustments = state.magicAdjustments
+    .filter((adjustment) => magicAdjustmentId(adjustment) !== button.dataset.magicRemove);
+  renderMagicAdjustments();
+  setMagicStatus("Removed the score from the pending adjustment set.");
 });
 ["magic-overall-options", "magic-per-class-options"].forEach((id) => {
   $(id).addEventListener("click", (event) => {
