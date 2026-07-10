@@ -61,7 +61,7 @@ each node's output dot to the next node's input dot:
 
 | # | Palette item (family) | Params to set |
 |---|---|---|
-| 1 | **Input** (struct) | `shape = [1, 28, 28]`, `input_kind = image` |
+| 1 | **Input** (struct) | `shape = 1, 28, 28`, `input_kind = image` |
 | 2 | **Conv2D** (cnn) | `out_channels = 6`, `kernel_size = 5`, `stride = 1`, `padding = 0` |
 | 3 | **ReLU** (activation) | — |
 | 4 | **MaxPool2D** (cnn) | `kernel_size = 2`, `stride = 2` |
