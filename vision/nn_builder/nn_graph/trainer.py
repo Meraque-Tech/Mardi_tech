@@ -2,6 +2,7 @@
 step/stop control and websocket-friendly progress callbacks.
 """
 
+import random
 import threading
 import time
 import uuid
@@ -90,7 +91,8 @@ class TrainingSession:
         self.lock = threading.Lock()
         self.status = {"running": False, "epoch": 0, "step": 0, "paused": False}
         self.module = None  # last-built model, kept around so "Test" can re-evaluate without retraining
-        self.bundle = None
+        self.bundle = None  # the exact held-out split from the training run (used for the automatic post-training eval)
+        self.dataset_cfg = None  # dataset node params, used to sample a *fresh* random batch for on-demand "Test" clicks
 
     def start(self):
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -140,6 +142,7 @@ class TrainingSession:
             bundle = build_dataset(dataset_cfg)
             self.module = module
             self.bundle = bundle
+            self.dataset_cfg = dataset_cfg
             epochs = int(tc.get("epochs", 20))
             progress_every = int(tc.get("progress_every", 1))
             grad_clip_norm = float(tc.get("grad_clip_norm", 0.0))
@@ -217,7 +220,7 @@ class TrainingSession:
                             break
 
             if not self._stop.is_set():
-                self.evaluate_now()
+                self.evaluate_now(fresh=False)  # the training run's actual held-out split
 
             self.on_message("train/done", {
                 "session_id": self.session_id, "final_epoch": epoch, "early_stopped": early_stopped,
@@ -228,23 +231,37 @@ class TrainingSession:
             with self.lock:
                 self.status["running"] = False
 
-    def evaluate_now(self):
+    def evaluate_now(self, fresh=True):
         """Re-runs test-set evaluation against whatever model is currently
         built (the last completed/in-progress training run), without
-        retraining. Powers the UI's on-demand "Test" button as well as the
-        automatic post-training evaluation above."""
+        retraining.
+
+        fresh=True (the UI's on-demand "Test" button) draws a brand-new random
+        batch from the same dataset config -- different noise/points/MNIST
+        subset/sequence each click, never the model's original training-time
+        held-out split. fresh=False (the automatic post-training call) uses
+        that exact held-out split, matching normal "evaluate on the val set"
+        convention right after training finishes.
+        """
         if self.module is None or self.bundle is None:
             return {"ok": False, "error": "No trained model yet — press Play at least once first."}
-        if self.bundle.val_loader is None:
-            return {"ok": False, "error": "No held-out split to test against (train_ratio was 1.0)."}
-        if not is_classification_task(self.bundle.task):
-            return {"ok": False, "error": f"Test-set evaluation isn't computed for task '{self.bundle.task}'."}
 
-        eval_metrics = evaluate_classification(self.module, self.bundle.val_loader, self.bundle.num_classes)
+        bundle = self.bundle
+        if fresh:
+            cfg = dict(self.dataset_cfg)
+            cfg["seed"] = random.randint(0, 2**31 - 1)
+            bundle = build_dataset(cfg)
+
+        if bundle.val_loader is None:
+            return {"ok": False, "error": "No held-out split to test against (train_ratio was 1.0)."}
+        if not is_classification_task(bundle.task):
+            return {"ok": False, "error": f"Test-set evaluation isn't computed for task '{bundle.task}'."}
+
+        eval_metrics = evaluate_classification(self.module, bundle.val_loader, bundle.num_classes)
         if eval_metrics is None:
             return {"ok": False, "error": "Held-out split is empty."}
-        if self.bundle.task == "image":
-            eval_metrics["samples"] = collect_image_samples(self.module, self.bundle.val_loader)
+        if bundle.task == "image":
+            eval_metrics["samples"] = collect_image_samples(self.module, bundle.val_loader)
         self.on_message("train/eval", {"session_id": self.session_id, **eval_metrics})
         return {"ok": True}
 

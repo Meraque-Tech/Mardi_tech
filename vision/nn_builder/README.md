@@ -140,11 +140,17 @@ MNIST, `sequence_classify`) with:
 
 There's also a standalone **Test** button next to Play/Pause/Step/Stop that
 re-runs this same evaluation against whatever model is currently built,
-without retraining — useful for re-checking after tweaking something that
-doesn't affect the weights, or repeatedly sanity-checking mid-experimentation.
-It calls `POST /api/train/evaluate`, which reuses the last-built model kept on
-the `TrainingSession` (`nn_graph/trainer.py`'s `evaluate_now()`); it errors
-cleanly (no crash) if nothing has been trained yet this session.
+without retraining. Each click draws a **brand-new random batch** from the
+same dataset config (new noise/points for the 2D toy sets, a fresh random
+MNIST subset, new random sequences) — it deliberately does *not* reuse the
+fixed held-out split from training, so repeated clicks give you a real sense
+of how the model generalizes rather than re-showing the same numbers. (The
+one automatic evaluation that fires right after training finishes is the
+exception — that one *does* use the training run's actual held-out split,
+matching normal "evaluate on the val set" convention.) It calls
+`POST /api/train/evaluate`, which reuses the last-built model kept on the
+`TrainingSession` (`nn_graph/trainer.py`'s `evaluate_now(fresh=True)`); it
+errors cleanly (no crash) if nothing has been trained yet this session.
 
 This is computed server-side in [nn_graph/metrics.py](nn_graph/metrics.py) and
 streamed once over `/ws` as `train/eval` right before `train/done`. The
