@@ -1022,8 +1022,16 @@ def finalize_rfdetr_artifacts(
     normalize_checkpoints(run_dir)
     results_source = write_results_csv(run_dir, epochs, log_path)
     write_web_metrics(run_dir, model_id, class_names, log_path, dataset_audit, training_completed)
+    existing_validation_metrics = run_dir / "validation_metrics.json"
     if training_completed and generate_report_artifacts:
         generate_rfdetr_report_artifacts(run_dir, data_yaml_path)
+    elif existing_validation_metrics.is_file():
+        try:
+            payload = json.loads(existing_validation_metrics.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            payload = {}
+        if isinstance(payload, dict):
+            merge_post_training_validation_metrics(run_dir, payload)
     if not quiet:
         print(f"RF-DETR web results saved to {run_dir / 'results.csv'} from {results_source}.", flush=True)
         print(f"RF-DETR web metrics saved to {run_dir / 'web_metrics.json'}.", flush=True)

@@ -179,6 +179,9 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("generate_rfdetr_report_artifacts", train_source)
         self.assertIn("validation_metrics.json", train_source)
         self.assertIn("generate_report_artifacts=True", train_source)
+        self.assertIn("generate_rfdetr_report_artifacts", app_source)
+        self.assertIn("rfdetr_report_artifacts_ready", app_source)
+        self.assertIn("ensure_rfdetr_report_artifacts_for_report", app_source)
 
     def test_dfine_nano_backend_is_exposed_with_backend_specific_controls(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
@@ -219,6 +222,9 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("Progress updates when validation metrics are logged", app_source)
         self.assertIn("confusion_matrix_counts", test_source)
         self.assertIn("save_qualitative_artifacts", test_source)
+        self.assertIn("validation_metrics.json", app_source)
+        self.assertIn('run_dir.glob("val_batch*_pred.jpg")', app_source)
+        self.assertIn('run_dir.glob("val_batch*_labels.jpg")', app_source)
 
         self.assertIn("progress.detail", script)
         self.assertIn("Running epoch", script)
@@ -616,11 +622,14 @@ class CollapsibleSectionTests(unittest.TestCase):
 
     def test_report_downloads_use_response_filename(self):
         script = APP_JS.read_text(encoding="utf-8")
+        app_source = APP_PY.read_text(encoding="utf-8")
 
         self.assertIn('responseDownloadFilename(response, "training_report.pdf")', script)
         self.assertIn('responseDownloadFilename(response, "training_and_test_report.pdf")', script)
         self.assertNotIn('saveBlobWithBrowserDownload(await response.blob(), "training_report.pdf")', script)
         self.assertNotIn('saveBlobWithBrowserDownload(await response.blob(), "training_and_test_report.pdf")', script)
+        self.assertIn("ensure_rfdetr_report_artifacts_for_report(run_dir)\n    metrics = read_run_metrics(run_dir)", app_source)
+        self.assertIn("ensure_rfdetr_report_artifacts_for_report(training_dir)\n    training_metrics_payload = read_run_metrics(training_dir)", app_source)
 
 
 if __name__ == "__main__":
