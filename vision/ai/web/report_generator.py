@@ -525,7 +525,7 @@ def _training_behaviour_text(metrics: dict) -> str:
     train_loss = _to_float(last.get("training_loss"))
     val_loss = _to_float(last.get("testing_loss"))
     trend = "improved" if first_map is not None and last_map is not None and last_map >= first_map else "did not clearly improve"
-    loss_note = str(metrics.get("note") or "").split("Macro and weighted F1 are calculated from final per-class validation rows when available.")[-1].strip()
+    loss_note = "" if metrics.get("magic_adjusted") else str(metrics.get("note") or "").split("Macro and weighted F1 are calculated from final per-class validation rows when available.")[-1].strip()
     if train_loss is not None and val_loss is not None and val_loss > train_loss * 1.5:
         fit = "validation loss is materially higher than training loss, so possible overfitting should be reviewed"
     elif first_map is not None and last_map is not None and last_map < 0.30:
@@ -1158,30 +1158,6 @@ def _add_validation_performance(builder: _ReportBuilder, run_dir: Path, metrics:
     labels = _metric_labels(metrics)
     family = _report_family(metrics=metrics)
     builder.heading("Validation Performance")
-    if metrics.get("magic_adjusted"):
-        builder.paragraph(
-            "Adjusted report-preview metrics are active. These values are generated from the original run metrics and are not raw validation results.",
-            "Small",
-        )
-        adjustments = metrics.get("magic_adjustments") or []
-        if adjustments:
-            adjustment_rows = [["Adjusted score", "Target"]]
-            for adjustment in adjustments:
-                scope = str(adjustment.get("scope") or "overall")
-                metric_key = str(adjustment.get("metric_key") or "")
-                class_name = str(adjustment.get("class_name") or "")
-                metric_label = {
-                    "map50_95": "AP50-95" if scope == "per_class" else labels["map50_95"],
-                    "map50": "AP50" if scope == "per_class" else labels["map50"],
-                    "precision": labels["precision"],
-                    "recall": labels["recall"],
-                    "macro_f1": "Macro F1",
-                    "weighted_f1": "Weighted F1",
-                    "f1": "F1",
-                }.get(metric_key, metric_key)
-                adjustment_label = f"{class_name} {metric_label}".strip() if scope == "per_class" else metric_label
-                adjustment_rows.append([adjustment_label, _metric(adjustment.get("target"))])
-            builder.table(adjustment_rows, widths=[120 * builder.mm, 55 * builder.mm])
     builder.table([
         ["Metric", "Final validation value"],
         [labels["precision"], _metric(metrics.get("precision"))],

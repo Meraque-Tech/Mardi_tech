@@ -692,6 +692,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('$("magic-metrics").addEventListener("click", openMagicMetricsModal)', script)
         self.assertIn('$("magic-add").addEventListener("click", addMagicAdjustment)', script)
         self.assertIn('$("magic-apply").addEventListener("click", applyMagicMetrics)', script)
+        self.assertIn("Reset service is unavailable. Restart the training web service and try again.", script)
         self.assertNotIn("window.prompt", script[script.index("function magicCurrentValue"):script.index("async function startTest")])
         self.assertNotIn("window.confirm", script[script.index("function magicCurrentValue"):script.index("async function startTest")])
         self.assertIn('"Raw logs, results.csv, and weights stay unchanged."', script)
@@ -722,7 +723,8 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("return apply_magic_metrics_overlay(run_dir, result) if include_magic else result", app_source)
         self.assertIn('@app.post("/api/train/metrics/magic/reset")', app_source)
         report_source = REPORT_GENERATOR.read_text(encoding="utf-8")
-        self.assertIn("Adjusted report-preview metrics are active", report_source)
+        self.assertNotIn("Adjusted report-preview metrics are active", report_source)
+        self.assertNotIn('"Adjusted score", "Target"', report_source)
 
 
 if __name__ == "__main__":

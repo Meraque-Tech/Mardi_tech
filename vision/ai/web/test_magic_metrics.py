@@ -1,6 +1,7 @@
 """Behavior tests for multi-score Magic Button report overlays."""
 
 import pytest
+from pathlib import Path
 
 
 def load_web_app():
@@ -116,3 +117,84 @@ def test_magic_adjustments_reject_duplicates_and_conflicting_scores():
             {"scope": "per_class", "class_name": "weed", "metric_key": "precision", "target": 0.80},
         ]})
     assert "either F1 or Precision/Recall" in f1_error.value.detail
+
+
+def test_reset_magic_metrics_removes_overlay_and_returns_raw_metrics(monkeypatch, tmp_path):
+    web_app = load_web_app()
+    from fastapi.testclient import TestClient
+
+    run_dir = tmp_path / "runs" / "detect" / "train"
+    run_dir.mkdir(parents=True)
+    overlay_path = run_dir / web_app.MAGIC_METRICS_FILE
+    overlay_path.write_text('{"metrics": {"magic_adjusted": true}}', encoding="utf-8")
+
+    monkeypatch.setattr(web_app, "current_status", lambda: {"running": False})
+    monkeypatch.setattr(web_app, "resolve_run_dir_details", lambda project, name: (run_dir, "exact"))
+    monkeypatch.setattr(
+        web_app,
+        "read_run_metrics",
+        lambda selected_dir, include_magic=True: {
+            "available": True,
+            "precision": 0.58,
+            "magic_adjusted": False,
+        },
+    )
+
+    response = TestClient(web_app.app).post(
+        "/api/train/metrics/magic/reset",
+        json={"project": "runs/detect", "name": "train"},
+    )
+
+    assert response.status_code == 200
+    assert not overlay_path.exists()
+    assert response.json()["precision"] == 0.58
+    assert response.json()["resolution_type"] == "exact"
+
+
+def test_report_renders_adjusted_values_as_normal_final_metrics():
+    pytest.importorskip("reportlab")
+    from vision.ai.web import report_generator
+
+    class FakeBuilder:
+        mm = 1
+
+        def __init__(self):
+            self.headings = []
+            self.paragraphs = []
+            self.tables = []
+
+        def heading(self, value, level=2):
+            self.headings.append(str(value))
+
+        def paragraph(self, value, style="BodyText"):
+            self.paragraphs.append(str(value))
+
+        def table(self, rows, widths=None, header=True):
+            self.tables.append(rows)
+
+    builder = FakeBuilder()
+    report_generator._add_validation_performance(builder, Path("/tmp/no-report-artifacts"), {
+        "magic_adjusted": True,
+        "precision": 0.68,
+        "recall": 0.73,
+        "map50": 0.65,
+        "map50_95": 0.29,
+        "macro_f1": 0.70,
+        "weighted_f1": 0.71,
+        "per_class": [{
+            "class_name": "no_plant",
+            "instances": 10,
+            "precision": 0.80,
+            "recall": 0.75,
+            "f1": 0.78,
+            "map50": 0.48,
+            "map50_95": 0.24,
+        }],
+    })
+
+    rendered = " ".join(builder.paragraphs) + " " + str(builder.tables)
+    assert "Adjusted report-preview" not in rendered
+    assert "Adjusted score" not in rendered
+    assert "Target" not in rendered
+    assert "0.65" in rendered
+    assert "0.78" in rendered

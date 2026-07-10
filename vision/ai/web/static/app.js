@@ -5022,7 +5022,10 @@ async function resetMagicMetrics() {
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      throw new Error(errorDetailText(payload, `Metric reset failed: ${response.status}`));
+      const detail = response.status === 404
+        ? "Reset service is unavailable. Restart the training web service and try again."
+        : errorDetailText(payload, `Metric reset failed: ${response.status}`);
+      throw new Error(detail);
     }
     state.magicAdjustments = [];
     closeMagicMetricsModal();

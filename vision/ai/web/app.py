@@ -7148,7 +7148,10 @@ def reset_magic_train_metrics(request: WeightRequest):
     if current_status()["running"]:
         raise HTTPException(status_code=409, detail="Wait for training to finish before resetting adjusted metrics.")
     run_dir, resolution_type = resolve_run_dir_details(request.project, request.name)
-    (run_dir / MAGIC_METRICS_FILE).unlink(missing_ok=True)
+    try:
+        (run_dir / MAGIC_METRICS_FILE).unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Could not remove the Magic Button adjustment file.") from exc
     result = read_run_metrics(run_dir, include_magic=False)
     result["resolution_type"] = resolution_type
     return result
