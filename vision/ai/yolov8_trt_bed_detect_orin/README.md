@@ -128,6 +128,9 @@ ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin \
 ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin \
   -s /weights/yolov8n.wts /weights/yolov8n.engine n 512 512
 
+ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin \
+  -s /weights/yolov8n.wts /weights/yolov8n_orien_v1.engine n 512 512
+
 # for small ->
 ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin \
   -s /weights/yolov8s.wts /weights/yolov8s.engine s
