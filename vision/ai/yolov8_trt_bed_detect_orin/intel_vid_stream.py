@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Web MJPEG stream for a user-selectable cv2.VideoCapture index."""
 
+# pip install flask opencv-python
+
 import time
 import threading
 
