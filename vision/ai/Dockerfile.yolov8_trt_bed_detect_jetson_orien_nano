@@ -55,7 +55,13 @@ ENV ROS_DISTRO=humble
 # Source ROS setup for all interactive shells inside container
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc
 
-RUN pip3 install \
+# -----------------------------
+# 5) Web server dependencies
+# -----------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip3 install \
     --no-cache-dir \
     --ignore-installed \
     flask flask-sock
