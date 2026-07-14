@@ -1,0 +1,61 @@
+yolov8_trt:
+  ros__parameters:
+
+    # ── Engine file ──────────────────────────────────────────────────────────
+    # engine_name: "yolov8n.engine"        # path to serialised TRT engine
+    # engine_name: "/weights/mardi_pineapple_yolo_v8.engine"        # path to serialised TRT engine
+    engine_name: "/weights/yolov8n.engine"        # path to serialised TRT engine
+    # engine_name: "/weights/yolov8n_416.engine"        # path to serialised TRT engine
+
+    # ── Input resolution (must match engine build) ───────────────────────────
+    # 640 → 416 saves ~34% compute | 320 saves ~61%
+    # Change here AND rebuild the engine (-s step).
+
+    # input_h: 416
+    # input_w: 416
+
+    input_h: 512
+    input_w: 512
+
+    # ── Precision ─────────────────────────────────────────────────────────────
+    # "fp16"  – fast, good accuracy  (engine must be built with USE_FP16)
+    # "int8"  – fastest (~2x fp16), needs calibration data (USE_INT8)
+    precision: "fp16"
+
+    # ── Post-process backend ──────────────────────────────────────────────────
+    # "c" – CPU NMS   (safer, slightly slower)
+    # "g" – GPU NMS   (faster, uses cuda_decode + cuda_nms)
+    cuda_post_process: "g"
+
+    # ── Detection thresholds ──────────────────────────────────────────────────
+    conf_thresh: 0.35
+    nms_thresh:  0.5
+
+
+    # ── Confidence gate (published on /conf, triggers /bed_detection) ─────────
+    conf_score_value: 0.3
+
+    # ── Tracking ──────────────────────────────────────────────────────────────
+    # true  → count unique objects across frames (MOSSE tracker)
+    # false → count detections per frame only
+    is_track: false
+
+    # ── Web API ───────────────────────────────────────────────────────────────
+    save_dir: "/saved_frames"    # where saved frames go (mount this as a volume)
+    api_port: 8090               # port for the web dashboard + REST API
+
+    # ── Output box cap ────────────────────────────────────────────────────────
+    # 1000 is generous for a single-class detector; 100 cuts postprocess cost.
+    max_output_bbox: 100
+
+    # ── MJPEG stream ──────────────────────────────────────────────────────────
+    mjpeg_port: 8080
+
+    # ── Camera ───────────────────────────────────────────────────────────────
+    camera_index:   0
+    camera_width:  1280
+    camera_height:  720
+
+
+# 24 FPS: ≈ 42 ms (Standard for cinematic movies)
+# 30 FPS: ≈ 33.3 ms (Common for console games and social media)

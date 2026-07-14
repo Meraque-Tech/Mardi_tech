@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>YOLOv8 TRT Obj Detection</title>
+  <style>
+    :root {
+      color-scheme: dark; --bg:#0d1017; --card:#181c27; --line:#2a3042;
+      --text:#e7eaf1; --muted:#929bb0; --blue:#6d72f6; --green:#24c875;
+      --red:#f05252; --amber:#f3a712; --cyan:#25b9d7;
+    }
+    * { box-sizing:border-box }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,sans-serif }
+    button,input { font:inherit }
+    .shell { max-width:1500px; margin:auto; padding:22px }
+    header,.row,.status,.actions,.pager { display:flex; align-items:center; gap:12px }
+    header { justify-content:space-between; margin-bottom:18px }
+    h1 { font-size:19px; margin:0 } h2 { font-size:14px; margin:0 0 14px }
+    .sub,.muted { color:var(--muted); font-size:12px }
+    .logo { width:38px;height:38px;border-radius:10px;background:var(--blue);display:grid;place-items:center;font-size:20px }
+    .connection { margin-left:auto }.dot { width:8px;height:8px;border-radius:50%;background:var(--red) }
+    .dot.on { background:var(--green); box-shadow:0 0 9px var(--green) }
+    .card { background:var(--card);border:1px solid var(--line);border-radius:13px;padding:16px;min-width:0 }
+    .status { margin-bottom:18px; flex-wrap:wrap }
+    .status-item { min-width:120px }.status-item strong { display:block;margin-top:3px }
+    .status .updated { margin-left:auto;text-align:right }
+    .badge { display:inline-block;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:750;background:#353b4b }
+    .badge.running { color:#8cf1b9;background:#173d2b }.badge.stopped { color:#ffd178;background:#453414 }
+    .badge.found { color:#ffb2b2;background:#511f27 }.badge.clear { color:#8cf1b9;background:#173d2b }
+    .layout { display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:18px }
+    .stack { display:grid;gap:18px;align-content:start }
+    .card-head { display:flex;align-items:center;justify-content:space-between;margin-bottom:12px }
+    .card-head h2 { margin:0 }
+    .live { color:#ff9696;font-size:11px;font-weight:700 }
+    .stream-wrap { aspect-ratio:16/9;background:#090b10;border-radius:10px;overflow:hidden;display:grid;place-items:center;position:relative }
+    #stream { width:100%;height:100%;object-fit:contain }
+    #stream-message { position:absolute;padding:6px 10px;border-radius:6px;background:#000b;color:#ddd;font-size:12px }
+    .actions { flex-wrap:wrap }
+    button { color:white;background:var(--blue);border:0;border-radius:8px;padding:9px 15px;font-weight:650;cursor:pointer }
+    button:hover { filter:brightness(1.1) } button:disabled { opacity:.45;cursor:wait }
+    button.green { background:#199b59 } button.red { background:#c83f4b } button.gray { background:#394052 }
+    button.link { padding:3px;background:none;color:#9da1ff;font-size:12px }
+    /* ── Sidebar detection summary ── */
+    .sb-summary { display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-radius:10px;overflow:hidden;margin-bottom:16px }
+    .sb-stat { background:var(--card);padding:13px 14px }
+    .sb-stat .label { font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px }
+    .sb-stat .value { font-size:26px;font-weight:750;letter-spacing:-1px;line-height:1 }
+    .sb-stat .value.small { font-size:14px;font-weight:600;letter-spacing:0;line-height:1.4 }
+    .sb-divider { border:none;border-top:1px solid var(--line);margin:14px 0 }
+    .sb-conf-row { display:flex;align-items:center;gap:10px }
+    .sb-conf-bar { flex:1;height:6px;border-radius:4px;background:#1e2436;overflow:hidden }
+    .sb-conf-bar span { display:block;height:100%;border-radius:4px;transition:width .4s ease,background .4s }
+    .sb-conf-val { font-size:13px;font-weight:700;font-family:ui-monospace,monospace;min-width:44px;text-align:right }
+    /* ── Class breakdown ── */
+    .counts { display:grid;gap:0;min-height:160px }
+    .count-row { display:grid;grid-template-columns:1fr 52px 38px;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1a2030;transition:opacity .3s }
+    .count-row:last-child { border-bottom:none }
+    .count-row.zero { opacity:.38 }
+    .count-name { font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+    .count-bar-wrap { position:relative;height:5px;border-radius:4px;background:#1e2436;overflow:hidden }
+    .count-bar-fill { position:absolute;inset:0 auto 0 0;border-radius:4px;transition:width .45s ease }
+    .count-val { font-size:14px;font-weight:750;text-align:right }
+    /* ── Settings card ── */
+    .toggle-row { display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0 }
+    .toggle-row:first-child { padding-top:0 } .toggle-row:last-child { padding-bottom:0 }
+    .toggle-label strong { display:block;font-size:13px;margin-bottom:2px }
+    .toggle-label .sub { font-size:11px;color:var(--muted) }
+    .switch { position:relative;width:44px;height:24px;flex-shrink:0 }.switch input { opacity:0;width:0;height:0 }
+    .slider { position:absolute;inset:0;background:#3b4254;border-radius:20px;cursor:pointer;transition:.2s }
+    .slider:before { content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;background:white;border-radius:50%;transition:.2s }
+    .switch input:checked + .slider { background:var(--blue) }.switch input:checked + .slider:before { transform:translateX(20px) }
+    /* ── Chart ── */
+    canvas { display:block;width:100%;height:200px }
+    .legend { display:flex;gap:10px;flex-wrap:wrap;min-height:18px;margin-top:8px;font-size:11px;color:var(--muted) }
+    .legend i { width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px }
+    .history-card { grid-column:1/-1 }
+    .table-wrap { overflow:auto;max-height:520px;border:1px solid var(--line);border-radius:12px }
+    table { width:100%;border-collapse:collapse }
+    thead tr { background:#13172099 }
+    th { padding:11px 14px;text-align:left;border-bottom:2px solid var(--line);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);position:sticky;top:0;background:#13172099;backdrop-filter:blur(6px);white-space:nowrap }
+    td { padding:10px 14px;border-bottom:1px solid #1e2436;font-size:12.5px;vertical-align:middle;white-space:nowrap }
+    tbody tr:last-child td { border-bottom:none }
+    tbody tr:hover { background:#1e2436 }
+    td.ts { font-family:ui-monospace,monospace;font-size:11.5px;color:var(--muted) }
+    td.gnss { font-family:ui-monospace,monospace;font-size:11px;color:#7ec8e3 }
+    td.classes-cell { white-space:normal;min-width:200px;line-height:1.6 }
+    .cls-pill { display:inline-flex;align-items:center;gap:5px;background:#232a3e;border:1px solid #2e3750;border-radius:6px;padding:2px 8px;margin:2px 3px 2px 0;font-size:11px }
+    .cls-pill .dot { width:7px;height:7px;border-radius:50%;flex-shrink:0 }
+    .cls-pill .cnt { font-weight:700;color:var(--text) }
+    td.total-cell { font-size:15px;font-weight:700;color:var(--text) }
+    .obj-badge { display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700 }
+    .obj-badge.found { background:#1f1018;color:#ff8fa3;border:1px solid #5e1a28 }
+    .obj-badge.clear { background:#0d2218;color:#6ee7b7;border:1px solid #134d33 }
+    .conf-bar-wrap { display:flex;align-items:center;gap:8px }
+    .conf-bar { flex:1;height:5px;border-radius:4px;background:#1e2436;min-width:60px }
+    .conf-bar span { display:block;height:100%;border-radius:4px }
+    .frame-link { display:inline-flex;align-items:center;gap:4px;color:#818cf8;font-size:11.5px;text-decoration:none;padding:3px 9px;border:1px solid #2e3750;border-radius:6px }
+    .frame-link:hover { background:#232a3e }
+    .pager { justify-content:space-between;align-items:center;margin-top:13px }
+    .pager-info { font-size:12px;color:var(--muted) }
+    .pager button { padding:7px 14px }
+    .gallery { display:grid;grid-template-columns:repeat(4,1fr);gap:9px }.thumb { position:relative;min-width:0 }
+    .thumb img { width:100%;height:92px;object-fit:cover;border-radius:8px;cursor:pointer }
+    .thumb button { position:absolute;right:4px;top:4px;padding:2px 6px;background:#000b }
+    .thumb small { display:block;color:var(--muted);overflow:hidden;text-overflow:ellipsis }
+    .label-list { display:grid;gap:6px;margin-top:10px;max-height:180px;overflow-y:auto }
+    .label-row { display:flex;align-items:center;gap:8px;font-size:12px }
+    .label-row .id-chip { background:#2a3042;border-radius:6px;padding:2px 8px;font-family:ui-monospace,monospace;min-width:28px;text-align:center }
+    .label-row .name-val { flex:1;color:var(--text) }
+    .label-row button { padding:2px 7px;background:#3b2020;font-size:11px }
+    .label-input-row { display:flex;gap:6px;margin-top:8px }
+    .label-input-row input { flex:1;background:#1b202c;border:1px solid var(--line);border-radius:7px;padding:6px 9px;color:var(--text) }
+    .label-input-row input:focus { outline:none;border-color:var(--blue) }
+    .label-input-row input[type=number] { max-width:68px }
+    #toast { position:fixed;right:22px;bottom:22px;max-width:360px;background:#242a39;border:1px solid var(--blue);padding:12px 16px;border-radius:9px;transform:translateY(90px);opacity:0;transition:.25s;z-index:20 }
+    #toast.show { transform:none;opacity:1 } #toast.error { border-color:var(--red) }
+    #lightbox { display:none;position:fixed;inset:0;background:#000d;z-index:30;padding:25px;place-items:center }
+    #lightbox.open { display:grid } #lightbox img { max-width:100%;max-height:100%;border-radius:10px }
+    @media(max-width:900px) { .layout{grid-template-columns:1fr}.history-card{grid-column:auto}.status .updated{margin-left:0;text-align:left}.gallery{grid-template-columns:repeat(3,1fr)} }
+    @media(max-width:520px) { .shell{padding:12px}.gallery{grid-template-columns:repeat(2,1fr)}.status-item{min-width:95px} }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header>
+    <div class="row"><div class="logo">◉</div><div><h1>YOLOv8 TRT</h1><div class="sub">Obj detection dashboard</div></div></div>
+    <div class="row connection"><span id="ws-dot" class="dot"></span><span id="ws-label" class="sub">Disconnected</span></div>
+  </header>
+
+  <section class="card status">
+    <div class="status-item"><span class="muted">Detection</span><strong><span id="detect-badge" class="badge stopped">STOPPED</span></strong></div>
+    <div class="status-item"><span class="muted">Obj result</span><strong><span id="bed-badge" class="badge clear">CLEAR</span></strong></div>
+    <div class="status-item"><span class="muted">Confidence</span><strong id="confidence">0.000</strong></div>
+    <div class="status-item"><span class="muted">Current total</span><strong id="current-total">0</strong></div>
+    <div class="status-item updated"><span class="muted">Last count update</span><strong id="last-update">—</strong></div>
+  </section>
+
+  <div class="layout">
+    <div class="stack">
+      <section class="card">
+        <div class="card-head"><h2>Live stream</h2><span class="live">● LIVE</span></div>
+        <div class="stream-wrap"><img id="stream" alt="Camera stream"><span id="stream-message">Connecting to camera…</span></div>
+      </section>
+      <section class="card">
+        <h2>Controls</h2>
+        <div class="actions">
+          <button id="start-btn" class="green" onclick="setDetection(true)">▶ Start detection</button>
+          <button id="stop-btn" class="red" onclick="setDetection(false)">■ Stop detection</button>
+          <button onclick="saveCount()">＋ Save current count</button>
+          <button onclick="saveFrame()">▣ Save frame</button>
+          <button class="gray" onclick="resetTracker()">↺ Reset tracker</button>
+          <button class="red" onclick="deleteAllData()">⚠ Delete all saved data</button>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Saved frames</h2><button class="link" onclick="loadImages()">Refresh</button></div>
+        <div id="gallery" class="gallery"><span class="muted">No saved frames yet.</span></div>
+      </section>
+    </div>
+
+    <aside class="stack">
+
+      <!-- Detection summary -->
+      <section class="card">
+        <div class="card-head" style="margin-bottom:14px"><h2>Live Detection</h2><span class="live" id="sb-live-dot">● LIVE</span></div>
+        <div class="sb-summary">
+          <div class="sb-stat">
+            <div class="label">Total Objects</div>
+            <div class="value" id="count-metric">0</div>
+          </div>
+          <div class="sb-stat">
+            <div class="label">Object Status</div>
+            <div class="value small" id="bed-badge-sb"><span class="badge clear">CLEAR</span></div>
+          </div>
+        </div>
+        <div class="sb-stat" style="background:transparent;padding:0">
+          <div class="label" style="margin-bottom:8px">Confidence</div>
+          <div class="sb-conf-row">
+            <div class="sb-conf-bar"><span id="sb-conf-fill" style="width:0%;background:var(--green)"></span></div>
+            <span class="sb-conf-val" id="sb-conf-val" style="color:var(--green)">0.000</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Class breakdown — fixed structure, never collapses -->
+      <section class="card">
+        <div class="card-head" style="margin-bottom:6px">
+          <h2>Class Breakdown</h2>
+          <span style="font-size:11px;color:var(--muted)" id="sb-mode-label">Per-frame</span>
+        </div>
+        <div id="counts" class="counts">
+          <div style="padding:24px 0;text-align:center;color:var(--muted);font-size:12px">Waiting for detection data…</div>
+        </div>
+      </section>
+
+      <!-- Settings — merged into one card -->
+      <section class="card">
+        <h2 style="margin-bottom:12px">Settings</h2>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <strong id="track-title">Per-frame count</strong>
+            <div class="sub" id="track-desc">Objects visible in the current frame</div>
+          </div>
+          <label class="switch"><input id="track-toggle" type="checkbox" onchange="setTracking(this.checked)"><span class="slider"></span></label>
+        </div>
+        <hr class="sb-divider">
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <strong>Auto-save</strong>
+            <div class="sub">Frame + count every 0.5 s while running</div>
+          </div>
+          <label class="switch"><input id="auto-save-toggle" type="checkbox" onchange="setAutoSave(this.checked)"><span class="slider"></span></label>
+        </div>
+      </section>
+
+      <!-- Class labels -->
+      <section class="card">
+        <h2 style="margin-bottom:12px">Class Labels</h2>
+        <div class="label-input-row">
+          <input id="lbl-id" type="number" min="0" placeholder="ID" title="Class ID">
+          <input id="lbl-name" type="text" placeholder="Name (e.g. human)" title="Human-readable name">
+          <button onclick="addLabel()">Add</button>
+        </div>
+        <div id="label-list" class="label-list"></div>
+      </section>
+
+      <!-- Trend chart -->
+      <section class="card">
+        <div class="card-head" style="margin-bottom:10px"><h2>Count Trend</h2><span style="font-size:11px;color:var(--muted)">Recent samples</span></div>
+        <canvas id="chart"></canvas>
+        <div id="legend" class="legend"></div>
+      </section>
+
+    </aside>
+
+    <section class="card history-card">
+      <div class="card-head">
+        <div><h2>Detection History</h2><span id="history-summary" class="muted">Loading…</span></div>
+        <button class="link" onclick="loadHistory(historyOffset)">↻ Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>GNSS Coordinates</th>
+              <th>Detected Classes</th>
+              <th style="text-align:center">Total</th>
+              <th style="text-align:center">Object Status</th>
+              <th>Confidence</th>
+              <th>Frame</th>
+            </tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span class="pager-info" id="pager-info"></span>
+        <div style="display:flex;gap:8px">
+          <button id="newer-btn" class="gray" onclick="changeHistory(-1)">← Newer</button>
+          <button id="older-btn" class="gray" onclick="changeHistory(1)">Older →</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div id="toast"></div>
+<div id="lightbox" onclick="this.classList.remove('open')"><img id="lightbox-image" alt="Saved frame"></div>
+
+<script>
+  const COLORS=['#6d72f6','#24c875','#f3a712','#f05252','#25b9d7','#ad64e8','#ec5ca4','#24b6a2'];
+  const HISTORY_PAGE=50;
+  let historyOffset=0, historyTotal=0, chartItems=[], refreshTimer=0, wsRetries=0;
+  let streamPort=8080, streamRetries=0, streamRetryTimer=0;
+
+  // Class label mapping — stored in localStorage
+  let classLabels = {};
+  function loadLabels() {
+    try { classLabels = JSON.parse(localStorage.getItem('classLabels') || '{}'); } catch(_e) { classLabels = {}; }
+    renderLabelList();
+  }
+  function saveLabels() { localStorage.setItem('classLabels', JSON.stringify(classLabels)); }
+  function labelFor(id) { const n = classLabels[String(id)]; return n ? `${n} (${id})` : `Class ${id}`; }
+  function addLabel() {
+    const idEl=document.getElementById('lbl-id'), nameEl=document.getElementById('lbl-name');
+    const id=idEl.value.trim(), name=nameEl.value.trim();
+    if(id===''||name===''){toast('Enter both a class ID and a name.',true);return;}
+    classLabels[id]=name; saveLabels(); renderLabelList(); idEl.value=''; nameEl.value='';
+    toast(`Class ${id} → "${name}" saved.`);
+    drawChart(chartItems);
+  }
+  function removeLabel(id) { delete classLabels[id]; saveLabels(); renderLabelList(); drawChart(chartItems); }
+  function renderLabelList() {
+    const el=document.getElementById('label-list');
+    const entries=Object.entries(classLabels).sort((a,b)=>Number(a[0])-Number(b[0]));
+    el.innerHTML=entries.length
+      ? entries.map(([id,name])=>`<div class="label-row"><span class="id-chip">${escapeHtml(id)}</span><span class="name-val">${escapeHtml(name)}</span><button onclick="removeLabel('${escapeHtml(id)}')">×</button></div>`).join('')
+      : '<span class="muted" style="font-size:12px">No labels defined yet.</span>';
+  }
+
+  function escapeHtml(value) { const el=document.createElement('span');el.textContent=String(value);return el.innerHTML; }
+  function formatTime(value) { if(!value)return '—';const d=new Date(value);return Number.isNaN(d.getTime())?value:d.toLocaleString(); }
+  function countText(counts) { const entries=Object.entries(counts||{});return entries.length?entries.map(([k,v])=>`${labelFor(k)}: ${v}`).join(', '):'No detections'; }
+  function toast(message,error=false) { const el=document.getElementById('toast');el.textContent=message;el.className=error?'show error':'show';clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.className='',3200); }
+
+  async function api(url,options) {
+    const response=await fetch(url,options);
+    let data={};try{data=await response.json()}catch(_error){}
+    if(!response.ok||data.success===false)throw new Error(data.message||`Request failed (${response.status})`);
+    return data;
+  }
+
+  // Persistent class registry — classes never disappear once seen, only go to 0
+  const knownClasses = new Map(); // id → index (for stable color assignment)
+
+  function applySnapshot(data) {
+    const running=Boolean(data.detecting), bed=Boolean(data.bed_status);
+    // Top status bar
+    const detect=document.getElementById('detect-badge');detect.textContent=running?'RUNNING':'STOPPED';detect.className=`badge ${running?'running':'stopped'}`;
+    // Sidebar status badge (synced to same badge element via bed-badge-sb)
+    const bedSb=document.getElementById('bed-badge-sb');
+    bedSb.innerHTML=bed?'<span class="badge found">OBJ FOUND</span>':'<span class="badge clear">CLEAR</span>';
+    const bedEl=document.getElementById('bed-badge');bedEl.textContent=bed?'OBJ FOUND':'CLEAR';bedEl.className=`badge ${bed?'found':'clear'}`;
+    // Confidence — top bar + sidebar bar
+    const conf=Number(data.conf||0);
+    document.getElementById('confidence').textContent=conf.toFixed(3);
+    const confPct=Math.round(conf*100);
+    const confColor=confPct>=80?'var(--green)':confPct>=50?'var(--amber)':'var(--red)';
+    const fill=document.getElementById('sb-conf-fill');
+    fill.style.width=confPct+'%';fill.style.background=confColor;
+    const confVal=document.getElementById('sb-conf-val');
+    confVal.textContent=conf.toFixed(3);confVal.style.color=confColor;
+    if(data.last_updated)document.getElementById('last-update').textContent=formatTime(data.last_updated);
+    renderCounts(data.counts||{});
+    if(typeof data.is_track==='boolean')applyTracking(data.is_track);
+    if(typeof data.auto_save==='boolean')document.getElementById('auto-save-toggle').checked=data.auto_save;
+    document.getElementById('start-btn').disabled=running;
+    document.getElementById('stop-btn').disabled=!running;
+  }
+
+  function renderCounts(counts) {
+    // Register any new class IDs so we never remove a row once shown
+    Object.keys(counts).forEach(id=>{
+      if(!knownClasses.has(id))knownClasses.set(id,knownClasses.size);
+    });
+    const total=Object.values(counts).reduce((s,v)=>s+Number(v),0);
+    document.getElementById('count-metric').textContent=total;
+    document.getElementById('current-total').textContent=total;
+    const el=document.getElementById('counts');
+    if(!knownClasses.size){
+      el.innerHTML='<div style="padding:24px 0;text-align:center;color:var(--muted);font-size:12px">Waiting for detection data…</div>';
+      return;
+    }
+    const sorted=[...knownClasses.entries()].sort((a,b)=>Number(a[0])-Number(b[0]));
+    el.innerHTML=sorted.map(([id,colorIdx])=>{
+      const value=Number(counts[id]||0);
+      const color=COLORS[colorIdx%COLORS.length];
+      const pct=total?Math.round(value/total*100):0;
+      const label=escapeHtml(classLabels[String(id)]||`Class ${id}`);
+      const zero=value===0?' zero':'';
+      return `<div class="count-row${zero}">
+        <span class="count-name" style="color:${color}">${label}</span>
+        <div class="count-bar-wrap"><div class="count-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <span class="count-val" style="color:${color}">${value}</span>
+      </div>`;
+    }).join('');
+  }
+
+  function applyTracking(enabled) {
+    document.getElementById('track-toggle').checked=enabled;
+    document.getElementById('track-title').textContent=enabled?'Unique-object tracking':'Per-frame count';
+    document.getElementById('track-desc').textContent=enabled?'Cumulative unique objects in this run':'Objects visible in the current frame';
+    document.getElementById('sb-mode-label').textContent=enabled?'Unique track':'Per-frame';
+  }
+
+  async function setDetection(start) {
+    const button=document.getElementById(start?'start-btn':'stop-btn');button.disabled=true;
+    try { const result=await api(start?'/api/start':'/api/stop',{method:'POST'});toast(result.message);if(start)connectStream(true); }
+    catch(error){toast(error.message,true);}
+    finally{try{await loadStatus();}catch(_error){button.disabled=false;}}
+  }
+
+  async function setTracking(enabled) {
+    try { const result=await api('/api/set_track',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});applyTracking(enabled);toast(result.message); }
+    catch(error){applyTracking(!enabled);toast(error.message,true);}
+  }
+
+  async function setAutoSave(enabled) {
+    try { const result=await api('/api/auto_save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});document.getElementById('auto-save-toggle').checked=enabled;toast(result.message); }
+    catch(error){document.getElementById('auto-save-toggle').checked=!enabled;toast(error.message,true);}
+  }
+
+  async function resetTracker() {
+    try { const result=await api('/api/reset_tracker',{method:'POST'});toast(result.message); }
+    catch(error){toast(error.message,true);}
+  }
+
+  async function loadStatus() {
+    const status=await api('/api/status');applySnapshot(status);
+    const nextPort=Number(status.mjpeg_port||8080);
+    if(nextPort!==streamPort){streamPort=nextPort;connectStream(true);}
+  }
+
+  function connectWebSocket() {
+    const scheme=location.protocol==='https:'?'wss':'ws', socket=new WebSocket(`${scheme}://${location.host}/ws`);
+    socket.onopen=()=>{wsRetries=0;socket.keepalive=setInterval(()=>{if(socket.readyState===WebSocket.OPEN)socket.send('ping');},20000);document.getElementById('ws-dot').classList.add('on');document.getElementById('ws-label').textContent='Connected';};
+    socket.onmessage=event=>{try{const data=JSON.parse(event.data);applySnapshot(data);if(data.type==='snapshot')scheduleHistoryRefresh();}catch(_error){}};
+    socket.onclose=()=>{clearInterval(socket.keepalive);document.getElementById('ws-dot').classList.remove('on');document.getElementById('ws-label').textContent='Disconnected';setTimeout(connectWebSocket,Math.min(5000,500*2**wsRetries++));};
+    socket.onerror=()=>socket.close();
+  }
+
+  function scheduleHistoryRefresh() { if(historyOffset!==0||refreshTimer)return;refreshTimer=setTimeout(()=>{refreshTimer=0;loadHistory(0);},1200); }
+
+  function renderClassPills(counts) {
+    const entries=Object.entries(counts||{});
+    if(!entries.length)return '<span style="color:var(--muted);font-size:11px">No detections</span>';
+    return entries.map(([id,cnt],i)=>{
+      const color=COLORS[i%COLORS.length];
+      const label=escapeHtml(classLabels[String(id)]||`Class ${id}`);
+      return `<span class="cls-pill"><span class="dot" style="background:${color}"></span><span style="color:${color}">${label}</span><span class="cnt">${cnt}</span></span>`;
+    }).join('');
+  }
+
+  function renderConfBar(conf) {
+    const pct=Math.round(conf*100), color=pct>=80?'var(--green)':pct>=50?'var(--amber)':'var(--red)';
+    return `<div class="conf-bar-wrap"><div class="conf-bar"><span style="width:${pct}%;background:${color}"></span></div><span style="font-size:11.5px;font-family:ui-monospace,monospace;color:${color}">${conf.toFixed(3)}</span></div>`;
+  }
+
+  function formatTimestamp(value) {
+    if(!value)return '—';
+    const d=new Date(value);if(Number.isNaN(d.getTime()))return value;
+    const date=d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'2-digit'});
+    const time=d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    return `<div>${escapeHtml(date)}</div><div style="color:var(--muted);font-size:10.5px">${escapeHtml(time)}</div>`;
+  }
+
+  async function loadHistory(offset=0) {
+    try {
+      const data=await api(`/api/history?limit=${HISTORY_PAGE}&offset=${offset}`);historyOffset=data.offset;historyTotal=data.total;
+      const start=historyTotal?historyOffset+1:0,end=Math.min(historyOffset+data.items.length,historyTotal);
+      document.getElementById('history-summary').textContent=`${historyTotal} records`;
+      document.getElementById('pager-info').textContent=historyTotal?`Showing ${start}–${end} of ${historyTotal}`:'';
+      document.getElementById('newer-btn').disabled=historyOffset===0;document.getElementById('older-btn').disabled=end>=historyTotal;
+      document.getElementById('history-body').innerHTML=data.items.length?data.items.map(item=>{
+        const conf=Number(item.conf||0);
+        const frameCell=item.frame?`<a class="frame-link" href="/saved/${encodeURIComponent(item.frame)}" target="_blank">▣ View</a>`:'<span style="color:var(--muted)">—</span>';
+        const objBadge=item.bed?'<span class="obj-badge found">● Detected</span>':'<span class="obj-badge clear">✓ Clear</span>';
+        return `<tr>
+          <td class="ts">${formatTimestamp(item.time)}</td>
+          <td class="gnss">—</td>
+          <td class="classes-cell">${renderClassPills(item.counts)}</td>
+          <td class="total-cell" style="text-align:center">${item.total}</td>
+          <td style="text-align:center">${objBadge}</td>
+          <td>${renderConfBar(conf)}</td>
+          <td>${frameCell}</td>
+        </tr>`;
+      }).join(''):'<tr><td colspan="7" style="text-align:center;padding:28px;color:var(--muted)">No detection records yet. Save a count or enable automatic saving.</td></tr>';
+      if(offset===0){chartItems=data.items.slice().reverse();drawChart(chartItems);}
+    } catch(error){document.getElementById('history-summary').textContent=error.message;}
+  }
+
+  function changeHistory(direction) { loadHistory(Math.max(0,historyOffset+direction*HISTORY_PAGE)); }
+
+  function drawChart(items) {
+    const canvas=document.getElementById('chart'), rect=canvas.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+    canvas.width=Math.max(320,rect.width)*dpr;canvas.height=230*dpr;const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+    const width=canvas.width/dpr,height=canvas.height/dpr,pad={l:32,r:10,t:12,b:24},plotW=width-pad.l-pad.r,plotH=height-pad.t-pad.b;
+    ctx.clearRect(0,0,width,height);const classes=[...new Set(items.flatMap(item=>Object.keys(item.counts)))].sort();
+    const max=Math.max(1,...items.flatMap(item=>Object.values(item.counts).map(Number)));
+    ctx.strokeStyle='#293044';ctx.fillStyle='#778197';ctx.font='10px system-ui';ctx.textAlign='right';
+    for(let i=0;i<=4;i++){const y=pad.t+plotH*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(width-pad.r,y);ctx.stroke();ctx.fillText(String(Math.round(max*(4-i)/4)),pad.l-6,y+3);}
+    classes.forEach((name,index)=>{ctx.strokeStyle=COLORS[index%COLORS.length];ctx.lineWidth=2;ctx.beginPath();items.forEach((item,i)=>{const x=pad.l+(items.length<=1?0:plotW*i/(items.length-1)),value=Number(item.counts[name]||0),y=pad.t+plotH*(1-value/max);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();});
+    document.getElementById('legend').innerHTML=classes.map((name,index)=>`<span><i style="background:${COLORS[index%COLORS.length]}"></i>${escapeHtml(labelFor(name))}</span>`).join('')||'<span>No class data yet</span>';
+  }
+
+  function connectStream(immediate=false) {
+    clearTimeout(streamRetryTimer);
+    const delay=immediate?0:Math.min(5000,500*2**Math.min(streamRetries,4));
+    streamRetryTimer=setTimeout(()=>{
+      const img=document.getElementById('stream'),message=document.getElementById('stream-message');
+      message.style.display='block';message.textContent=streamRetries?'Reconnecting to camera…':'Connecting to camera…';
+      img.onload=()=>{clearTimeout(streamRetryTimer);streamRetries=0;message.style.display='none';};
+      img.onerror=()=>{streamRetries++;message.style.display='block';message.textContent='Camera unavailable — retrying automatically…';connectStream(false);};
+      img.src=`http://${location.hostname}:${streamPort}/?t=${Date.now()}`;
+    },delay);
+  }
+
+  async function initStream() {
+    try { const status=await api('/api/status');applySnapshot(status);streamPort=Number(status.mjpeg_port||8080);connectStream(true); }
+    catch(error){document.getElementById('stream-message').textContent=`${error.message} — retrying…`;setTimeout(initStream,1500);}
+  }
+
+  async function saveFrame() { try{toast('Saving frame…');const result=await api('/api/save',{method:'POST'});toast(`Saved ${result.filename}`);loadImages();}catch(error){toast(error.message,true);} }
+  async function saveCount() { try{const result=await api('/api/save_count',{method:'POST'});toast(`${result.message}: ${result.total} total`);historyOffset=0;loadHistory(0);}catch(error){toast(error.message,true);} }
+  async function deleteAllData() { if(!window.confirm('Permanently delete ALL saved count history and images? Automatic saving will be disabled.'))return;try{const result=await api('/api/data',{method:'DELETE'});document.getElementById('auto-save-toggle').checked=false;historyOffset=0;await Promise.all([loadHistory(0),loadImages()]);toast(`${result.deleted_records} records and ${result.deleted_images} images deleted`);}catch(error){toast(error.message,true);} }
+  async function loadImages() { try{const images=await api('/api/images');const gallery=document.getElementById('gallery');gallery.innerHTML=images.length?images.map(item=>`<div class="thumb"><img src="${item.url}" alt="${escapeHtml(item.filename)}" onclick="openImage('${item.url}')"><button onclick="deleteImage('${escapeHtml(item.filename)}')">×</button><small>${escapeHtml(formatTime(item.time))}</small></div>`).join(''):'<span class="muted">No saved frames yet.</span>';}catch(error){toast(error.message,true);} }
+  async function deleteImage(name) { try{await api(`/api/images/${encodeURIComponent(name)}`,{method:'DELETE'});loadImages();}catch(error){toast(error.message,true);} }
+  function openImage(url) { document.getElementById('lightbox-image').src=url;document.getElementById('lightbox').classList.add('open'); }
+
+  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();
+  setInterval(()=>loadStatus().catch(()=>{}),3000);
+  window.addEventListener('resize',()=>drawChart(chartItems));
+</script>
+</body>
+</html>

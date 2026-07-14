@@ -11,17 +11,16 @@ services:
       - /dev/video0:/dev/video0
     volumes:
       - ./yolov8/weights:/weights
+      - ./yolov8_trt_bed_detect_orin/config:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config
+      - ./yolov8_trt_bed_detect_orin/launch:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/launch
       - ./saved_frames:/saved_frames
     network_mode: host
     privileged: true
     runtime: nvidia
-    # No ROS 2 package has been COPY'd/colcon-built into this image yet (see
-    # the Dockerfile) -- drop into a shell with ROS already sourced so you can
-    # build/launch interactively. Swap this for a `ros2 launch ...` command
-    # once yolov8_trt_bed_detect is added and built here, same as
-    # docker-compose.yolov8-trt-bed-detect-nano.yml does for the Nano image.
     command: >
-      bash -c "source /opt/ros/humble/setup.bash && bash"
+      bash -c "source /opt/ros/humble/setup.bash &&
+               source /ros2_ws/install/setup.bash &&
+               ros2 launch yolov8_trt_bed_detect_orin bed_detect.launch.py"
 
 # Usage:
 #   mkdir -p saved_frames

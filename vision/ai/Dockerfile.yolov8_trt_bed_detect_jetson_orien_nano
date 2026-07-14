@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Jetson Orin Nano — JetPack 6.x, L4T r36.4.0 (CUDA/TensorRT preinstalled, no ROS)
 FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
 
@@ -8,14 +9,21 @@ ENV OPENBLAS_CORETYPE=ARMV8
 # Select bash as default shell
 SHELL ["/bin/bash", "-c"]
 
+# All apt/pip steps below use BuildKit cache mounts for /var/cache/apt,
+# /var/lib/apt/lists, and pip's cache: package downloads persist across
+# rebuilds (meaningful on this base image and over a Jetson's network) without
+# bloating the final image -- cache-mounted paths are never committed to a
+# layer, so there's nothing to `rm -rf` afterward like a non-cached RUN needs.
+
 # -----------------------------
 # 1) Locale setup (UTF-8)
 # -----------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     locales \
  && locale-gen en_US en_US.UTF-8 \
- && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
- && rm -rf /var/lib/apt/lists/*
+ && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
 
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
@@ -23,7 +31,13 @@ ENV LC_ALL=en_US.UTF-8
 # -----------------------------
 # 2) Add ROS 2 apt repository
 # -----------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# (No blanket `apt-get upgrade -y` here: on an NVIDIA L4T base image that can
+# pull in generic Ubuntu package versions over the ones JetPack tuned/patched
+# for this board -- CUDA/cuDNN/TensorRT compatibility isn't worth risking for
+# an unrelated ROS 2 repo add.)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gnupg2 \
     lsb-release \
@@ -34,18 +48,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
     http://packages.ros.org/ros2/ubuntu \
     $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
-    > /etc/apt/sources.list.d/ros2.list \
- && apt-get update \
- && apt-get upgrade -y \
- && rm -rf /var/lib/apt/lists/*
+    > /etc/apt/sources.list.d/ros2.list
 
 # -----------------------------
 # 3) Install ROS 2 Humble base + dev tools
 # -----------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-ros-base \
-    ros-dev-tools \
- && rm -rf /var/lib/apt/lists/*
+    ros-dev-tools
 
 # -----------------------------
 # 4) ROS environment
@@ -56,32 +68,45 @@ ENV ROS_DISTRO=humble
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc
 
 # -----------------------------
-# 5) Web server dependencies
+# 5) OpenCV + web server dependencies
 # -----------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# CMakeLists.txt does find_package(OpenCV REQUIRED). l4t-jetpack images *may*
+# already ship an OpenCV build, but that's not guaranteed across tags/variants
+# and find_package(OpenCV) would otherwise fail at cmake-configure time with
+# no earlier warning -- installing it explicitly makes the build reproducible.
+# This is the standard apt OpenCV (no CUDA-accelerated cv::cuda module) --
+# fine here since this package only uses basic cv::Mat/VideoCapture-level
+# APIs for pre/post-processing; the actual GPU work goes through TensorRT
+# directly.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
- && rm -rf /var/lib/apt/lists/* \
- && pip3 install \
-    --no-cache-dir \
-    --ignore-installed \
-    flask flask-sock
+    libopencv-dev
 
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --ignore-installed flask flask-sock
 
 WORKDIR /ros2_ws/src
-COPY yolov8_trt_bed_detect/ yolov8_trt_bed_detect/
+# yolov8_trt_bed_detect_orin is a fork of yolov8_trt_bed_detect (the Jetson
+# Nano package) ported to TensorRT 10 (bundled with this image's JetPack 6 /
+# L4T r36.4.0) and CUDA arch sm_87 (Orin's Ampere GPU, vs. the Nano's
+# Maxwell sm_53) -- the original package's TensorRT-8-era API calls and CUDA
+# arch don't work on this image. See yolov8_trt_bed_detect_orin/ for details.
+COPY yolov8_trt_bed_detect_orin/ yolov8_trt_bed_detect_orin/
 
 WORKDIR /ros2_ws
 RUN ROS_SETUP=$(find /opt/ros /root -name "setup.bash" 2>/dev/null | head -1) && \
     echo "Using: $ROS_SETUP" && \
     source "$ROS_SETUP" && \
-    colcon build --packages-select yolov8_trt_bed_detect \
+    colcon build --packages-select yolov8_trt_bed_detect_orin \
     --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 
 # ENV ROS_SETUP_CMD="source \$(find /opt/ros /root -name setup.bash 2>/dev/null | head -1)"
 
 # # Usage:
-# #   docker run ... ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect -d weights/best.engine ./ g -conf 0.85
+# #   docker run ... ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin -d weights/best.engine ./ g -conf 0.85
 # CMD ["/bin/bash", "-c", \
 #     "source $(find /opt/ros /root -name setup.bash 2>/dev/null | head -1) && \
 #      source /ros2_ws/install/setup.bash && bash"]
