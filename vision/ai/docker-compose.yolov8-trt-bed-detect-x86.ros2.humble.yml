@@ -1,10 +1,10 @@
 services:
-  yolov8-trt-serialize-x86:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
-    container_name: yolov8-trt-serialize-x86.ros2.jazzy
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile.yolov8_trt_x86.ros2.jazzy
+  yolov8-trt-serialize-x86-humble:
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.humble
+    container_name: yolov8-trt-serialize-x86.ros2.humble
+    build:
+      context: .
+      dockerfile: Dockerfile.yolov8_trt_x86.ros2.humble
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
@@ -12,17 +12,17 @@ services:
     runtime: nvidia
     restart: "no"
     command: >
-      bash -c "source /opt/ros/jazzy/setup.bash &&
+      bash -c "source /opt/ros/humble/setup.bash &&
                source /ros2_ws/install/setup.bash &&
                ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin
                -s /weights/yolov8n.wts /weights/yolov8n_x86.engine n 512 512"
 
-  yolov8-trt-bed-detect-x86:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
-    container_name: yolov8-trt-bed-detect-x86.ros2.jazzy
+  yolov8-trt-bed-detect-x86-humble:
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.humble
+    container_name: yolov8-trt-bed-detect-x86.ros2.humble
     build:
       context: .
-      dockerfile: Dockerfile.yolov8_trt_x86.ros2.jazzy
+      dockerfile: Dockerfile.yolov8_trt_x86.ros2.humble
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     devices:
@@ -39,18 +39,18 @@ services:
     privileged: true
     runtime: nvidia
     # depends_on:
-    #   yolov8-trt-serialize-x86:
+    #   yolov8-trt-serialize-x86-humble:
     #     condition: service_completed_successfully
     command: >
-      bash -c "source /opt/ros/jazzy/setup.bash &&
+      bash -c "source /opt/ros/humble/setup.bash &&
                source /ros2_ws/install/setup.bash &&
                ros2 launch yolov8_trt_bed_detect_orin bed_detect.launch.py"
 
 # Usage:
 #   mkdir -p saved_frames
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml build
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml run --rm yolov8-trt-serialize-x86
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml up -d
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml exec yolov8-trt-bed-detect-x86 bash
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml logs -f
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml down
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.humble.yml build
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.humble.yml run --rm yolov8-trt-serialize-x86-humble
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.humble.yml up -d
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.humble.yml exec yolov8-trt-bed-detect-x86-humble bash
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.humble.yml logs -f
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.humble.yml down

@@ -1,0 +1,75 @@
+# meraquetech/race_nav:yolov8-trt-x86-humble
+# x86_64 — CUDA 12.5, TensorRT 10.2 (Ubuntu 22.04 / ROS 2 Humble)
+FROM nvcr.io/nvidia/tensorrt:24.08-py3
+
+LABEL maintainer="meraquetech" \
+      image="meraquetech/race_nav:yolov8-trt-x86-humble"
+
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-c"]
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    libopencv-dev \
+    pkg-config \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify toolchain
+RUN nvcc --version
+RUN pkg-config --modversion opencv4
+RUN ls /usr/include/x86_64-linux-gnu/ | grep -E "NvInfer" || \
+    ls /usr/include/ | grep -E "NvInfer"
+
+# -----------------------------
+# Add ROS 2 apt repository
+# -----------------------------
+# This image is Ubuntu 22.04 (Jammy) -- the same distro the Jetson Orin
+# image's Humble install targets, so this uses Humble directly (no Jazzy
+# substitution needed, unlike the Noble-based x86 variant).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg2 \
+    lsb-release \
+    software-properties-common \
+ && add-apt-repository universe \
+ && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+      -o /usr/share/keyrings/ros-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+    http://packages.ros.org/ros2/ubuntu \
+    $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+    > /etc/apt/sources.list.d/ros2.list \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-ros-base \
+    ros-dev-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV ROS_DISTRO=humble
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc
+
+# -----------------------------
+# Web server dependencies
+# -----------------------------
+RUN pip3 install --ignore-installed --break-system-packages flask flask-sock
+
+# -----------------------------
+# Build yolov8_trt_bed_detect_orin
+# -----------------------------
+WORKDIR /ros2_ws/src
+COPY yolov8_trt_bed_detect_orin/ yolov8_trt_bed_detect_orin/
+
+WORKDIR /ros2_ws
+RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
+    colcon build --packages-select yolov8_trt_bed_detect_orin \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+# Usage:
+#   docker run ... ros2 launch yolov8_trt_bed_detect_orin bed_detect.launch.py
+CMD ["/bin/bash", "-c", \
+    "source /opt/ros/${ROS_DISTRO}/setup.bash && \
+     source /ros2_ws/install/setup.bash && \
+     ros2 launch yolov8_trt_bed_detect_orin bed_detect.launch.py"]
