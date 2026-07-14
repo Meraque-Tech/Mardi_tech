@@ -108,6 +108,11 @@ docker run --rm \
 cat <<'EOF'
 
 
+docker run --rm -it \
+    --runtime=nvidia \
+    dustynv/ros:humble-desktop-l4t-r36.4.0 bash
+
+
 docker run --rm \
     --runtime=nvidia \
     dustynv/ros:humble-desktop-l4t-r36.4.0 \
@@ -123,7 +128,6 @@ docker run --rm \
         ls /dev/nvhost-ctrl /dev/nvmap
         dpkg -l | grep -i tensorrt
     '
-
 
 
 
