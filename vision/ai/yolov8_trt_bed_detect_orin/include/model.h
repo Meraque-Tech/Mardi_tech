@@ -1,19 +1,13 @@
 #pragma once
-#include "NvInfer.h"
-#include <string>
+
 #include <assert.h>
+#include <string>
+#include "NvInfer.h"
 
-nvinfer1::IHostMemory* buildEngineYolov8n(nvinfer1::IBuilder* builder,
-nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt, const std::string& wts_path);
-
-nvinfer1::IHostMemory* buildEngineYolov8s(nvinfer1::IBuilder* builder,
-nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt, const std::string& wts_path);
-
-nvinfer1::IHostMemory* buildEngineYolov8m(nvinfer1::IBuilder* builder,
-nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt, const std::string& wts_path);
-
-nvinfer1::IHostMemory* buildEngineYolov8l(nvinfer1::IBuilder* builder,
-nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt, const std::string& wts_path);
-
-nvinfer1::IHostMemory* buildEngineYolov8x(nvinfer1::IBuilder* builder,
-nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt, const std::string& wts_path);
+// Generic gd (depth)/gw (width)/max_channels-scaled builder, matching
+// Ultralytics' official YOLOv8 scaling table -- replaces the old fixed
+// buildEngineYolov8n/s/m/l/x functions. See main_fun.cpp's serialize_engine()
+// for the n/s/m/l/x -> (gd, gw, max_channels) lookup.
+nvinfer1::IHostMemory* buildEngineYolov8Det(nvinfer1::IBuilder* builder, nvinfer1::IBuilderConfig* config,
+                                            nvinfer1::DataType dt, const std::string& wts_path, float& gd, float& gw,
+                                            int& max_channels);

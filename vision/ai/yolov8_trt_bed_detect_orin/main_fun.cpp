@@ -23,17 +23,24 @@ void serialize_engine(std::string &wts_name, std::string &engine_name, std::stri
     IBuilderConfig *config = builder->createBuilderConfig();
     IHostMemory *serialized_engine = nullptr;
 
+    // Ultralytics' official YOLOv8 depth/width/max-channels scaling table --
+    // buildEngineYolov8Det (block.cpp/model.cpp) is now the single generic
+    // builder shared across n/s/m/l/x, replacing the old fixed
+    // buildEngineYolov8n/s/m/l/x functions.
+    float gd = 0.33f, gw = 0.25f;
+    int max_channels = 1024;
     if (sub_type == "n") {
-        serialized_engine = buildEngineYolov8n(builder, config, DataType::kFLOAT, wts_name);
+        gd = 0.33f; gw = 0.25f; max_channels = 1024;
     } else if (sub_type == "s") {
-        serialized_engine = buildEngineYolov8s(builder, config, DataType::kFLOAT, wts_name);
+        gd = 0.33f; gw = 0.50f; max_channels = 1024;
     } else if (sub_type == "m") {
-        serialized_engine = buildEngineYolov8m(builder, config, DataType::kFLOAT, wts_name);
+        gd = 0.67f; gw = 0.75f; max_channels = 768;
     } else if (sub_type == "l") {
-        serialized_engine = buildEngineYolov8l(builder, config, DataType::kFLOAT, wts_name);
+        gd = 1.0f; gw = 1.0f; max_channels = 512;
     } else if (sub_type == "x") {
-        serialized_engine = buildEngineYolov8x(builder, config, DataType::kFLOAT, wts_name);
+        gd = 1.0f; gw = 1.25f; max_channels = 512;
     }
+    serialized_engine = buildEngineYolov8Det(builder, config, DataType::kFLOAT, wts_name, gd, gw, max_channels);
 
     assert(serialized_engine);
     std::ofstream p(engine_name, std::ios::binary);
@@ -75,13 +82,20 @@ void deserialize_engine(std::string &engine_name, IRuntime **runtime, ICudaEngin
 
 void prepare_buffer(ICudaEngine *engine, float **input_buffer_device, float **output_buffer_device,
                     float **output_buffer_host, float **decode_ptr_host, float **decode_ptr_device, std::string cuda_post_process, int input_h, int input_w) {
-    assert(engine->getNbBindings() == 2);
-    // In order to bind the buffers, we need to know the names of the input and output tensors.
-    // Note that indices are guaranteed to be less than IEngine::getNbBindings()
-    const int inputIndex = engine->getBindingIndex(kInputTensorName);
-    const int outputIndex = engine->getBindingIndex(kOutputTensorName);
-    assert(inputIndex == 0);
-    assert(outputIndex == 1);
+    // getNbBindings()/getBindingIndex() were removed in TensorRT 10 (implicit-batch-era
+    // API) -- the explicit-batch replacement identifies tensors by name via
+    // getNbIOTensors()/getTensorIOMode() instead of a fixed binding index.
+    assert(engine->getNbIOTensors() == 2);
+    TensorIOMode input_mode = engine->getTensorIOMode(kInputTensorName);
+    if (input_mode != TensorIOMode::kINPUT) {
+        std::cerr << kInputTensorName << " should be input tensor" << std::endl;
+        assert(false);
+    }
+    TensorIOMode output_mode = engine->getTensorIOMode(kOutputTensorName);
+    if (output_mode != TensorIOMode::kOUTPUT) {
+        std::cerr << kOutputTensorName << " should be output tensor" << std::endl;
+        assert(false);
+    }
     // Create GPU buffers on device
     CUDA_CHECK(cudaMalloc((void **) input_buffer_device, kBatchSize * 3 * input_h * input_w * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void **) output_buffer_device, kBatchSize * kOutputSize * sizeof(float)));
@@ -96,7 +110,12 @@ void prepare_buffer(ICudaEngine *engine, float **input_buffer_device, float **ou
 
 void infer(IExecutionContext &context, cudaStream_t &stream, void **buffers, float *output, int batchsize, float* decode_ptr_host, float* decode_ptr_device, int model_bboxes, std::string cuda_post_process, float conf_thresh, float nms_thresh, int max_output_bbox) {
     auto start = std::chrono::system_clock::now();
-    context.enqueue(batchsize, buffers, stream, nullptr);
+    // IExecutionContext::enqueue(batchSize, buffers, ...) was removed in
+    // TensorRT 10 along with implicit-batch mode -- bind tensors by name and
+    // use enqueueV3 instead.
+    context.setInputTensorAddress(kInputTensorName, buffers[0]);
+    context.setOutputTensorAddress(kOutputTensorName, buffers[1]);
+    context.enqueueV3(stream);
     if (cuda_post_process == "c") {
         CUDA_CHECK(cudaMemcpyAsync(output, buffers[1], batchsize * kOutputSize * sizeof(float), cudaMemcpyDeviceToHost, stream));
         auto end = std::chrono::system_clock::now();
