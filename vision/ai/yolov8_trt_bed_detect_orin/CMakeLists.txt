@@ -32,7 +32,11 @@ set(dependencies
 
 set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
 enable_language(CUDA)
-set(CMAKE_CUDA_ARCHITECTURES 87)
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  set(CMAKE_CUDA_ARCHITECTURES 87)   # Jetson Orin (Ampere)
+else()
+  set(CMAKE_CUDA_ARCHITECTURES 75 86 89 120)  # desktop Turing/Ampere/Ada/Blackwell
+endif()
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_SOURCE_DIR}/plugin)

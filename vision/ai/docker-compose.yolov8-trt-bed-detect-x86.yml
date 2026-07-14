@@ -1,0 +1,34 @@
+services:
+  yolov8-trt-bed-detect-x86:
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.v2
+    container_name: yolov8-trt-bed-detect-x86
+    build:
+      context: .
+      dockerfile: Dockerfile.yolov8_trt_x86
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+    volumes:
+      - ./yolov8/weights:/weights
+      - ./yolov8_trt_bed_detect_orin/config:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config
+      - ./yolov8_trt_bed_detect_orin/launch:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/launch
+      - ./saved_frames:/saved_frames
+    network_mode: host
+    pid: host
+    privileged: true
+    runtime: nvidia
+    command: >
+      bash -c "source /opt/ros/jazzy/setup.bash &&
+               source /ros2_ws/install/setup.bash &&
+               ros2 launch yolov8_trt_bed_detect_orin bed_detect.launch.py"
+
+# Usage:
+#   mkdir -p saved_frames
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml build
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml up -d
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml exec yolov8-trt-bed-detect-x86 bash
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml logs -f
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml down
