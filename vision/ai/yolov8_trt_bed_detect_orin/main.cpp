@@ -200,8 +200,12 @@ int main(int argc, char *argv[]) {
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
     cuda_preprocess_init(kMaxInputImageSize);
-    auto out_dims = engine->getBindingDimensions(1);
-    model_bboxes = out_dims.d[0];
+    // getBindingDimensions(index) was removed in TensorRT 10 along with
+    // implicit-batch mode; the explicit-batch replacement looks up shape by
+    // tensor name and its dims now include the batch dim at d[0], so the
+    // bbox-count dim that used to be d[0] is now d[1].
+    auto out_dims = engine->getTensorShape(kOutputTensorName);
+    model_bboxes = out_dims.d[1];
     float *device_buffers[2];
     float *output_buffer_host = nullptr;
     float *decode_ptr_host = nullptr;
