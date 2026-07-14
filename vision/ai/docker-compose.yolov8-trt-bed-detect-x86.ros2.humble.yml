@@ -2,9 +2,9 @@ services:
   yolov8-trt-serialize-x86-humble:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.humble
     container_name: yolov8-trt-serialize-x86.ros2.humble
-    build:
-      context: .
-      dockerfile: Dockerfile.yolov8_trt_x86.ros2.humble
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.yolov8_trt_x86.ros2.humble
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:

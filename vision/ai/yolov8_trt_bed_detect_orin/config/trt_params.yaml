@@ -4,8 +4,8 @@ yolov8_trt:
     # ── Engine file ──────────────────────────────────────────────────────────
     # engine_name: "yolov8n.engine"        # path to serialised TRT engine
     # engine_name: "/weights/mardi_pineapple_yolo_v8.engine"        # path to serialised TRT engine
-    engine_name: "/weights/yolov8n_x86.engine"        # path to serialised TRT engine
-    
+    # engine_name: "/weights/yolov8n_x86.engine"        # path to serialised TRT engine
+    engine_name: "/weights/yolov8n_x86_ros2_jazzy.engine"        # path to serialised TRT engine
     # engine_name: "/weights/yolov8n_orien_v1.engine"        # path to serialised TRT engine
     # engine_name: "/weights/yolov8n_416.engine"        # path to serialised TRT engine
 

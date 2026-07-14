@@ -1,5 +1,5 @@
 services:
-  yolov8-trt-serialize-x86:
+  yolov8-trt-serialize-x86-jazzy:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
     container_name: yolov8-trt-serialize-x86.ros2.jazzy
     # build:
@@ -16,7 +16,7 @@ services:
                source /ros2_ws/install/setup.bash &&
                ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin -s /weights/yolov8n.wts /weights/yolov8n_x86_ros2_jazzy.engine n 512 512"
 
-  yolov8-trt-bed-detect-x86:
+  yolov8-trt-bed-detect-x86-jazzy:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
     container_name: yolov8-trt-bed-detect-x86.ros2.jazzy
     build:
@@ -38,7 +38,7 @@ services:
     privileged: true
     runtime: nvidia
     # depends_on:
-    #   yolov8-trt-serialize-x86:
+    #   yolov8-trt-serialize-x86-jazzy:
     #     condition: service_completed_successfully
     command: >
       bash -c "source /opt/ros/jazzy/setup.bash &&
@@ -47,9 +47,9 @@ services:
 
 # Usage:
 #   mkdir -p saved_frames
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml build
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml run --rm yolov8-trt-serialize-x86
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml up -d
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml exec yolov8-trt-bed-detect-x86 bash
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml logs -f
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.yml down
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml build
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml run --rm yolov8-trt-serialize-x86-jazzy
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml up -d
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml exec yolov8-trt-bed-detect-x86-jazzy bash
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml logs -f
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml down
