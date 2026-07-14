@@ -1,0 +1,32 @@
+services:
+  yolov8-trt-bed-detect-orin:
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano
+    container_name: yolov8-trt-bed-detect-orin-nano
+    build:
+      context: .
+      dockerfile: Dockerfile.yolov8_trt_bed_detect_jetson_orien_nano
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    devices:
+      - /dev/video0:/dev/video0
+    volumes:
+      - ./yolov8/weights:/weights
+      - ./saved_frames:/saved_frames
+    network_mode: host
+    privileged: true
+    runtime: nvidia
+    # No ROS 2 package has been COPY'd/colcon-built into this image yet (see
+    # the Dockerfile) -- drop into a shell with ROS already sourced so you can
+    # build/launch interactively. Swap this for a `ros2 launch ...` command
+    # once yolov8_trt_bed_detect is added and built here, same as
+    # docker-compose.yolov8-trt-bed-detect-nano.yml does for the Nano image.
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash && bash"
+
+# Usage:
+#   mkdir -p saved_frames
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml build
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml up -d
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml exec yolov8-trt-bed-detect-orin bash
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml logs -f
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml down

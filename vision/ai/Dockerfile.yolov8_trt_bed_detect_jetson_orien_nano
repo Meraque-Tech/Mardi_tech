@@ -1,5 +1,4 @@
-
-# FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
+# Jetson Orin Nano — JetPack 6.x, L4T r36.4.0 (CUDA/TensorRT preinstalled, no ROS)
 FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -9,4 +8,50 @@ ENV OPENBLAS_CORETYPE=ARMV8
 # Select bash as default shell
 SHELL ["/bin/bash", "-c"]
 
+# -----------------------------
+# 1) Locale setup (UTF-8)
+# -----------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    locales \
+ && locale-gen en_US en_US.UTF-8 \
+ && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# -----------------------------
+# 2) Add ROS 2 apt repository
+# -----------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg2 \
+    lsb-release \
+    software-properties-common \
+ && add-apt-repository universe \
+ && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+      -o /usr/share/keyrings/ros-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+    http://packages.ros.org/ros2/ubuntu \
+    $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+    > /etc/apt/sources.list.d/ros2.list \
+ && apt-get update \
+ && apt-get upgrade -y \
+ && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------
+# 3) Install ROS 2 Humble base + dev tools
+# -----------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-ros-base \
+    ros-dev-tools \
+ && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------
+# 4) ROS environment
+# -----------------------------
+ENV ROS_DISTRO=humble
+
+# Source ROS setup for all interactive shells inside container
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc
 
