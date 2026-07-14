@@ -50,9 +50,14 @@ void serialize_engine(std::string &wts_name, std::string &engine_name, std::stri
     }
     p.write(reinterpret_cast<const char *>(serialized_engine->data()), serialized_engine->size());
 
-    delete builder;
-    delete config;
+    // Destroy in reverse-creation order: config was created *from* builder
+    // (builder->createBuilderConfig()), so it must be destroyed before
+    // builder -- deleting builder first is exactly the "destroying a builder
+    // object before destroying objects it created" API misuse TensorRT warns
+    // about, and the undefined behavior that follows.
     delete serialized_engine;
+    delete config;
+    delete builder;
 }
 
 
