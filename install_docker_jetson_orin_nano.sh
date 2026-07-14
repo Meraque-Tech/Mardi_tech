@@ -66,29 +66,43 @@ sudo docker run --rm hello-world
 
 
 
+
+dpkg-query -W nvidia-jetpack
+apt-cache policy nvidia-jetpack
+dpkg-query -W -f='${Version}\n' nvidia-jetpack
+
+
+cat /etc/nv_tegra_release
 ldconfig -p | grep libcuda
 /usr/local/cuda/bin/nvcc --version
 ls /dev/nvhost-ctrl /dev/nvmap
 dpkg -l | grep -i tensorrt
-dpkg-query -W nvidia-jetpack
-apt-cache policy nvidia-jetpack
-cat /etc/nv_tegra_release
-dpkg-query -W -f='${Version}\n' nvidia-jetpack
+
 
 sudo docker info | grep -i runtime
 
 
+docker run --rm -it \
+    --runtime=nvidia \
+    nvcr.io/nvidia/l4t-jetpack:r36.4.0 bash
+
 
 log "Testing Jetson NVIDIA device access"
-sudo docker run --rm \
+
+docker run --rm \
     --runtime=nvidia \
-    ubuntu:22.04 \
+    nvcr.io/nvidia/l4t-jetpack:r36.4.0 \
     bash -c '
         echo "Jetson release:"
-        cat /etc/nv_tegra_release
         echo
         echo "NVIDIA device nodes:"
         ls -l /dev/nvhost-gpu /dev/nvhost* /dev/nvidia* 2>/dev/null || true
+        /usr/src/tensorrt/bin/trtexec --help | head
+        cat /etc/nv_tegra_release
+        ldconfig -p | grep libcuda
+        /usr/local/cuda/bin/nvcc --version
+        ls /dev/nvhost-ctrl /dev/nvmap
+        dpkg -l | grep -i tensorrt
     '
 
 cat <<'EOF'
