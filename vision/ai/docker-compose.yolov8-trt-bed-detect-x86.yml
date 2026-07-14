@@ -1,10 +1,10 @@
 services:
   yolov8-trt-bed-detect-x86:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
-    container_name: yolov8-trt-bed-detect-x86
+    container_name: yolov8-trt-bed-detect-x86.ros2.jazzy
     build:
       context: .
-      dockerfile: Dockerfile.yolov8_trt_x86
+      dockerfile: Dockerfile.yolov8_trt_x86.ros2.jazzy
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     devices:
