@@ -32,7 +32,8 @@ log "Installing required packages"
 sudo apt-get install -y \
     ca-certificates \
     curl \
-    nvidia-container
+    nvidia-container \
+    nano
 
 log "Installing Docker Engine"
 TMP_SCRIPT="$(mktemp)"
