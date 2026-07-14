@@ -103,13 +103,15 @@ Run the container with the weights folder mounted:
 docker run -it --rm --net=host \
   --runtime nvidia \
   --privileged \
-  --name=yolov8-trt-bed-detect-nano \
+  --name=yolov8-trt-bed-detect-orin-nano \
   -e NVIDIA_VISIBLE_DEVICES=all \
   --device /dev/video0:/dev/video0 \
   -v $PWD/yolov8/weights:/weights \
   -v $PWD/yolov8_trt_bed_detect_orin/config:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config \
   -v $PWD/yolov8_trt_bed_detect_orin/launch:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/launch \
-  meraquetech/race_nav:yolov8-trt-bed-detect-nano.v6
+  meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano
+
+  
 
 
 
