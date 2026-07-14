@@ -1,7 +1,7 @@
 services:
   yolov8-trt-serialize-x86-jazzy:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
-    container_name: yolov8-trt-serialize-x86.ros2.jazzy
+    container_name: yolov8-trt-serialize-x86-jazzy
     # build:
     #   context: .
     #   dockerfile: Dockerfile.yolov8_trt_x86.ros2.jazzy
@@ -18,7 +18,7 @@ services:
 
   yolov8-trt-bed-detect-x86-jazzy:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
-    container_name: yolov8-trt-bed-detect-x86.ros2.jazzy
+    container_name: yolov8-trt-bed-detect-x86-jazzy
     build:
       context: .
       dockerfile: Dockerfile.yolov8_trt_x86.ros2.jazzy
@@ -49,7 +49,8 @@ services:
 #   mkdir -p saved_frames
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml build
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml run --rm yolov8-trt-serialize-x86-jazzy
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml up -d
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml up yolov8-trt-bed-detect-x86-jazzy
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml up -d yolov8-trt-bed-detect-x86-jazzy
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml exec yolov8-trt-bed-detect-x86-jazzy bash
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml logs -f
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml down
