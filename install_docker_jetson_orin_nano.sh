@@ -78,6 +78,19 @@ sudo docker run --rm \
 
 cat <<'EOF'
 
+
+ldconfig -p | grep libcuda
+/usr/local/cuda/bin/nvcc --version
+ls /dev/nvhost-ctrl /dev/nvmap
+dpkg -l | grep -i tensorrt
+dpkg-query -W nvidia-jetpack
+apt-cache policy nvidia-jetpack
+cat /etc/nv_tegra_release
+dpkg-query -W -f='${Version}\n' nvidia-jetpack
+
+sudo docker info | grep -i runtime
+
+
 Installation completed.
 
 To use Docker without sudo, either:
