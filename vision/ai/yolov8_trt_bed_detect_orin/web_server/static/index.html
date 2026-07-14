@@ -133,6 +133,8 @@
     <div class="status-item"><span class="muted">Obj result</span><strong><span id="bed-badge" class="badge clear">CLEAR</span></strong></div>
     <div class="status-item"><span class="muted">Confidence</span><strong id="confidence">0.000</strong></div>
     <div class="status-item"><span class="muted">Current total</span><strong id="current-total">0</strong></div>
+    <div class="status-item"><span class="muted">Camera port</span><strong id="camera-index">—</strong></div>
+    <div class="status-item"><span class="muted">Inference + GPU postproc</span><strong id="infer-ms">— ms</strong></div>
     <div class="status-item updated"><span class="muted">Last count update</span><strong id="last-update">—</strong></div>
   </section>
 
@@ -333,6 +335,8 @@
     const confVal=document.getElementById('sb-conf-val');
     confVal.textContent=conf.toFixed(3);confVal.style.color=confColor;
     if(data.last_updated)document.getElementById('last-update').textContent=formatTime(data.last_updated);
+    document.getElementById('camera-index').textContent=(data.camera_index===null||data.camera_index===undefined)?'—':`/dev/video${data.camera_index}`;
+    document.getElementById('infer-ms').textContent=data.infer_ms?`${Number(data.infer_ms).toFixed(2)} ms`:'— ms';
     renderCounts(data.counts||{});
     if(typeof data.is_track==='boolean')applyTracking(data.is_track);
     if(typeof data.auto_save==='boolean')document.getElementById('auto-save-toggle').checked=data.auto_save;

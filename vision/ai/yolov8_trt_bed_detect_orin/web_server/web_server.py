@@ -13,7 +13,7 @@ from typing import List, Optional
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-from std_msgs.msg import Float32, String, UInt8
+from std_msgs.msg import Float32, Int32, String, UInt8
 from std_srvs.srv import SetBool, Trigger
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -41,6 +41,8 @@ state = {
     "is_track": False,
     "auto_save": False,
     "last_updated": None,
+    "camera_index": None,
+    "infer_ms": 0.0,
 }
 state_lock = threading.Lock()
 auto_save_wakeup = threading.Event()
@@ -168,6 +170,8 @@ class BridgeNode(Node):
         self.create_subscription(UInt8, "/detection_active", self._active_cb, state_qos)
         self.create_subscription(UInt8, "/tracking_enabled", self._tracking_cb, state_qos)
         self.create_subscription(Float32, "/conf", self._conf_cb, 10)
+        self.create_subscription(Int32, "/camera_index", self._camera_index_cb, state_qos)
+        self.create_subscription(Float32, "/infer_ms", self._infer_ms_cb, 10)
 
         self._start_cli = self.create_client(Trigger, "/bed_detection")
         self._stop_cli = self.create_client(Trigger, "/bed_detection_stop")
@@ -202,6 +206,15 @@ class BridgeNode(Node):
     def _conf_cb(self, msg):
         with state_lock:
             state["conf"] = round(float(msg.data), 4)
+
+    def _camera_index_cb(self, msg):
+        with state_lock:
+            state["camera_index"] = int(msg.data)
+        broadcast_state("status")
+
+    def _infer_ms_cb(self, msg):
+        with state_lock:
+            state["infer_ms"] = round(float(msg.data), 2)
 
     def _active_cb(self, msg):
         with state_lock:

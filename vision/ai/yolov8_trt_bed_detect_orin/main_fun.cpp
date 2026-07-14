@@ -113,7 +113,7 @@ void prepare_buffer(ICudaEngine *engine, float **input_buffer_device, float **ou
     }
 }
 
-void infer(IExecutionContext &context, cudaStream_t &stream, void **buffers, float *output, int batchsize, float* decode_ptr_host, float* decode_ptr_device, int model_bboxes, std::string cuda_post_process, float conf_thresh, float nms_thresh, int max_output_bbox) {
+void infer(IExecutionContext &context, cudaStream_t &stream, void **buffers, float *output, int batchsize, float* decode_ptr_host, float* decode_ptr_device, int model_bboxes, std::string cuda_post_process, float conf_thresh, float nms_thresh, int max_output_bbox, double *elapsed_ms = nullptr) {
     auto start = std::chrono::system_clock::now();
     // IExecutionContext::enqueue(batchSize, buffers, ...) was removed in
     // TensorRT 10 along with implicit-batch mode -- bind tensors by name and
@@ -123,18 +123,24 @@ void infer(IExecutionContext &context, cudaStream_t &stream, void **buffers, flo
     context.enqueueV3(stream);
     if (cuda_post_process == "c") {
         CUDA_CHECK(cudaMemcpyAsync(output, buffers[1], batchsize * kOutputSize * sizeof(float), cudaMemcpyDeviceToHost, stream));
-        auto end = std::chrono::system_clock::now();
-        std::cout << "inference time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
     } else if (cuda_post_process == "g") {
         CUDA_CHECK(cudaMemsetAsync(decode_ptr_device, 0, sizeof(float) * (1 + max_output_bbox * bbox_element), stream));
         cuda_decode((float *)buffers[1], model_bboxes, conf_thresh, decode_ptr_device, max_output_bbox, stream);
         cuda_nms(decode_ptr_device, nms_thresh, max_output_bbox, stream);
         CUDA_CHECK(cudaMemcpyAsync(decode_ptr_host, decode_ptr_device, sizeof(float) * (1 + max_output_bbox * bbox_element), cudaMemcpyDeviceToHost, stream));
-        auto end = std::chrono::system_clock::now();
-        std::cout << "inference and gpu postprocess time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
     }
 
+    // Sync before stopping the clock so the timing reflects actual GPU
+    // completion, not just how long it took to submit the async work.
     CUDA_CHECK(cudaStreamSynchronize(stream));
+    auto end = std::chrono::system_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(end - start).count();
+    if (elapsed_ms) *elapsed_ms = ms;
+    if (cuda_post_process == "c") {
+        std::cout << "inference time: " << ms << "ms" << std::endl;
+    } else if (cuda_post_process == "g") {
+        std::cout << "inference and gpu postprocess time: " << ms << "ms" << std::endl;
+    }
 }
 
 

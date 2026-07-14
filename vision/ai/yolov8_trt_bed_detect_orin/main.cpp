@@ -3,6 +3,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/u_int8.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include <std_msgs/msg/string.hpp>
 #include "std_srvs/srv/set_bool.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -59,7 +60,7 @@ TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
 // Opens `preferred_index` if it works; otherwise scans /dev/video0.. for the
 // first index that actually yields a frame (V4L2 exposes metadata-only nodes
 // that succeed at isOpened() but never deliver a capture).
-cv::VideoCapture open_camera(int preferred_index, int max_scan = 10) {
+cv::VideoCapture open_camera(int preferred_index, int &opened_index, int max_scan = 10) {
     auto try_index = [](int index) {
         cv::VideoCapture cap(index, cv::CAP_V4L2);
         cv::Mat frame;
@@ -74,6 +75,7 @@ cv::VideoCapture open_camera(int preferred_index, int max_scan = 10) {
         cv::VideoCapture cap = try_index(preferred_index);
         if (cap.isOpened()) {
             RCLCPP_INFO(node->get_logger(), "camera_index %d opened", preferred_index);
+            opened_index = preferred_index;
             return cap;
         }
         RCLCPP_WARN(node->get_logger(), "camera_index %d failed, scanning for a working camera", preferred_index);
@@ -84,9 +86,11 @@ cv::VideoCapture open_camera(int preferred_index, int max_scan = 10) {
         cv::VideoCapture cap = try_index(index);
         if (cap.isOpened()) {
             RCLCPP_INFO(node->get_logger(), "auto-detected camera at index %d", index);
+            opened_index = index;
             return cap;
         }
     }
+    opened_index = -1;
     return cv::VideoCapture();
 }
 
@@ -120,6 +124,8 @@ int main(int argc, char *argv[]) {
         node->create_publisher<std_msgs::msg::UInt8>("detection_active", state_qos);
     auto tracking_enabled_pub =
         node->create_publisher<std_msgs::msg::UInt8>("tracking_enabled", state_qos);
+    auto camera_index_pub = node->create_publisher<std_msgs::msg::Int32>("camera_index", state_qos);
+    auto infer_ms_pub = node->create_publisher<std_msgs::msg::Float32>("infer_ms", 10);
 
     auto publish_active = [&detection_active_pub](bool active) {
         std_msgs::msg::UInt8 msg;
@@ -213,13 +219,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    cv::VideoCapture cap = open_camera(p.camera_index);
+    int opened_camera_index = -1;
+    cv::VideoCapture cap = open_camera(p.camera_index, opened_camera_index);
     if (!cap.isOpened()) {
         std::cout << "Failed to open webcam." << std::endl;
         return 1;
     }
     cap.set(cv::CAP_PROP_FRAME_WIDTH,  p.camera_width);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, p.camera_height);
+
+    std_msgs::msg::Int32 camera_index_msg;
+    camera_index_msg.data = opened_camera_index;
+    camera_index_pub->publish(camera_index_msg);
 
     MjpegServer mjpeg_server;
     if (!mjpeg_server.start(p.mjpeg_port)) {
@@ -271,9 +282,14 @@ int main(int argc, char *argv[]) {
             std::vector<cv::Mat> img_batch{frame};
 
             cuda_batch_preprocess(img_batch, device_buffers[0], p.input_w, p.input_h, stream);
+            double infer_ms = 0.0;
             infer(*context, stream, (void **)device_buffers, output_buffer_host, kBatchSize,
                   decode_ptr_host, decode_ptr_device, model_bboxes, p.cuda_post_process,
-                  p.conf_thresh, p.nms_thresh, p.max_output_bbox);
+                  p.conf_thresh, p.nms_thresh, p.max_output_bbox, &infer_ms);
+
+            std_msgs::msg::Float32 infer_ms_msg;
+            infer_ms_msg.data = static_cast<float>(infer_ms);
+            infer_ms_pub->publish(infer_ms_msg);
 
             std::vector<std::vector<Detection>> res_batch;
             if (p.cuda_post_process == "c") {
