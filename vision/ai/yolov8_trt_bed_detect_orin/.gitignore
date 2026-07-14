@@ -20,3 +20,4 @@
 !/launch
 !/config
 !/web_server
+!/*.py
