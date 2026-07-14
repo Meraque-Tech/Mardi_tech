@@ -178,7 +178,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    cv::VideoCapture cap(p.camera_index);
+    cv::VideoCapture cap(p.camera_index, cv::CAP_V4L2);
     if (!cap.isOpened()) {
         std::cout << "Failed to open webcam." << std::endl;
         return 1;
