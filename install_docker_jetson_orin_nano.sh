@@ -108,6 +108,26 @@ docker run --rm \
 cat <<'EOF'
 
 
+docker run --rm \
+    --runtime=nvidia \
+    dustynv/ros:humble-desktop-l4t-r36.4.0 \
+    bash -c '
+        echo "Jetson release:"
+        echo
+        echo "NVIDIA device nodes:"
+        ls -l /dev/nvhost-gpu /dev/nvhost* /dev/nvidia* 2>/dev/null || true
+        /usr/src/tensorrt/bin/trtexec --help | head
+        cat /etc/nv_tegra_release
+        ldconfig -p | grep libcuda
+        /usr/local/cuda/bin/nvcc --version
+        ls /dev/nvhost-ctrl /dev/nvmap
+        dpkg -l | grep -i tensorrt
+    '
+
+
+
+
+
 
 
 Installation completed.
