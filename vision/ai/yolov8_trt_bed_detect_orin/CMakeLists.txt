@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.13)  # target_link_options() needs >=3.13
 
 project(yolov8_trt_bed_detect_orin)
 
@@ -38,8 +38,16 @@ include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_SOURCE_DIR}/plugin)
 include_directories(${CUDA_INCLUDE_DIRS})
 
+# libnvinfer.so (and cudart's libcudla.so.1) have link-time deps on Jetson's
+# DLA compiler libraries (libnvdla_compiler.so, libnvcudla.so). Those aren't
+# baked into redistributable L4T container images -- they're only injected
+# from the host at `docker run --runtime nvidia` time via the NVIDIA Container
+# Runtime's host-file-mount mechanism, which a plain `docker build` never has
+# access to. This package never uses the DLA cores (GPU-only inference), so
+# tell the linker not to require those symbols to resolve at link time.
 add_library(myplugins SHARED ${PROJECT_SOURCE_DIR}/plugin/yololayer.cu)
 target_link_libraries(myplugins nvinfer cudart)
+target_link_options(myplugins PRIVATE "-Wl,--allow-shlib-undefined")
 
 link_directories(${CUDA_LIBRARY_DIRS})
 
@@ -59,6 +67,7 @@ file(GLOB_RECURSE SRCS ${PROJECT_SOURCE_DIR}/src/*.cpp ${PROJECT_SOURCE_DIR}/src
 add_executable(yolov8_trt_bed_detect_orin ${PROJECT_SOURCE_DIR}/main.cpp ${SRCS})
 ament_target_dependencies(yolov8_trt_bed_detect_orin ${dependencies})
 target_link_libraries(yolov8_trt_bed_detect_orin nvinfer cudart myplugins ${OpenCV_LIBS} pthread)
+target_link_options(yolov8_trt_bed_detect_orin PRIVATE "-Wl,--allow-shlib-undefined")
 
 install(TARGETS
   yolov8_trt_bed_detect_orin
