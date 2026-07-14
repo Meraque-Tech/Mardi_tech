@@ -65,3 +65,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     --no-cache-dir \
     --ignore-installed \
     flask flask-sock
+
+
+WORKDIR /ros2_ws/src
+COPY yolov8_trt_bed_detect/ yolov8_trt_bed_detect/
+
+WORKDIR /ros2_ws
+RUN ROS_SETUP=$(find /opt/ros /root -name "setup.bash" 2>/dev/null | head -1) && \
+    echo "Using: $ROS_SETUP" && \
+    source "$ROS_SETUP" && \
+    colcon build --packages-select yolov8_trt_bed_detect \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+
+# ENV ROS_SETUP_CMD="source \$(find /opt/ros /root -name setup.bash 2>/dev/null | head -1)"
+
+# # Usage:
+# #   docker run ... ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect -d weights/best.engine ./ g -conf 0.85
+# CMD ["/bin/bash", "-c", \
+#     "source $(find /opt/ros /root -name setup.bash 2>/dev/null | head -1) && \
+#      source /ros2_ws/install/setup.bash && bash"]
