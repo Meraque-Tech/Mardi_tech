@@ -52,7 +52,10 @@ yolov8_trt:
     mjpeg_port: 8080
 
     # ── Camera ───────────────────────────────────────────────────────────────
-    camera_index:   1
+    # -1 → auto-detect: scan /dev/video0.. for the first index that actually
+    #      delivers a frame (skips metadata-only V4L2 nodes).
+    # >=0 → try this index first, fall back to auto-detect if it fails.
+    camera_index:  -1
     camera_width:  1280
     camera_height:  720
 

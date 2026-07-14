@@ -56,6 +56,41 @@ TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
 }
 
 
+// Opens `preferred_index` if it works; otherwise scans /dev/video0.. for the
+// first index that actually yields a frame (V4L2 exposes metadata-only nodes
+// that succeed at isOpened() but never deliver a capture).
+cv::VideoCapture open_camera(int preferred_index, int max_scan = 10) {
+    auto try_index = [](int index) {
+        cv::VideoCapture cap(index, cv::CAP_V4L2);
+        cv::Mat frame;
+        if (cap.isOpened() && cap.read(frame) && !frame.empty()) {
+            return cap;
+        }
+        cap.release();
+        return cv::VideoCapture();
+    };
+
+    if (preferred_index >= 0) {
+        cv::VideoCapture cap = try_index(preferred_index);
+        if (cap.isOpened()) {
+            RCLCPP_INFO(node->get_logger(), "camera_index %d opened", preferred_index);
+            return cap;
+        }
+        RCLCPP_WARN(node->get_logger(), "camera_index %d failed, scanning for a working camera", preferred_index);
+    }
+
+    for (int index = 0; index < max_scan; ++index) {
+        if (index == preferred_index) continue;
+        cv::VideoCapture cap = try_index(index);
+        if (cap.isOpened()) {
+            RCLCPP_INFO(node->get_logger(), "auto-detected camera at index %d", index);
+            return cap;
+        }
+    }
+    return cv::VideoCapture();
+}
+
+
 SimpleTracker tracker;
 
 std::map<int, int> count_detections(const cv::Mat &frame, const std::vector<Detection> &res, bool is_track, SimpleTracker &trk) {
@@ -178,7 +213,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    cv::VideoCapture cap(p.camera_index, cv::CAP_V4L2);
+    cv::VideoCapture cap = open_camera(p.camera_index);
     if (!cap.isOpened()) {
         std::cout << "Failed to open webcam." << std::endl;
         return 1;
