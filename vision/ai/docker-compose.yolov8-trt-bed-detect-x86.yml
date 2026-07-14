@@ -1,6 +1,6 @@
 services:
   yolov8-trt-bed-detect-x86:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.v2
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
     container_name: yolov8-trt-bed-detect-x86
     build:
       context: .
