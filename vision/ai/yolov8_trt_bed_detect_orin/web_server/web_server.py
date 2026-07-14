@@ -5,6 +5,7 @@ import datetime
 import json
 import os
 import sqlite3
+import subprocess
 import threading
 import urllib.request
 from pathlib import Path
@@ -520,6 +521,27 @@ def set_track():
         return jsonify({"success": False, "message": "ROS bridge is not ready"}), 503
     ok, message = ros_node.call_set_tracking(enabled)
     return jsonify({"success": ok, "message": message, "is_track": enabled}), (200 if ok else 503)
+
+
+@app.route("/api/shutdown", methods=["POST"])
+def shutdown_device():
+    data = request.get_json(silent=True) or {}
+    if data.get("confirm") != "shutdown":
+        return jsonify({"success": False, "message": "confirmation required"}), 400
+
+    # pid: host in docker-compose puts this container in the host's PID
+    # namespace, so PID 1 here *is* the host's init -- nsenter into its
+    # other namespaces to run shutdown against the actual Jetson, not
+    # the container's own (otherwise inert) view of the system.
+    try:
+        subprocess.Popen([
+            "nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid",
+            "--", "shutdown", "-h", "now",
+        ])
+    except OSError as exc:
+        return jsonify({"success": False, "message": "could not initiate shutdown: %s" % exc}), 500
+
+    return jsonify({"success": True, "message": "Jetson is shutting down now"})
 
 
 @app.route("/api/save", methods=["POST"])

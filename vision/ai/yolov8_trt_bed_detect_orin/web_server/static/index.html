@@ -153,6 +153,7 @@
           <button onclick="saveFrame()">▣ Save frame</button>
           <button class="gray" onclick="resetTracker()">↺ Reset tracker</button>
           <button class="red" onclick="deleteAllData()">⚠ Delete all saved data</button>
+          <button class="red" onclick="shutdownDevice()">⏻ Shutdown Jetson</button>
         </div>
       </section>
       <section class="card">
@@ -499,6 +500,12 @@
   async function saveFrame() { try{toast('Saving frame…');const result=await api('/api/save',{method:'POST'});toast(`Saved ${result.filename}`);loadImages();}catch(error){toast(error.message,true);} }
   async function saveCount() { try{const result=await api('/api/save_count',{method:'POST'});toast(`${result.message}: ${result.total} total`);historyOffset=0;loadHistory(0);}catch(error){toast(error.message,true);} }
   async function deleteAllData() { if(!window.confirm('Permanently delete ALL saved count history and images? Automatic saving will be disabled.'))return;try{const result=await api('/api/data',{method:'DELETE'});document.getElementById('auto-save-toggle').checked=false;historyOffset=0;await Promise.all([loadHistory(0),loadImages()]);toast(`${result.deleted_records} records and ${result.deleted_images} images deleted`);}catch(error){toast(error.message,true);} }
+  async function shutdownDevice() {
+    if(!window.confirm('Shut down the Jetson now? This will power off the device — you will need physical access to turn it back on.'))return;
+    if(!window.confirm('Are you absolutely sure? All running processes will be stopped immediately.'))return;
+    try { const result=await api('/api/shutdown',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'shutdown'})});toast(result.message); }
+    catch(error){toast(error.message,true);}
+  }
   async function loadImages() { try{const images=await api('/api/images');const gallery=document.getElementById('gallery');gallery.innerHTML=images.length?images.map(item=>`<div class="thumb"><img src="${item.url}" alt="${escapeHtml(item.filename)}" onclick="openImage('${item.url}')"><button onclick="deleteImage('${escapeHtml(item.filename)}')">×</button><small>${escapeHtml(formatTime(item.time))}</small></div>`).join(''):'<span class="muted">No saved frames yet.</span>';}catch(error){toast(error.message,true);} }
   async function deleteImage(name) { try{await api(`/api/images/${encodeURIComponent(name)}`,{method:'DELETE'});loadImages();}catch(error){toast(error.message,true);} }
   function openImage(url) { document.getElementById('lightbox-image').src=url;document.getElementById('lightbox').classList.add('open'); }

@@ -17,6 +17,7 @@ services:
       - ./yolov8_trt_bed_detect_orin/launch:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/launch
       - ./saved_frames:/saved_frames
     network_mode: host
+    pid: host
     privileged: true
     runtime: nvidia
     command: >
