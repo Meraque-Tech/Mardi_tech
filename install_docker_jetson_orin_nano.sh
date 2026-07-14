@@ -103,6 +103,7 @@ docker run --rm \
         /usr/local/cuda/bin/nvcc --version
         ls /dev/nvhost-ctrl /dev/nvmap
         dpkg -l | grep -i tensorrt
+        lsb_release -a
     '
 
 cat <<'EOF'
