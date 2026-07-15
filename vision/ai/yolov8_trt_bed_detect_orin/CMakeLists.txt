@@ -35,7 +35,13 @@ enable_language(CUDA)
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
   set(CMAKE_CUDA_ARCHITECTURES 87)   # Jetson Orin (Ampere)
 else()
-  set(CMAKE_CUDA_ARCHITECTURES 75 86 89 120)  # desktop Turing/Ampere/Ada/Blackwell
+  set(CMAKE_CUDA_ARCHITECTURES 75 86 89)  # desktop Turing/Ampere/Ada
+  # sm_120 (Blackwell, e.g. RTX 50-series) needs nvcc >= 12.8 -- older
+  # toolkits (e.g. CUDA 12.5 on the ROS 2 Humble/Ubuntu-22.04 image) reject
+  # compute_120 as an unknown architecture outright.
+  if (CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.8)
+    list(APPEND CMAKE_CUDA_ARCHITECTURES 120)
+  endif()
 endif()
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
