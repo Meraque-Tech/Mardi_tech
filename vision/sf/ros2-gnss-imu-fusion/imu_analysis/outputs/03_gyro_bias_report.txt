@@ -1,0 +1,9 @@
+Gyro bias estimate (rad/s)
+----------------------------------
+bx = 0.007591   (std=0.001553)
+by = -0.019378   (std=0.001877)
+bz = -0.020783   (std=0.001647)
+
+Samples used: 1669 / 5038 (33.1%)  ~ 20.00 s
+Fs = 83.44 Hz
+Params: win=1.00s, th_gyr=0.030, th_acc_low=0.50, th_acc_high=0.70, gap_tol=0.50s, min_len=5.00s, max_len=20.00s

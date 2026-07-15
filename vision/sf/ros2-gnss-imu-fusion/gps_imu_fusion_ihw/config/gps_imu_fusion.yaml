@@ -1,0 +1,17 @@
+gps_imu_sensor_fusion:
+  ros__parameters:
+
+    # ───── 필터 튜닝 파라미터 ─────
+    sigma_a:     0.5        # [m/s²]  가속 과정 잡음  (0.1 ~ 0.5 사이 조정)
+    sigma_omega: 0.08        # [rad/s] 요속 과정 잡음  (0.02 ~ 0.08)
+
+    # fallback dt (IMU 시간 이상 시)
+    dt_default:  0.01        # [s]
+
+    # GPS 위치 측정 분산 (R = gps_cov·I)
+    gps_cov:     0.000196    # ≈ 0.014 m (1σ)  GNSS 품질 따라 조정
+
+    # ───── 프레임 / 출력 ─────
+    map_frame:   "reference"
+    base_frame:  "gps_antenna"
+    publish_tf:  true

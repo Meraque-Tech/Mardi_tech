@@ -1,0 +1,7 @@
+cd src/Localization/gui
+
+source venv_gui/bin/activate
+
+python3 gui/gg_plotter.py
+
+deactivate
