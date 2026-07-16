@@ -2,6 +2,7 @@
 """Evaluate a YOLOv8 detection model on a labeled test split."""
 
 import argparse
+import gc
 import json
 import os
 import time
@@ -40,6 +41,18 @@ def synchronize_accelerator():
 
         if torch.cuda.is_available():
             torch.cuda.synchronize()
+    except Exception:
+        pass
+
+
+def clear_cuda_cache():
+    """Release unused CUDA allocator blocks between validation phases."""
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     except Exception:
         pass
 
@@ -247,12 +260,11 @@ def plot_roc_auc_curves(output_path: Path, curves: list[dict], split_name: str):
 
 def build_image_level_roc_auc(
     run_dir: Path,
-    weights_path: Path,
     data_config: dict,
     split_name: str,
     imgsz: int,
-    batch: int,
     device: str | None,
+    predictor,
 ) -> dict:
     names = normalize_class_names(data_config.get("names"))
     if not names:
@@ -274,10 +286,10 @@ def build_image_level_roc_auc(
         }
 
     from sklearn.metrics import auc, roc_curve
-    from ultralytics import YOLO
 
-    predictor = YOLO(str(weights_path))
-    batch_size = batch if isinstance(batch, int) and batch > 0 else 16
+    # ROC-AUC is an auxiliary pass. Keep it conservative so it cannot
+    # reproduce the validation batch peak after model.val() returns.
+    batch_size = 1
 
     y_true_by_class = {class_id: [] for class_id in names}
     y_score_by_class = {class_id: [] for class_id in names}
@@ -354,8 +366,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a YOLOv8 model on a test split.")
     parser.add_argument("--weights", required=True, help="Path to the model weights (.pt).")
     parser.add_argument("--data", required=True, help="Path to the dataset YAML file.")
-    parser.add_argument("--imgsz", type=int, default=640, help="Evaluation image size.")
-    parser.add_argument("--batch", type=int, default=16, help="Evaluation batch size.")
+    parser.add_argument("--imgsz", type=int, default=512, help="Evaluation image size.")
+    parser.add_argument("--batch", type=int, default=8, help="Evaluation batch size.")
     parser.add_argument("--workers", type=int, default=2, help="Number of dataloader workers.")
     parser.add_argument("--device", default=None, help="Evaluation device, for example 0 or cpu.")
     parser.add_argument("--split", default="test", help="Dataset split to evaluate.")
@@ -403,6 +415,7 @@ def main():
         )
     synchronize_accelerator()
     evaluation_seconds = seconds_since(evaluation_start)
+    clear_cuda_cache()
 
     run_dir = Path(getattr(metrics, "save_dir", Path(args.project) / args.name)).expanduser().resolve()
     report_run_dir(run_dir)
@@ -440,12 +453,11 @@ def main():
         roc_auc_start = time.perf_counter()
         payload["roc_auc"] = build_image_level_roc_auc(
             run_dir=run_dir,
-            weights_path=weights_path,
             data_config=data_config,
             split_name=args.split,
             imgsz=args.imgsz,
-            batch=args.batch,
             device=args.device,
+            predictor=model,
         )
     except Exception as exc:
         print(f"Could not generate ROC-AUC artifacts: {exc}", flush=True)
