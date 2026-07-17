@@ -65,6 +65,7 @@ TRAINING_AUGMENTATIONS = {
 
 WEB_PROGRESS_PREFIX = "WEB_TRAINING_PROGRESS"
 IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpeg", ".jpg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
+ROC_AUC_BATCH_SIZE = 1
 
 
 def confusion_matrix_axis_label(label):
@@ -629,6 +630,36 @@ def collect_split_images(entries: list[Path]) -> list[Path]:
     return unique_images
 
 
+def iter_batched_predictions(
+    predictor,
+    image_paths: list[Path],
+    batch_size: int = ROC_AUC_BATCH_SIZE,
+    **predict_kwargs,
+):
+    """Yield path/result pairs without passing an unbounded list to Ultralytics.
+
+    Ultralytics treats a Python list source as one in-memory batch and ignores
+    its ``batch`` argument for that source type. Slice the source explicitly so
+    the actual inference batch cannot exceed ``batch_size``.
+    """
+    if batch_size < 1:
+        raise ValueError("Prediction batch size must be at least 1.")
+
+    for start in range(0, len(image_paths), batch_size):
+        chunk_paths = image_paths[start : start + batch_size]
+        results = predictor.predict(
+            source=[str(path) for path in chunk_paths],
+            stream=False,
+            **predict_kwargs,
+        )
+        if len(results) != len(chunk_paths):
+            raise RuntimeError(
+                "Ultralytics returned an unexpected number of prediction results: "
+                f"expected {len(chunk_paths)}, got {len(results)}."
+            )
+        yield from zip(chunk_paths, results)
+
+
 def image_label_path(image_path: Path) -> Path:
     parts = list(image_path.parts)
     if "images" in parts:
@@ -677,41 +708,41 @@ def build_image_level_roc_auc(run_dir: Path, weights_path: Path, data_config: di
     from ultralytics import YOLO
 
     device = config.get("device")
-    predictor = YOLO(str(weights_path))
-    # This is an auxiliary pass after training. Keep it independent from the
-    # training batch size so it cannot reproduce the training memory peak.
-    batch_size = 1
-
     y_true_by_class = {class_id: [] for class_id in names}
     y_score_by_class = {class_id: [] for class_id in names}
-    prediction_stream = predictor.predict(
-        source=[str(path) for path in image_paths],
-        stream=True,
-        imgsz=config["imgsz"],
-        conf=0.001,
-        iou=0.7,
-        batch=batch_size,
-        device=device,
-        verbose=False,
-    )
+    predictor = YOLO(str(weights_path))
+    try:
+        prediction_results = iter_batched_predictions(
+            predictor,
+            image_paths,
+            batch_size=ROC_AUC_BATCH_SIZE,
+            imgsz=config["imgsz"],
+            conf=0.001,
+            iou=0.7,
+            device=device,
+            verbose=False,
+        )
 
-    for image_path, result in zip(image_paths, prediction_stream):
-        gt_classes = read_image_classes(image_label_path(image_path))
-        scores = {class_id: 0.0 for class_id in names}
-        boxes = getattr(result, "boxes", None)
-        if boxes is not None and boxes.cls is not None and boxes.conf is not None:
-            predicted_classes = boxes.cls.tolist()
-            confidences = boxes.conf.tolist()
-            for raw_class, raw_confidence in zip(predicted_classes, confidences):
-                class_id = int(raw_class)
-                if class_id not in scores:
-                    continue
-                confidence = float(raw_confidence)
-                if confidence > scores[class_id]:
-                    scores[class_id] = confidence
-        for class_id in names:
-            y_true_by_class[class_id].append(1 if class_id in gt_classes else 0)
-            y_score_by_class[class_id].append(scores[class_id])
+        for image_path, result in prediction_results:
+            gt_classes = read_image_classes(image_label_path(image_path))
+            scores = {class_id: 0.0 for class_id in names}
+            boxes = getattr(result, "boxes", None)
+            if boxes is not None and boxes.cls is not None and boxes.conf is not None:
+                predicted_classes = boxes.cls.tolist()
+                confidences = boxes.conf.tolist()
+                for raw_class, raw_confidence in zip(predicted_classes, confidences):
+                    class_id = int(raw_class)
+                    if class_id not in scores:
+                        continue
+                    confidence = float(raw_confidence)
+                    if confidence > scores[class_id]:
+                        scores[class_id] = confidence
+            for class_id in names:
+                y_true_by_class[class_id].append(1 if class_id in gt_classes else 0)
+                y_score_by_class[class_id].append(scores[class_id])
+    finally:
+        del predictor
+        clear_cuda_cache()
 
     curves = []
     summary = []
@@ -828,6 +859,10 @@ def save_web_metrics(run_dir: Path, metrics, data_config: dict, config: dict):
             payload["roc_auc"] = build_image_level_roc_auc(run_dir, weights_path, data_config, config)
         except Exception as exc:
             if is_cuda_oom(exc) and config.get("device") != "cpu":
+                print(
+                    "ROC-AUC inference ran out of GPU memory; retrying on CPU.",
+                    flush=True,
+                )
                 clear_cuda_cache()
                 cpu_config = dict(config)
                 cpu_config["device"] = "cpu"

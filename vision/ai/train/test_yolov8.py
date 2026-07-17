@@ -8,7 +8,12 @@ import os
 import time
 from pathlib import Path
 
-from train_yolov8 import IMAGE_EXTENSIONS, use_actual_confusion_matrix_axis_label
+from train_yolov8 import (
+    IMAGE_EXTENSIONS,
+    ROC_AUC_BATCH_SIZE,
+    iter_batched_predictions,
+    use_actual_confusion_matrix_axis_label,
+)
 
 
 WEB_TEST_PROGRESS_PREFIX = "WEB_TEST_PROGRESS"
@@ -287,24 +292,20 @@ def build_image_level_roc_auc(
 
     from sklearn.metrics import auc, roc_curve
 
-    # ROC-AUC is an auxiliary pass. Keep it conservative so it cannot
-    # reproduce the validation batch peak after model.val() returns.
-    batch_size = 1
-
     y_true_by_class = {class_id: [] for class_id in names}
     y_score_by_class = {class_id: [] for class_id in names}
-    prediction_stream = predictor.predict(
-        source=[str(path) for path in image_paths],
-        stream=True,
+    prediction_results = iter_batched_predictions(
+        predictor,
+        image_paths,
+        batch_size=ROC_AUC_BATCH_SIZE,
         imgsz=imgsz,
         conf=0.001,
         iou=0.7,
-        batch=batch_size,
         device=device,
         verbose=False,
     )
 
-    for image_path, result in zip(image_paths, prediction_stream):
+    for image_path, result in prediction_results:
         gt_classes = read_image_classes(image_label_path(image_path))
         scores = {class_id: 0.0 for class_id in names}
         boxes = getattr(result, "boxes", None)
