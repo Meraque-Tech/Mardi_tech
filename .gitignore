@@ -2,3 +2,5 @@ runs/
 *.pt
 logs/
 logs.txt
+__pycache__/
+*.py[cod]
