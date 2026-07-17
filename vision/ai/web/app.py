@@ -2251,6 +2251,34 @@ def parse_class_metrics_from_log(log_path: Path) -> dict:
     }
 
 
+def find_training_log_for_run(run_dir: Path) -> Optional[Path]:
+    """Find a log that belongs to run_dir without falling back across runs."""
+    candidates = []
+    if training_log_file is not None:
+        candidates.append(training_log_file)
+    candidates.extend(
+        sorted(
+            LOG_DIR.glob("train-*.log"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    )
+
+    run_path = str(run_dir)
+    project_path = str(run_dir.parent)
+    run_name_marker = f"--name {run_dir.name}"
+    project_marker = f"--project {project_path}"
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen or not candidate.is_file():
+            continue
+        seen.add(candidate)
+        content = read_log_file(candidate)
+        if run_path in content or (run_name_marker in content and project_marker in content):
+            return candidate
+    return None
+
+
 def clamp_metric(value: float) -> float:
     return min(1.0, max(0.0, value))
 
@@ -3180,17 +3208,23 @@ def read_run_metrics(run_dir: Path, include_magic: bool = True) -> dict:
     web_metrics = read_web_metrics(run_dir)
     backend = web_metrics.get("backend") or family_for_runs_root(run_dir.parent)
     web_overall = web_metrics.get("overall") if isinstance(web_metrics.get("overall"), dict) else {}
-    precision = precision if precision is not None else float_value(web_overall, "precision")
-    recall = recall if recall is not None else float_value(web_overall, "recall")
-    map50 = map50 if map50 is not None else float_value(web_overall, "map50")
-    map50_95 = map50_95 if map50_95 is not None else float_value(web_overall, "map50_95")
+    web_precision = float_value(web_overall, "precision")
+    web_recall = float_value(web_overall, "recall")
+    web_map50 = float_value(web_overall, "map50")
+    web_map50_95 = float_value(web_overall, "map50_95")
+    precision = web_precision if web_precision is not None else precision
+    recall = web_recall if web_recall is not None else recall
+    map50 = web_map50 if web_map50 is not None else map50
+    map50_95 = web_map50_95 if web_map50_95 is not None else map50_95
     class_metrics = {
         "macro_f1": web_metrics.get("macro_f1"),
         "weighted_f1": web_metrics.get("weighted_f1"),
         "classes": web_metrics.get("per_class"),
     }
     if not isinstance(class_metrics["classes"], list) or not class_metrics["classes"]:
-        class_metrics = parse_class_metrics_from_log(LOG_FILE)
+        run_log = find_training_log_for_run(run_dir)
+        if run_log is not None:
+            class_metrics = parse_class_metrics_from_log(run_log)
     roc_auc = web_metrics.get("roc_auc")
     if not isinstance(roc_auc, dict):
         roc_auc = {
@@ -3202,8 +3236,8 @@ def read_run_metrics(run_dir: Path, include_magic: bool = True) -> dict:
     history = build_metric_history(rows, profile)
     metrics_note = (
         web_metrics.get("per_class_note")
-        if backend in {"dfine", "rfdetr"} and web_metrics.get("per_class_note")
-        else "Macro and weighted F1 are calculated from final per-class validation rows when available. "
+        if web_metrics.get("per_class_note")
+        else "Macro and weighted F1 are calculated from per-class validation rows when available. "
         + loss_note(losses)
     )
     training_completed = web_metrics.get("training_completed")

@@ -5,6 +5,7 @@ import argparse
 import csv
 from contextlib import contextmanager, nullcontext
 from functools import wraps
+import gc
 import json
 import os
 from pathlib import Path
@@ -371,6 +372,25 @@ def rounded_metric(value, digits: int = 4):
         return None
 
 
+def clear_cuda_cache():
+    """Release unused CUDA memory between training and auxiliary evaluation."""
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def is_cuda_oom(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "cuda out of memory" in message or (
+        "out of memory" in message and "cuda" in message
+    )
+
+
 def loss_components(row: dict, prefix: str):
     components = {}
     for key in row:
@@ -658,9 +678,9 @@ def build_image_level_roc_auc(run_dir: Path, weights_path: Path, data_config: di
 
     device = config.get("device")
     predictor = YOLO(str(weights_path))
-    batch_size = config.get("batch")
-    if not isinstance(batch_size, int) or batch_size <= 0:
-        batch_size = 16
+    # This is an auxiliary pass after training. Keep it independent from the
+    # training batch size so it cannot reproduce the training memory peak.
+    batch_size = 1
 
     y_true_by_class = {class_id: [] for class_id in names}
     y_score_by_class = {class_id: [] for class_id in names}
@@ -733,23 +753,107 @@ def build_image_level_roc_auc(run_dir: Path, weights_path: Path, data_config: di
     }
 
 
+def build_overall_metrics(metrics) -> dict:
+    """Return overall validation metrics for the evaluated checkpoint."""
+    box = getattr(metrics, "box", None)
+    if box is None:
+        return {}
+    return {
+        "precision": rounded_metric(getattr(box, "mp", None)),
+        "recall": rounded_metric(getattr(box, "mr", None)),
+        "map50": rounded_metric(getattr(box, "map50", None)),
+        "map50_95": rounded_metric(getattr(box, "map", None)),
+        "source": "best_checkpoint_validation",
+    }
+
+
+def validate_best_checkpoint(weights_path: Path, config: dict):
+    """Validate best.pt with a small batch, retrying on CPU after CUDA OOM."""
+    from ultralytics import YOLO
+
+    def evaluate(device):
+        evaluator = YOLO(str(weights_path))
+        try:
+            return evaluator.val(
+                data=str(config["data"]),
+                split="val",
+                imgsz=config["imgsz"],
+                batch=1,
+                workers=min(int(config.get("workers") or 0), 2),
+                device=device,
+                plots=False,
+                verbose=False,
+            )
+        finally:
+            del evaluator
+            clear_cuda_cache()
+
+    device = config.get("device")
+    try:
+        return evaluate(device)
+    except Exception as exc:
+        if device == "cpu" or not is_cuda_oom(exc):
+            raise
+        print(f"Best-checkpoint CUDA validation ran out of memory; retrying on CPU: {exc}", flush=True)
+        return evaluate("cpu")
+
+
 def save_web_metrics(run_dir: Path, metrics, data_config: dict, config: dict):
-    payload = build_per_class_metrics(metrics)
     weights_path = run_dir / "weights" / "best.pt"
     if not weights_path.is_file():
         weights_path = run_dir / "weights" / "last.pt"
+
+    evaluated_metrics = metrics
+    if weights_path.is_file():
+        try:
+            evaluated_metrics = validate_best_checkpoint(weights_path, config)
+        except Exception as exc:
+            print(f"Could not validate best checkpoint for web metrics: {exc}", flush=True)
+
+    payload = build_per_class_metrics(evaluated_metrics)
+    payload["overall"] = build_overall_metrics(evaluated_metrics)
+    payload["per_class_source"] = (
+        "best_checkpoint_validation" if evaluated_metrics is not metrics else "training_final_metrics"
+    )
+    payload["per_class_note"] = (
+        "Per-class metrics were calculated by validating best.pt."
+        if evaluated_metrics is not metrics
+        else "Per-class metrics came from the final training metrics because best.pt validation was unavailable."
+    )
+    payload["training_completed"] = True
+    payload["best_checkpoint"] = str(weights_path) if weights_path.is_file() else None
 
     if weights_path.is_file():
         try:
             payload["roc_auc"] = build_image_level_roc_auc(run_dir, weights_path, data_config, config)
         except Exception as exc:
-            print(f"Could not generate ROC-AUC artifacts: {exc}")
-            payload["roc_auc"] = {
-                "mode": "image_presence",
-                "split": "val",
-                "classes": [],
-                "note": f"ROC-AUC is unavailable: {exc}",
-            }
+            if is_cuda_oom(exc) and config.get("device") != "cpu":
+                clear_cuda_cache()
+                cpu_config = dict(config)
+                cpu_config["device"] = "cpu"
+                try:
+                    payload["roc_auc"] = build_image_level_roc_auc(
+                        run_dir,
+                        weights_path,
+                        data_config,
+                        cpu_config,
+                    )
+                except Exception as cpu_exc:
+                    print(f"Could not generate ROC-AUC artifacts on CPU: {cpu_exc}", flush=True)
+                    payload["roc_auc"] = {
+                        "mode": "image_presence",
+                        "split": "val",
+                        "classes": [],
+                        "note": f"ROC-AUC is unavailable: {cpu_exc}",
+                    }
+            else:
+                print(f"Could not generate ROC-AUC artifacts: {exc}", flush=True)
+                payload["roc_auc"] = {
+                    "mode": "image_presence",
+                    "split": "val",
+                    "classes": [],
+                    "note": f"ROC-AUC is unavailable: {exc}",
+                }
     else:
         payload["roc_auc"] = {
             "mode": "image_presence",
@@ -869,12 +973,15 @@ def main():
         metrics = model.train(**train_kwargs)
 
     run_dir = Path(getattr(model.trainer, "save_dir", Path(config["project"]) / config["name"]))
+    data_config = getattr(model.trainer, "data", {})
+    del model
+    clear_cuda_cache()
     try:
         save_training_graphs(run_dir)
     except Exception as exc:
         print(f"Could not save training graphs: {exc}")
     try:
-        save_web_metrics(run_dir, metrics, getattr(model.trainer, "data", {}), config)
+        save_web_metrics(run_dir, metrics, data_config, config)
     except Exception as exc:
         print(f"Could not save web metrics: {exc}")
 

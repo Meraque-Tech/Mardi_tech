@@ -10,5 +10,5 @@ onnx
 onnxruntime-gpu
 aiortc
 av
-scikit-learn
+scikit-learn==1.7.1
 reportlab
