@@ -4,7 +4,7 @@ python-dotenv
 python-multipart
 PyYAML
 roboflow
-ultralytics
+ultralytics==8.4.101
 rfdetr[train,loggers]
 onnx
 onnxruntime-gpu

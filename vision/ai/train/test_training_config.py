@@ -4,9 +4,42 @@ from argparse import Namespace
 
 from vision.ai.train.train_yolov8 import (
     TRAINING_AUGMENTATIONS,
+    TRAINING_CONFIG,
+    get_optimizer_train_kwargs,
     get_training_augmentations,
     get_training_config,
 )
+
+
+def test_default_optimizer_uses_ultralytics_auto_selection():
+    assert TRAINING_CONFIG["optimizer"] == "auto"
+
+
+def test_auto_optimizer_does_not_override_ultralytics_tuning():
+    config = TRAINING_CONFIG | {
+        "optimizer": "auto",
+        "lr0": 0.123,
+        "lrf": 0.456,
+        "weight_decay": 0.789,
+    }
+
+    assert get_optimizer_train_kwargs(config) == {"optimizer": "auto"}
+
+
+def test_manual_optimizer_keeps_explicit_tuning():
+    config = TRAINING_CONFIG | {
+        "optimizer": "AdamW",
+        "lr0": 0.001,
+        "lrf": 0.01,
+        "weight_decay": 0.0001,
+    }
+
+    assert get_optimizer_train_kwargs(config) == {
+        "optimizer": "AdamW",
+        "lr0": 0.001,
+        "lrf": 0.01,
+        "weight_decay": 0.0001,
+    }
 
 
 def test_requested_ultralytics_augmentations_are_enabled():

@@ -322,7 +322,7 @@ class TrainRequest(BaseModel):
     save_period: int = -1
     device: Optional[str] = None
     workers: int = Field(default=2, ge=0)
-    optimizer: str = "Adam"
+    optimizer: str = "auto"
     lr0: float = Field(default=0.001, gt=0)
     lrf: float = Field(default=0.01, gt=0)
     weight_decay: float = Field(default=0.0005, ge=0)
@@ -6982,8 +6982,6 @@ def start_training(request: TrainRequest):
         "--patience", str(request.patience),
         "--save-period", str(request.save_period),
         "--workers", str(request.workers),
-        "--lr0", str(training_values["lr0"]),
-        "--weight-decay", str(training_values["weight_decay"]),
         "--warmup-epochs", str(training_values["warmup_epochs"]),
         "--seed", str(request.seed),
         "--project", str(training_project_path),
@@ -6992,7 +6990,6 @@ def start_training(request: TrainRequest):
     if model_family == "ultralytics":
         cmd.extend([
             "--optimizer", request.optimizer,
-            "--lrf", str(request.lrf),
             "--pretrained", "true",
             "--activation", request.activation,
             "--disable-ultralytics-albumentations", str(request.disable_ultralytics_albumentations).lower(),
@@ -7014,8 +7011,19 @@ def start_training(request: TrainRequest):
             "--copy-paste", str(request.copy_paste),
             "--erasing", str(request.erasing),
         ])
+        if request.optimizer.strip().lower() != "auto":
+            cmd.extend([
+                "--lr0", str(training_values["lr0"]),
+                "--lrf", str(request.lrf),
+                "--weight-decay", str(training_values["weight_decay"]),
+            ])
         if request.auto_augment:
             cmd.extend(["--auto-augment", request.auto_augment])
+    else:
+        cmd.extend([
+            "--lr0", str(training_values["lr0"]),
+            "--weight-decay", str(training_values["weight_decay"]),
+        ])
 
     if dataset_yaml is not None and (not request.resume or model_family in {"dfine", "rfdetr"}):
         cmd.extend(["--data", str(dataset_yaml)])

@@ -504,10 +504,10 @@
               <label data-ultralytics-only>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Optimizer used for weight updates. Auto lets Ultralytics choose based on model and training setup.">Optimizer</span>
                 <select id="optimizer">
-                  <option value="auto">Auto</option>
+                  <option value="auto" selected>Auto (recommended)</option>
                   <option value="SGD">SGD</option>
                   <option value="Adam">Adam</option>
-                  <option value="AdamW" selected>AdamW</option>
+                  <option value="AdamW">AdamW</option>
                   <option value="NAdam">NAdam</option>
                   <option value="RAdam">RAdam</option>
                   <option value="RMSProp">RMSProp</option>
@@ -524,15 +524,15 @@
               <h3>Optimization</h3>
             <div class="grid three">
               <label>
-                <span class="tooltip-label" tabindex="0" data-tooltip="Initial learning rate. Smaller values fine-tune more gently; larger values learn faster but can destabilize.">Initial LR</span>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Initial learning rate for a manually selected optimizer. With Auto, Ultralytics selects this value.">Initial LR</span>
                 <input id="lr0" type="number" min="0" step="0.0001" value="0.001">
               </label>
               <label data-ultralytics-only>
-                <span class="tooltip-label" tabindex="0" data-tooltip="Final learning-rate factor. Final LR is lr0 multiplied by this value.">Final LR factor</span>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Final learning-rate factor for a manually selected optimizer. With Auto, the Ultralytics default is used.">Final LR factor</span>
                 <input id="lrf" type="number" min="0" step="0.0001" value="0.01">
               </label>
               <label>
-                <span class="tooltip-label" tabindex="0" data-tooltip="L2 regularization strength. Higher values can reduce overfitting but may underfit.">Weight decay</span>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Weight decay for a manually selected optimizer. With Auto, the Ultralytics default is used.">Weight decay</span>
                 <input id="weight-decay" type="number" min="0" step="0.0001" value="0.0005">
               </label>
             </div>

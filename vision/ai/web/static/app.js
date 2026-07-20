@@ -118,7 +118,7 @@ const CONTROL_DEFAULTS = {
   "run-name": "train",
   project: "runs/detect",
   workers: "2",
-  optimizer: "Adam",
+  optimizer: "auto",
   seed: 42,
   lr0: 0.001,
   lrf: 0.01,

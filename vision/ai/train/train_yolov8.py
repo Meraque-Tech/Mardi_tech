@@ -23,7 +23,10 @@ TRAINING_CONFIG = {
     "save_period": -1,
     "device": None,
     "workers": 2,
-    "optimizer": "Adam",
+    # Let Ultralytics choose a model- and schedule-appropriate optimizer.
+    # This is particularly important for long YOLO26 runs, where forcing the
+    # legacy Adam/AdamW path can destabilize late classification training.
+    "optimizer": "auto",
     "lr0": 0.001,
     "lrf": 0.01,
     "weight_decay": 0.0005,
@@ -350,6 +353,19 @@ def get_training_augmentations(config):
         if key in config and config[key] is not None:
             augmentations[key] = config[key]
     return augmentations
+
+
+def get_optimizer_train_kwargs(config):
+    """Return optimizer settings without overriding Ultralytics auto tuning."""
+    optimizer = str(config.get("optimizer") or "auto").strip()
+    kwargs = {"optimizer": optimizer}
+    if optimizer.lower() != "auto":
+        kwargs.update(
+            lr0=config["lr0"],
+            lrf=config["lrf"],
+            weight_decay=config["weight_decay"],
+        )
+    return kwargs
 
 
 def row_float(row: dict, key: str):
@@ -974,10 +990,6 @@ def main():
         "patience": config["patience"],
         "save_period": config["save_period"],
         "workers": config["workers"],
-        "optimizer": config["optimizer"],
-        "lr0": config["lr0"],
-        "lrf": config["lrf"],
-        "weight_decay": config["weight_decay"],
         "cos_lr": config["cos_lr"],
         "warmup_epochs": config["warmup_epochs"],
         "pretrained": config["pretrained"],
@@ -987,6 +999,7 @@ def main():
         "project": config["project"],
         "name": config["name"],
         "resume": config["resume"],
+        **get_optimizer_train_kwargs(config),
         **get_training_augmentations(config),
     }
 
