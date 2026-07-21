@@ -1,0 +1,1336 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>YOLO Workspace</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>YOLO Workspace</h1>
+          <p id="data-root">Loading configuration...</p>
+        </div>
+        <div class="status-pill status-idle" id="status-pill" role="status" aria-live="polite">Idle</div>
+      </header>
+
+      <nav class="app-tabs" role="tablist" aria-label="YOLO workspace">
+        <button id="app-tab-training" class="app-tab active" type="button" role="tab" aria-selected="true" aria-controls="training-view" data-app-tab="training">Training</button>
+        <button id="app-tab-inference" class="app-tab" type="button" role="tab" aria-selected="false" aria-controls="inference-view" data-app-tab="inference">Inference</button>
+      </nav>
+
+      <div id="training-view" class="app-view active" role="tabpanel" aria-labelledby="app-tab-training">
+      <section class="panel guide-section" aria-labelledby="guide-title">
+        <details id="training-guide" open>
+          <summary>
+            <span>
+              <strong id="guide-title">How to train a model</strong>
+              <small>A quick YOLO workflow</small>
+            </span>
+            <span class="guide-progress" id="guide-progress" role="status" aria-live="polite">Step 1 of 5</span>
+          </summary>
+
+          <p class="guide-intro">Follow these steps from left to right. The checklist updates as you work.</p>
+          <ol class="guide-steps">
+            <li class="active" data-guide-step="1" aria-current="step">
+              <span class="guide-step-marker" aria-hidden="true">1</span>
+              <div>
+                <strong>Choose a dataset</strong>
+                <p>Upload a YOLO ZIP or folder, or select a Roboflow project.</p>
+              </div>
+            </li>
+            <li data-guide-step="2">
+              <span class="guide-step-marker" aria-hidden="true">2</span>
+              <div>
+                <strong>Prepare and check</strong>
+                <p>Confirm class names and a 100% split, then prepare the dataset and review warnings.</p>
+              </div>
+            </li>
+            <li data-guide-step="3">
+              <span class="guide-step-marker" aria-hidden="true">3</span>
+              <div>
+                <strong>Choose settings</strong>
+                <p>For a safe first run, use Nano, 100 epochs, 640 image size, and pretrained weights.</p>
+              </div>
+            </li>
+            <li data-guide-step="4">
+              <span class="guide-step-marker" aria-hidden="true">4</span>
+              <div>
+                <strong>Train and monitor</strong>
+                <p>Click Start and watch the status, metrics, and logs while YOLO trains.</p>
+              </div>
+            </li>
+            <li data-guide-step="5">
+              <span class="guide-step-marker" aria-hidden="true">5</span>
+              <div>
+                <strong>Review and download</strong>
+                <p>Compare the evaluation metrics, then download <code>best.pt</code> for deployment.</p>
+              </div>
+            </li>
+          </ol>
+          <p class="guide-note"><strong>GPU memory tip:</strong> use the Low VRAM preset if training runs out of memory. Larger models and image sizes need more GPU memory.</p>
+        </details>
+      </section>
+
+      <section class="workspace">
+        <div class="panel dataset-panel collapsible-panel" id="dataset-panel" data-panel-key="dataset" data-default-expanded="true">
+          <div class="panel-header">
+            <div class="panel-heading">
+              <button class="secondary compact section-toggle" type="button" data-panel-toggle="dataset" aria-expanded="true" aria-label="Collapse Dataset section">
+                <span aria-hidden="true">▾</span>
+              </button>
+              <h2>Dataset</h2>
+            </div>
+            <div class="button-row">
+              <button id="download-dataset" class="secondary" type="button" disabled>Download ZIP</button>
+              <button id="download-annotated-dataset" class="secondary" type="button" disabled>Download Annotated ZIP</button>
+              <div class="action-menu" id="dataset-cleanup-menu">
+                <button id="dataset-cleanup-toggle" class="secondary compact" type="button" aria-expanded="false" aria-haspopup="menu" aria-controls="dataset-cleanup-options">Clear...</button>
+                <div class="action-menu-options" id="dataset-cleanup-options" role="menu" aria-labelledby="dataset-cleanup-toggle">
+                  <button id="clear-dataset-uploads" class="secondary danger compact" type="button" role="menuitem">Uploaded ZIPs</button>
+                  <button id="clear-dataset-extracted" class="secondary danger compact" type="button" role="menuitem">Extracted</button>
+                  <button id="clear-dataset-prepared" class="secondary danger compact" type="button" role="menuitem">Prepared</button>
+                </div>
+              </div>
+              <button id="prepare-dataset" type="button">Prepare Dataset</button>
+            </div>
+          </div>
+
+          <div class="source-tabs" role="tablist" aria-label="Dataset source">
+            <button id="tab-upload" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="source-upload" tabindex="0" data-source="upload">Upload ZIP</button>
+            <button id="tab-folder" class="tab" type="button" role="tab" aria-selected="false" aria-controls="source-folder" tabindex="-1" data-source="folder">Upload Folder</button>
+            <button id="tab-roboflow" class="tab" type="button" role="tab" aria-selected="false" aria-controls="source-roboflow" tabindex="-1" data-source="roboflow">Roboflow</button>
+          </div>
+
+          <div class="source-view active" id="source-upload" role="tabpanel" aria-labelledby="tab-upload">
+            <label>
+              YOLO dataset ZIP
+              <input id="upload-file" type="file" accept=".zip">
+            </label>
+            <p class="file-selection" id="upload-selection">No ZIP selected.</p>
+            <label class="checkbox-row">
+              <input id="upload-force-split" type="checkbox">
+              Rebuild existing train/val/test split
+            </label>
+            <p class="source-note">Existing splits are preserved by default. Flat datasets use 70/15/15 unless you enable rebuilding and choose different ratios.</p>
+          </div>
+
+          <div class="source-view" id="source-folder" role="tabpanel" aria-labelledby="tab-folder" hidden>
+            <label>
+              Dataset folder
+              <input id="folder-files" type="file" webkitdirectory directory multiple>
+            </label>
+            <p class="file-selection" id="folder-selection">No folder selected. Folder upload supports up to 1,000 files; use ZIP for larger datasets.</p>
+            <label class="checkbox-row">
+              <input id="folder-force-split" type="checkbox">
+              Rebuild existing train/val/test split
+            </label>
+            <p class="source-note">Existing splits are preserved by default. Enable rebuilding only when you want new split ratios.</p>
+          </div>
+
+          <div class="source-view" id="source-roboflow" role="tabpanel" aria-labelledby="tab-roboflow" hidden>
+            <div class="grid two">
+              <label>
+                Workspace
+                <input id="rf-workspace" type="text">
+              </label>
+              <label>
+                Project ID
+                <input id="rf-project" type="text">
+              </label>
+              <label>
+                Version
+                <input id="rf-version" type="number" min="1">
+              </label>
+            </div>
+            <p class="source-note">Roboflow provides the YOLO format and train/validation/test split for this dataset version.</p>
+            <label class="checkbox-row">
+              <input id="roboflow-force-split" type="checkbox">
+              Rebuild downloaded train/val/test split
+            </label>
+            <p class="source-note">Rebuilding happens locally and does not modify the Roboflow version. Avoid rebuilding datasets whose augmented copies could leak across splits.</p>
+          </div>
+
+          <div id="dataset-preparation-progress" class="dataset-preparation-progress" role="status" aria-live="polite" aria-busy="false" hidden>
+            <div class="dataset-preparation-header">
+              <strong id="dataset-preparation-stage">Uploading</strong>
+              <span id="dataset-preparation-percent">0%</span>
+            </div>
+            <div id="dataset-preparation-track" class="dataset-preparation-track" role="progressbar" aria-label="Dataset preparation" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Uploading: 0%">
+              <span></span>
+            </div>
+            <p id="dataset-preparation-detail">Preparing the selected dataset. Large datasets may take several minutes.</p>
+          </div>
+
+          <label class="dataset-name-field">
+            Dataset name
+            <input id="dataset-name" type="text" value="dataset">
+          </label>
+
+          <div id="split-controls">
+            <div class="grid three">
+              <label>
+                Train %
+                <input id="split-train" type="number" min="1" max="100" value="70">
+              </label>
+              <label>
+                Val %
+                <input id="split-val" type="number" min="0" max="100" value="15">
+              </label>
+              <label>
+                Test %
+                <input id="split-test" type="number" min="0" max="100" value="15">
+              </label>
+            </div>
+
+            <div class="split-total valid" id="split-total" role="status">Total: 100%</div>
+          </div>
+
+          <div class="classes-field">
+            <div class="field-header">
+              <label for="classes">Class IDs</label>
+              <button id="detect-classes" class="secondary compact" type="button" hidden>Auto Fetch</button>
+            </div>
+            <textarea id="classes" rows="5" placeholder="Class names appear after dataset preparation." readonly></textarea>
+            <p class="field-note" id="classes-note">Class names are read from the prepared dataset.</p>
+          </div>
+
+          <div class="dataset-summary" id="dataset-summary"></div>
+        </div>
+
+        <div class="workspace-side">
+          <section class="panel annotation-qa-panel collapsible-panel" id="annotation-qa-panel" data-panel-key="annotation-qa" data-default-expanded="true" aria-labelledby="annotation-qa-title">
+            <div class="panel-header">
+              <div class="panel-heading">
+                <button class="secondary compact section-toggle" type="button" data-panel-toggle="annotation-qa" aria-expanded="true" aria-label="Collapse Annotation QA section">
+                  <span aria-hidden="true">▾</span>
+                </button>
+                <h2 id="annotation-qa-title">Annotation QA</h2>
+              </div>
+              <div class="button-row">
+                <button id="run-annotation-qa" class="secondary" type="button" disabled>Run SAM QA</button>
+                <button id="stop-annotation-qa" class="danger" type="button" disabled>Stop</button>
+              </div>
+            </div>
+
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="SAM model used for optional annotation quality checks. SAM2.1 Small is the default for fast bbox review on local GPUs.">SAM model</span>
+                <select id="annotation-qa-model">
+                  <option value="sam2.1_s.pt">SAM2.1 Hiera Small - Recommended</option>
+                  <option value="sam2.1_t.pt">SAM2.1 Hiera Tiny - Fastest</option>
+                  <option value="sam2.1_b.pt">SAM2.1 Hiera Base+ - More accurate</option>
+                  <option value="sam2.1_l.pt">SAM2.1 Hiera Large - Heavy</option>
+                </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Dataset split to scan. All splits scans train, validation, and test when present; validation is a faster pre-training check.">Scope</span>
+                <select id="annotation-qa-scope">
+                  <option value="all">All splits</option>
+                  <option value="val">Validation</option>
+                  <option value="train">Train</option>
+                  <option value="test">Test</option>
+                </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Sensitivity preset for bbox-vs-SAM-mask disagreement. Balanced is the default.">Preset</span>
+                <select id="annotation-qa-preset">
+                  <option value="balanced">Balanced</option>
+                  <option value="lenient">Lenient</option>
+                  <option value="strict">Strict</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="annotation-qa-status-card" id="annotation-qa-status-card">
+              <div>
+                <span>Status</span>
+                <strong id="annotation-qa-status">Not run</strong>
+              </div>
+              <p id="annotation-qa-detail">Prepare a dataset to enable optional SAM QA.</p>
+            </div>
+
+            <div class="dataset-preparation-progress annotation-qa-progress" id="annotation-qa-progress" role="status" aria-live="polite" aria-busy="false" hidden>
+              <div class="dataset-preparation-header">
+                <strong id="annotation-qa-stage">Queued</strong>
+                <span id="annotation-qa-percent">0%</span>
+              </div>
+              <div id="annotation-qa-track" class="dataset-preparation-track" role="progressbar" aria-label="Annotation QA" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Queued: 0%">
+                <span></span>
+              </div>
+            </div>
+
+            <div class="annotation-qa-summary" id="annotation-qa-summary"></div>
+            <div class="button-row annotation-qa-downloads">
+              <button id="download-annotation-qa-csv" class="secondary compact" type="button" disabled>Download CSV</button>
+              <button id="download-annotation-qa-json" class="secondary compact" type="button" disabled>Download JSON</button>
+              <button id="apply-annotation-qa-fixes" class="secondary compact" type="button" disabled>Create Corrected Dataset</button>
+              <button id="download-corrected-dataset" class="secondary compact" type="button" disabled>Download Corrected Dataset</button>
+            </div>
+            <p class="field-note" id="annotation-qa-fix-summary"></p>
+            <div class="annotation-qa-issues" id="annotation-qa-issues"></div>
+          </section>
+
+          <div class="panel training-panel collapsible-panel" id="training-panel" data-panel-key="training" data-default-expanded="true">
+          <div class="panel-header">
+            <div class="panel-heading">
+              <button class="secondary compact section-toggle" type="button" data-panel-toggle="training" aria-expanded="true" aria-label="Collapse Training section">
+                <span aria-hidden="true">▾</span>
+              </button>
+              <h2>Training</h2>
+            </div>
+            <div class="button-row">
+              <button id="start-training" type="button" disabled>Start</button>
+              <button id="stop-training" class="danger" type="button" disabled>Stop</button>
+            </div>
+          </div>
+
+          <div class="grid two training-primary-grid">
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Choose the task, model family, and checkpoint size that match your dataset labels. Larger models can be more accurate but train slower and need more GPU memory.">Model task &amp; size</span>
+              <div class="model-selector">
+                <button id="model-selector-toggle" class="model-selector-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
+                  <span id="model-selector-value">YOLOv8 Nano - yolov8n.pt</span>
+                </button>
+                <select id="model-size" class="model-native-select" tabindex="-1" aria-hidden="true">
+                  <optgroup label="Detection - YOLOv8">
+                    <option value="nano">YOLOv8 Nano - yolov8n.pt</option>
+                    <option value="small">YOLOv8 Small - yolov8s.pt</option>
+                    <option value="medium">YOLOv8 Medium - yolov8m.pt</option>
+                    <option value="large">YOLOv8 Large - yolov8l.pt</option>
+                    <option value="xlarge">YOLOv8 Extra large - yolov8x.pt</option>
+                  </optgroup>
+                  <optgroup label="Detection - YOLO11">
+                    <option value="yolo11-nano">YOLO11 Nano - yolo11n.pt</option>
+                    <option value="yolo11-small">YOLO11 Small - yolo11s.pt</option>
+                    <option value="yolo11-medium">YOLO11 Medium - yolo11m.pt</option>
+                    <option value="yolo11-large">YOLO11 Large - yolo11l.pt</option>
+                    <option value="yolo11-xlarge">YOLO11 Extra large - yolo11x.pt</option>
+                  </optgroup>
+                  <optgroup label="Detection - YOLO26">
+                    <option value="yolo26-nano">YOLO26 Nano - yolo26n.pt</option>
+                    <option value="yolo26-small">YOLO26 Small - yolo26s.pt</option>
+                    <option value="yolo26-medium">YOLO26 Medium - yolo26m.pt</option>
+                    <option value="yolo26-large">YOLO26 Large - yolo26l.pt</option>
+                    <option value="yolo26-xlarge">YOLO26 Extra large - yolo26x.pt</option>
+                  </optgroup>
+                  <optgroup label="Detection - RF-DETR">
+                    <option value="rfdetr-nano">RF-DETR Nano - rfdetr-nano</option>
+                  </optgroup>
+                  <optgroup label="Detection - D-FINE">
+                    <option value="dfine-n">D-FINE Nano - dfine-n</option>
+                  </optgroup>
+                  <optgroup label="Instance Segmentation - YOLOv8">
+                    <option value="nano-seg">YOLOv8 Nano instance segmentation - yolov8n-seg.pt</option>
+                    <option value="small-seg">YOLOv8 Small instance segmentation - yolov8s-seg.pt</option>
+                    <option value="medium-seg">YOLOv8 Medium instance segmentation - yolov8m-seg.pt</option>
+                    <option value="large-seg">YOLOv8 Large instance segmentation - yolov8l-seg.pt</option>
+                    <option value="xlarge-seg">YOLOv8 Extra large instance segmentation - yolov8x-seg.pt</option>
+                  </optgroup>
+                  <optgroup label="Instance Segmentation - YOLO11">
+                    <option value="yolo11-nano-seg">YOLO11 Nano instance segmentation - yolo11n-seg.pt</option>
+                    <option value="yolo11-small-seg">YOLO11 Small instance segmentation - yolo11s-seg.pt</option>
+                    <option value="yolo11-medium-seg">YOLO11 Medium instance segmentation - yolo11m-seg.pt</option>
+                    <option value="yolo11-large-seg">YOLO11 Large instance segmentation - yolo11l-seg.pt</option>
+                    <option value="yolo11-xlarge-seg">YOLO11 Extra large instance segmentation - yolo11x-seg.pt</option>
+                  </optgroup>
+                  <optgroup label="Instance Segmentation - YOLO26">
+                    <option value="yolo26-nano-seg">YOLO26 Nano instance segmentation - yolo26n-seg.pt</option>
+                    <option value="yolo26-small-seg">YOLO26 Small instance segmentation - yolo26s-seg.pt</option>
+                    <option value="yolo26-medium-seg">YOLO26 Medium instance segmentation - yolo26m-seg.pt</option>
+                    <option value="yolo26-large-seg">YOLO26 Large instance segmentation - yolo26l-seg.pt</option>
+                    <option value="yolo26-xlarge-seg">YOLO26 Extra large instance segmentation - yolo26x-seg.pt</option>
+                  </optgroup>
+                  <optgroup label="Semantic Segmentation - YOLO26">
+                    <option value="yolo26-nano-sem">YOLO26 Nano semantic segmentation - yolo26n-sem.pt</option>
+                    <option value="yolo26-small-sem">YOLO26 Small semantic segmentation - yolo26s-sem.pt</option>
+                    <option value="yolo26-medium-sem">YOLO26 Medium semantic segmentation - yolo26m-sem.pt</option>
+                    <option value="yolo26-large-sem">YOLO26 Large semantic segmentation - yolo26l-sem.pt</option>
+                    <option value="yolo26-xlarge-sem">YOLO26 Extra large semantic segmentation - yolo26x-sem.pt</option>
+                  </optgroup>
+                  <optgroup label="Classification - YOLOv8">
+                    <option value="nano-cls">YOLOv8 Nano - yolov8n-cls.pt</option>
+                    <option value="small-cls">YOLOv8 Small - yolov8s-cls.pt</option>
+                    <option value="medium-cls">YOLOv8 Medium - yolov8m-cls.pt</option>
+                    <option value="large-cls">YOLOv8 Large - yolov8l-cls.pt</option>
+                    <option value="xlarge-cls">YOLOv8 Extra large - yolov8x-cls.pt</option>
+                  </optgroup>
+                  <optgroup label="Classification - YOLO11">
+                    <option value="yolo11-nano-cls">YOLO11 Nano - yolo11n-cls.pt</option>
+                    <option value="yolo11-small-cls">YOLO11 Small - yolo11s-cls.pt</option>
+                    <option value="yolo11-medium-cls">YOLO11 Medium - yolo11m-cls.pt</option>
+                    <option value="yolo11-large-cls">YOLO11 Large - yolo11l-cls.pt</option>
+                    <option value="yolo11-xlarge-cls">YOLO11 Extra large - yolo11x-cls.pt</option>
+                  </optgroup>
+                  <optgroup label="Classification - YOLO26">
+                    <option value="yolo26-nano-cls">YOLO26 Nano - yolo26n-cls.pt</option>
+                    <option value="yolo26-small-cls">YOLO26 Small - yolo26s-cls.pt</option>
+                    <option value="yolo26-medium-cls">YOLO26 Medium - yolo26m-cls.pt</option>
+                    <option value="yolo26-large-cls">YOLO26 Large - yolo26l-cls.pt</option>
+                    <option value="yolo26-xlarge-cls">YOLO26 Extra large - yolo26x-cls.pt</option>
+                  </optgroup>
+                </select>
+                <div id="model-selector-menu" class="model-selector-menu" hidden>
+                  <div class="model-guided-controls">
+                    <div class="model-guide-field">
+                      <span>Task</span>
+                      <select id="model-task"></select>
+                    </div>
+                    <div class="model-guide-field">
+                      <span>Family</span>
+                      <select id="model-family"></select>
+                    </div>
+                  </div>
+                  <p id="model-compatibility" class="model-compatibility"></p>
+                  <input id="model-search" type="search" placeholder="Search models" autocomplete="off" aria-label="Search model options">
+                  <div id="model-options" class="model-options" role="listbox" aria-label="Model options"></div>
+                </div>
+                <p id="selected-model-summary" class="model-selection-summary"></p>
+              </div>
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Training device passed to the selected backend. Use 0 for GPU 0, 0,1 for multiple GPUs, cpu for CPU, or leave blank for auto.">Device</span>
+              <input id="device" type="text" placeholder="0, cpu, or blank for auto">
+            </label>
+          </div>
+
+          <div class="grid three">
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Maximum number of full passes through the training dataset. More epochs can improve learning but take longer.">Epochs</span>
+              <input id="epochs" type="number" min="1" value="100">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Input image size used during training. Larger sizes can detect finer details but use more memory.">Image size</span>
+              <input id="imgsz" type="number" min="32" value="640">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Number of images processed per training step. Higher values can train faster but require more GPU memory.">Batch size</span>
+              <input id="batch" type="number" value="16">
+            </label>
+          </div>
+
+          <div class="grid three">
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Early stopping patience. Training stops if validation performance does not improve for this many epochs.">Patience</span>
+              <input id="patience" type="number" min="0" value="20">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Checkpoint save interval in epochs. Use -1 to save only the standard best.pt and last.pt files.">Save period</span>
+              <input id="save-period" type="number" value="-1">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Folder name for this training run inside the selected project directory.">Run name</span>
+              <input id="run-name" type="text" value="train">
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Output directory for training runs. The default follows the selected task: runs/detect, runs/segment, runs/semantic, or runs/classify.">Project</span>
+              <input id="project" type="text" value="runs/detect">
+            </label>
+            <label class="checkbox-row inline-check">
+              <input id="resume" type="checkbox" disabled>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Continue from last.pt in the resolved project/run folder. The original dataset, epoch, optimizer, and scheduler state are restored.">Resume latest checkpoint</span>
+            </label>
+          </div>
+          <p class="field-note" id="resume-status">No resumable checkpoint found for this run.</p>
+
+          <div class="current-run-card" id="current-run-card">
+            <div>
+              <span>Current run</span>
+              <strong id="current-run-name">train</strong>
+            </div>
+            <div class="current-run-paths">
+              <p id="current-run-path">Selected: runs/detect/train</p>
+              <p id="resolved-run-path" hidden></p>
+            </div>
+          </div>
+
+          </div>
+
+          <section class="panel gpu-panel collapsible-panel is-collapsed" id="gpu-monitor-panel" data-panel-key="gpu" data-default-expanded="false" aria-labelledby="gpu-monitor-title">
+            <div class="panel-header">
+              <div class="panel-heading">
+                <button class="secondary compact section-toggle" type="button" data-panel-toggle="gpu" aria-expanded="false" aria-label="Expand GPU Monitor section">
+                  <span aria-hidden="true">▾</span>
+                </button>
+                <h2 id="gpu-monitor-title">GPU Monitor</h2>
+              </div>
+              <span class="gpu-status" id="gpu-status">Checking...</span>
+            </div>
+            <div class="gpu-cards" id="gpu-cards">
+              <p class="gpu-empty">Waiting for GPU information.</p>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <div class="message status-message" id="message" role="status" aria-live="polite">Ready. Prepare a dataset to begin.</div>
+
+      <section class="panel advanced-section advanced-panel collapsible-panel is-collapsed" id="advanced-fine-tuning-panel" data-panel-key="advanced" data-default-expanded="false">
+            <div class="panel-header">
+              <div class="panel-heading">
+                <button class="secondary compact section-toggle" type="button" data-panel-toggle="advanced" aria-expanded="false" aria-label="Expand Advanced Fine-Tuning section">
+                  <span aria-hidden="true">▾</span>
+                </button>
+                <h2>Advanced Fine-Tuning</h2>
+              </div>
+            </div>
+
+            <div class="preset-toolbar" role="group" aria-label="Training presets">
+              <button class="secondary compact" type="button" aria-pressed="false" data-preset="stable">Stable</button>
+              <button class="secondary compact" type="button" aria-pressed="false" data-preset="low_vram">Low VRAM</button>
+              <button class="secondary compact" type="button" aria-pressed="false" data-preset="quick">Quick Test</button>
+              <button class="secondary compact" type="button" aria-pressed="false" data-preset="accuracy">High Accuracy</button>
+              <button id="reset-advanced" class="secondary compact" type="button">Reset</button>
+              <span class="preset-status" id="preset-status">Custom settings</span>
+            </div>
+
+            <div class="advanced-group">
+              <h3>Runtime</h3>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Number of dataloader workers. Lower values are more stable in Docker; higher values can load data faster.">Workers</span>
+                <select id="workers">
+                  <option value="0">0</option>
+                  <option value="2" selected>2</option>
+                  <option value="4">4</option>
+                  <option value="8">8</option>
+                </select>
+              </label>
+              <label data-ultralytics-only>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Optimizer used for weight updates. Auto lets Ultralytics choose based on model and training setup.">Optimizer</span>
+                <select id="optimizer">
+                  <option value="auto" selected>Auto (recommended)</option>
+                  <option value="SGD">SGD</option>
+                  <option value="Adam">Adam</option>
+                  <option value="AdamW">AdamW</option>
+                  <option value="NAdam">NAdam</option>
+                  <option value="RAdam">RAdam</option>
+                  <option value="RMSProp">RMSProp</option>
+                </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Random seed for reproducible training runs. Same seed and settings help produce repeatable results.">Seed</span>
+                <input id="seed" type="number" value="42">
+              </label>
+            </div>
+            </div>
+
+            <div class="advanced-group">
+              <h3>Optimization</h3>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Initial learning rate for a manually selected optimizer. With Auto, Ultralytics selects this value.">Initial LR</span>
+                <input id="lr0" type="number" min="0" step="0.0001" value="0.001">
+              </label>
+              <label data-ultralytics-only>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Final learning-rate factor for a manually selected optimizer. With Auto, the Ultralytics default is used.">Final LR factor</span>
+                <input id="lrf" type="number" min="0" step="0.0001" value="0.01">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Weight decay for a manually selected optimizer. With Auto, the Ultralytics default is used.">Weight decay</span>
+                <input id="weight-decay" type="number" min="0" step="0.0001" value="0.0005">
+              </label>
+            </div>
+            </div>
+
+            <div class="advanced-group">
+              <h3>Schedule</h3>
+            <div class="grid three">
+              <label>
+                <span id="warmup-label" class="tooltip-label" tabindex="0" data-tooltip="Warmup duration in epochs. Helps stabilize training at the beginning.">Warmup epochs</span>
+                <input id="warmup-epochs" type="number" min="0" step="0.1" value="3.0">
+              </label>
+              <label data-ultralytics-only>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Freeze the first N layers for transfer learning. Leave blank to train all layers.">Freeze layers</span>
+                <input id="freeze" type="number" min="0" placeholder="blank">
+              </label>
+              <label class="checkbox-row inline-check">
+                <input id="cos-lr" type="checkbox">
+                <span id="cos-lr-label" class="tooltip-label" tabindex="0" data-tooltip="Use cosine learning-rate scheduling for smoother LR decay.">Cosine LR</span>
+              </label>
+            </div>
+            </div>
+
+            <div class="advanced-group" data-ultralytics-only>
+              <h3>Augmentation</h3>
+            <p class="field-note">If unsure, keep the defaults.</p>
+            <div class="grid three">
+              <label class="checkbox-row inline-check">
+                <input id="disable-ultralytics-albumentations" type="checkbox" checked>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Disable Ultralytics' optional Albumentations defaults. Keep checked to use only the explicit augmentation values below.">Disable Albumentations</span>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Probability of combining four training images into a mosaic sample.">Mosaic</span>
+                <input id="mosaic" type="number" min="0" max="1" step="0.05" value="0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Disable mosaic for the final N training epochs.">Close mosaic</span>
+                <input id="close-mosaic" type="number" min="0" value="0">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="HSV hue augmentation gain.">HSV hue</span>
+                <input id="hsv-h" type="number" min="0" step="0.001" value="0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="HSV saturation augmentation gain.">HSV saturation</span>
+                <input id="hsv-s" type="number" min="0" step="0.05" value="0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="HSV brightness/value augmentation gain.">HSV value</span>
+                <input id="hsv-v" type="number" min="0" step="0.05" value="0">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Maximum random rotation in degrees.">Degrees</span>
+                <input id="degrees" type="number" min="0" step="0.1" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Maximum random image translation as a fraction of image size.">Translate</span>
+                <input id="translate" type="number" min="0" step="0.01" value="0.05">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Random scale gain used during geometric augmentation.">Scale</span>
+                <input id="scale" type="number" min="0" step="0.05" value="0.25">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Maximum random shear in degrees.">Shear</span>
+                <input id="shear" type="number" min="0" step="0.1" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Perspective transform strength. Small values can be aggressive.">Perspective</span>
+                <input id="perspective" type="number" min="0" step="0.0001" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Vertical flip probability. Usually kept at 0 for upright camera images.">Vertical flip</span>
+                <input id="flipud" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Horizontal flip probability.">Horizontal flip</span>
+                <input id="fliplr" type="number" min="0" max="1" step="0.05" value="0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="BGR channel swap probability.">BGR swap</span>
+                <input id="bgr" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="MixUp augmentation probability.">MixUp</span>
+                <input id="mixup" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="CutMix augmentation probability.">CutMix</span>
+                <input id="cutmix" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Copy-paste augmentation probability for segmentation-style samples.">Copy paste</span>
+                <input id="copy-paste" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Random erasing probability. Most useful for classification; default here is disabled.">Erasing</span>
+                <input id="erasing" type="number" min="0" max="1" step="0.05" value="0.0">
+              </label>
+            </div>
+            <div class="grid three">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="AutoAugment policy. Leave blank for null. Common values include randaugment, autoaugment, and augmix when supported by the selected task.">Auto augment</span>
+                <input id="auto-augment" type="text" placeholder="blank = null">
+              </label>
+            </div>
+            </div>
+
+            <div class="advanced-group" data-ultralytics-only>
+              <h3>Output</h3>
+            <label class="checkbox-row inline-check">
+              <input id="exist-ok" type="checkbox">
+              <span class="tooltip-label" tabindex="0" data-tooltip="Reuse the same project/run folder instead of creating train-2, train-3, and so on.">Reuse output folder</span>
+            </label>
+            </div>
+      </section>
+
+      <section class="panel logs-panel collapsible-panel is-collapsed" id="training-logs-panel" data-panel-key="logs" data-default-expanded="false">
+        <div class="panel-header">
+          <div class="panel-heading">
+            <button class="secondary compact section-toggle" type="button" data-panel-toggle="logs" aria-expanded="false" aria-label="Expand Training Progress and Logs section">
+              <span aria-hidden="true">▾</span>
+            </button>
+            <h2>Training Progress &amp; Logs</h2>
+          </div>
+          <div class="button-row">
+            <button id="log-mode-recent" class="secondary compact active-control" type="button" aria-pressed="true" data-log-mode="recent">Recent</button>
+            <button id="log-mode-full" class="secondary compact" type="button" aria-pressed="false" data-log-mode="full">Full</button>
+            <button id="log-mode-errors" class="secondary compact" type="button" aria-pressed="false" data-log-mode="errors">Warnings</button>
+            <button id="refresh-logs" class="secondary compact" type="button">Refresh</button>
+            <button id="download-run-log" class="secondary compact" type="button">Download Log</button>
+          </div>
+        </div>
+        <div class="epoch-progress-card" id="epoch-progress-card">
+          <div class="epoch-progress-header">
+            <div>
+              <span>Current epoch</span>
+              <strong id="epoch-progress-label" aria-live="polite">Waiting to start</strong>
+            </div>
+            <strong class="epoch-progress-percent" id="epoch-progress-percent">0%</strong>
+          </div>
+          <div
+            class="epoch-progress-track"
+            id="epoch-progress-track"
+            role="progressbar"
+            aria-label="Training epoch progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-valuetext="Waiting to start"
+          >
+            <span id="epoch-progress-fill"></span>
+          </div>
+          <p id="epoch-progress-detail">The current epoch will appear here when training starts.</p>
+        </div>
+        <p id="log-status">Waiting for training status...</p>
+        <pre id="logs" tabindex="0" aria-label="Training logs"></pre>
+      </section>
+
+      <section class="panel training-results-panel collapsible-panel is-collapsed" id="training-results-panel" data-panel-key="results" data-default-expanded="false">
+          <div class="panel-header">
+            <div class="panel-heading">
+              <button class="secondary compact section-toggle" type="button" data-panel-toggle="results" aria-expanded="false" aria-label="Expand Training Results section">
+                <span aria-hidden="true">▾</span>
+              </button>
+              <h2>Training Results</h2>
+            </div>
+          </div>
+
+          <div class="session-picker">
+            <label>
+              Previous training session
+              <select id="training-session-select">
+                <option value="">Choose a training run</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button id="refresh-training-sessions" class="secondary compact" type="button">Refresh runs</button>
+              <button id="load-training-session" class="secondary compact" type="button">Load session</button>
+            </div>
+          </div>
+          <p class="field-note" id="training-session-status">Pick a previous run to load its weights, metrics, reports, and graphs.</p>
+
+          <div class="weights-toolbar">
+            <div>
+              <h3>Model Weights</h3>
+              <p id="weights-status">No trained weights found for this run yet.</p>
+            </div>
+            <div class="button-row">
+              <button id="download-best" class="secondary" type="button" disabled>Download best.pt</button>
+              <button id="download-last" class="secondary" type="button" disabled>Download last.pt</button>
+            </div>
+          </div>
+
+          <div class="metrics-panel">
+            <div class="field-header">
+              <h3>Evaluation Metrics</h3>
+              <button id="refresh-metrics" class="secondary compact" type="button">Refresh</button>
+            </div>
+            <div class="metrics-grid">
+              <div><span id="metric-precision-label">Precision</span><strong id="metric-precision">-</strong></div>
+              <div><span id="metric-recall-label">Recall</span><strong id="metric-recall">-</strong></div>
+              <div><span>Macro F1</span><strong id="metric-macro-f1">-</strong></div>
+              <div><span>Weighted F1</span><strong id="metric-weighted-f1">-</strong></div>
+              <div><span>Train loss</span><strong id="metric-train-loss">-</strong></div>
+              <div><span>Val loss</span><strong id="metric-test-loss">-</strong></div>
+              <div><span id="metric-map50-label">mAP50</span><strong id="metric-map50">-</strong></div>
+              <div><span id="metric-map-label">mAP50-95</span><strong id="metric-map">-</strong></div>
+            </div>
+            <div class="best-metrics" id="best-metrics"></div>
+            <div class="charts-grid">
+              <div class="chart-panel">
+                <h4 id="performance-chart-title">Detection Performance by Epoch</h4>
+                <canvas id="accuracy-chart" width="520" height="220"></canvas>
+              </div>
+              <div class="chart-panel">
+                <h4>Loss by Epoch</h4>
+                <canvas id="loss-chart" width="520" height="220"></canvas>
+              </div>
+            </div>
+            <section class="confusion-matrix-panel" id="confusion-matrix-panel" aria-labelledby="confusion-matrix-title">
+              <div class="field-header">
+                <div>
+                  <h4 id="confusion-matrix-title">Confusion Matrix</h4>
+                  <p>Validation predictions by actual and predicted class.</p>
+                </div>
+              </div>
+              <div class="confusion-matrix-grid">
+                <figure id="confusion-matrix-normalized-card" hidden>
+                  <figcaption>Normalized</figcaption>
+                  <a id="confusion-matrix-normalized-link" target="_blank" rel="noopener">
+                    <img id="confusion-matrix-normalized-image" alt="Normalized validation confusion matrix">
+                    <span class="confusion-axis-label" aria-hidden="true">Actual</span>
+                  </a>
+                </figure>
+                <figure id="confusion-matrix-card" hidden>
+                  <figcaption>Raw counts</figcaption>
+                  <a id="confusion-matrix-link" target="_blank" rel="noopener">
+                    <img id="confusion-matrix-image" alt="Validation confusion matrix with raw counts">
+                    <span class="confusion-axis-label" aria-hidden="true">Actual</span>
+                  </a>
+                </figure>
+              </div>
+              <p id="confusion-matrix-status">The confusion matrix will appear after validation plots are generated.</p>
+            </section>
+            <section class="roc-auc-panel" id="roc-auc-panel" aria-labelledby="roc-auc-title">
+              <div class="field-header">
+                <div>
+                  <h4 id="roc-auc-title">ROC-AUC</h4>
+                  <p>Image-level one-vs-rest ROC on the validation split, alongside box-level per-class AP below.</p>
+                </div>
+              </div>
+              <div class="roc-auc-grid">
+                <figure id="roc-auc-card" hidden>
+                  <figcaption>Validation ROC-AUC by class</figcaption>
+                  <a id="roc-auc-link" target="_blank" rel="noopener">
+                    <img id="roc-auc-image" alt="Validation ROC-AUC curve by class">
+                  </a>
+                </figure>
+                <div class="roc-auc-summary" id="roc-auc-summary"></div>
+              </div>
+              <p id="roc-auc-status">ROC-AUC will appear after post-training evaluation finishes.</p>
+            </section>
+            <div class="artifact-toolbar">
+              <button id="download-training-report" class="secondary compact report-download-button" type="button" disabled>Download Report</button>
+              <button id="magic-metrics" class="secondary compact magic-button" type="button" disabled>Magic Button</button>
+              <button id="download-results-csv" class="secondary compact" type="button" disabled>Download results.csv</button>
+              <button id="download-accuracy-graph" class="secondary compact" type="button" disabled>Download performance graph</button>
+              <button id="download-loss-graph" class="secondary compact" type="button" disabled>Download loss graph</button>
+              <button id="download-roc-auc-graph" class="secondary compact" type="button" disabled>Download ROC-AUC graph</button>
+            </div>
+            <div class="class-metrics" id="class-metrics"></div>
+            <p id="metrics-status">No results.csv found for this run yet.</p>
+          </div>
+      </section>
+
+      <section class="panel testing-panel collapsible-panel is-collapsed" id="model-testing-panel" data-panel-key="testing" data-default-expanded="false">
+        <div class="panel-header">
+          <div class="panel-heading">
+            <button class="secondary compact section-toggle" type="button" data-panel-toggle="testing" aria-expanded="false" aria-label="Expand Model Testing section">
+              <span aria-hidden="true">▾</span>
+            </button>
+            <h2>Model Testing</h2>
+          </div>
+        </div>
+
+        <div class="grid two test-source-grid">
+          <div class="advanced-group">
+            <div class="field-header">
+              <h3>Weights</h3>
+            </div>
+            <div class="button-row toggle-row" role="radiogroup" aria-label="Model weights source">
+              <label class="choice-chip">
+                <input type="radio" name="test-weight-source" value="trained" checked>
+                <span>Use best.pt</span>
+              </label>
+              <label class="choice-chip">
+                <input type="radio" name="test-weight-source" value="upload">
+                <span>Upload .pt</span>
+              </label>
+            </div>
+            <p id="test-trained-weights-note" class="helper-text">Uses the selected run's <code>best.pt</code> from the Training Results section.</p>
+            <div id="test-weight-upload-wrap" hidden>
+              <label>
+                <span>Weights file</span>
+                <input id="test-weight-file" type="file" accept=".pt">
+              </label>
+              <p id="test-weight-selection" class="file-selection">No weights file selected.</p>
+            </div>
+          </div>
+
+          <div class="advanced-group">
+            <div class="field-header">
+              <h3>Dataset</h3>
+            </div>
+            <div class="button-row toggle-row" role="radiogroup" aria-label="Test dataset source">
+              <label class="choice-chip">
+                <input type="radio" name="test-dataset-source" value="prepared" checked>
+                <span>Prepared test split</span>
+              </label>
+              <label class="choice-chip">
+                <input type="radio" name="test-dataset-source" value="upload_zip">
+                <span>Upload ZIP</span>
+              </label>
+              <label class="choice-chip">
+                <input type="radio" name="test-dataset-source" value="upload_folder">
+                <span>Upload folder</span>
+              </label>
+            </div>
+            <p id="test-dataset-note" class="helper-text">Uses the prepared dataset's existing <code>test</code> split.</p>
+            <div id="test-dataset-zip-wrap" hidden>
+              <label>
+                <span>Test dataset ZIP</span>
+                <input id="test-dataset-zip" type="file" accept=".zip">
+              </label>
+              <p id="test-dataset-zip-selection" class="file-selection">No ZIP selected.</p>
+            </div>
+            <div id="test-dataset-folder-wrap" hidden>
+              <label>
+                <span>Test dataset folder</span>
+                <input id="test-dataset-folder" type="file" webkitdirectory directory multiple>
+              </label>
+              <p id="test-dataset-folder-selection" class="file-selection">No folder selected.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid four test-settings-grid">
+          <label>
+            <span>Image size</span>
+            <input id="test-imgsz" type="number" min="32" step="32" value="512">
+          </label>
+          <label>
+            <span>Batch size</span>
+            <input id="test-batch" type="number" min="1" value="8">
+          </label>
+          <label>
+            <span>Workers</span>
+            <input id="test-workers" type="number" min="0" value="2">
+          </label>
+          <label>
+            <span>Device</span>
+            <input id="test-device" type="text" placeholder="0, cpu, or blank for auto">
+          </label>
+        </div>
+
+        <div class="button-row test-action-row">
+          <button id="start-test" type="button">Start Test</button>
+          <button id="stop-test" class="danger" type="button" disabled>Stop Test</button>
+          <button id="refresh-test-results" class="secondary compact" type="button">Refresh Results</button>
+          <button id="download-test-log" class="secondary compact" type="button">Download test log</button>
+        </div>
+
+        <div class="epoch-progress-card test-progress-card">
+          <div class="field-header">
+            <strong>Test Progress</strong>
+            <span id="test-progress-percent">0%</span>
+          </div>
+          <p id="test-progress-label">Waiting to start</p>
+          <div
+            class="epoch-progress-track"
+            id="test-progress-track"
+            role="progressbar"
+            aria-label="Model testing progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-valuetext="Waiting to start"
+          >
+            <span id="test-progress-fill"></span>
+          </div>
+          <p id="test-progress-detail">The current test stage will appear here when testing starts.</p>
+        </div>
+
+        <p id="test-log-status">No model-testing run started yet.</p>
+        <pre id="test-logs" tabindex="0" aria-label="Model testing logs"></pre>
+
+        <div class="metrics-panel">
+          <div class="field-header">
+            <h3>Test Results</h3>
+            <div class="button-row">
+              <button id="download-combined-report" class="secondary compact report-download-button" type="button" disabled>Download Report (including test)</button>
+              <button id="download-test-metrics-json" class="secondary compact" type="button" disabled>Download metrics JSON</button>
+              <button id="download-test-roc-auc-graph" class="secondary compact" type="button" disabled>Download ROC-AUC graph</button>
+            </div>
+          </div>
+          <div class="metrics-grid">
+            <div><span>Macro F1</span><strong id="test-metric-macro-f1">-</strong></div>
+            <div><span>Weighted F1</span><strong id="test-metric-weighted-f1">-</strong></div>
+            <div><span>Precision</span><strong id="test-metric-precision">-</strong></div>
+            <div><span>Recall</span><strong id="test-metric-recall">-</strong></div>
+            <div><span>mAP50</span><strong id="test-metric-map50">-</strong></div>
+            <div><span>mAP50-95</span><strong id="test-metric-map">-</strong></div>
+          </div>
+          <div class="metrics-grid test-timing-grid">
+            <div><span>Images</span><strong id="test-timing-images">-</strong></div>
+            <div><span>Inference</span><strong id="test-timing-inference">-</strong></div>
+            <div><span>Preprocess</span><strong id="test-timing-preprocess">-</strong></div>
+            <div><span>Postprocess</span><strong id="test-timing-postprocess">-</strong></div>
+            <div><span>Eval processing</span><strong id="test-timing-eval-processing">-</strong></div>
+            <div><span>Total test time</span><strong id="test-timing-total">-</strong></div>
+          </div>
+          <section class="confusion-matrix-panel" aria-labelledby="test-confusion-matrix-title">
+            <div class="field-header">
+              <div>
+                <h4 id="test-confusion-matrix-title">Confusion Matrix</h4>
+                <p>Test-set predictions by actual and predicted class.</p>
+              </div>
+            </div>
+            <div class="confusion-matrix-grid">
+              <figure id="test-confusion-matrix-normalized-card" hidden>
+                <figcaption>Normalized</figcaption>
+                <a id="test-confusion-matrix-normalized-link" target="_blank" rel="noopener">
+                  <img id="test-confusion-matrix-normalized-image" alt="Normalized test confusion matrix">
+                  <span class="confusion-axis-label" aria-hidden="true">Actual</span>
+                </a>
+              </figure>
+              <figure id="test-confusion-matrix-card" hidden>
+                <figcaption>Raw counts</figcaption>
+                <a id="test-confusion-matrix-link" target="_blank" rel="noopener">
+                  <img id="test-confusion-matrix-image" alt="Test confusion matrix with raw counts">
+                  <span class="confusion-axis-label" aria-hidden="true">Actual</span>
+                </a>
+              </figure>
+            </div>
+            <p id="test-confusion-matrix-status">The confusion matrix will appear after the test evaluation finishes.</p>
+          </section>
+          <section class="roc-auc-panel" aria-labelledby="test-roc-auc-title">
+            <div class="field-header">
+              <div>
+                <h4 id="test-roc-auc-title">ROC-AUC</h4>
+                <p>Image-level one-vs-rest ROC on the evaluated test split.</p>
+              </div>
+            </div>
+            <div class="roc-auc-grid">
+              <figure id="test-roc-auc-card" hidden>
+                <figcaption>Test ROC-AUC by class</figcaption>
+                <a id="test-roc-auc-link" target="_blank" rel="noopener">
+                  <img id="test-roc-auc-image" alt="Test ROC-AUC curve by class">
+                </a>
+              </figure>
+              <div class="roc-auc-summary" id="test-roc-auc-summary"></div>
+            </div>
+            <p id="test-roc-auc-status">ROC-AUC will appear after the test evaluation finishes.</p>
+          </section>
+          <div class="class-metrics" id="test-class-metrics"></div>
+          <p id="test-results-status">No test results available yet.</p>
+        </div>
+      </section>
+
+      </div>
+
+      <div id="inference-view" class="app-view" role="tabpanel" aria-labelledby="app-tab-inference" hidden>
+        <section class="panel inference-panel" aria-labelledby="inference-title">
+          <div class="panel-header">
+            <div class="panel-heading">
+              <h2 id="inference-title">Inference</h2>
+            </div>
+            <div class="button-row">
+              <button id="refresh-inference-weights" class="secondary compact" type="button">Refresh weights</button>
+              <button id="clear-inference-output" class="secondary danger compact" type="button">Clear Inference Output</button>
+              <button id="clear-inference-uploads" class="secondary danger compact" type="button">Clear Uploaded Weights</button>
+              <button id="run-inference" type="button">Run Inference</button>
+              <button id="stop-inference" class="danger" type="button" disabled>Stop</button>
+            </div>
+          </div>
+
+          <div class="grid two inference-grid">
+            <div class="advanced-group">
+              <div class="field-header">
+                <h3>Weights</h3>
+              </div>
+              <div class="button-row toggle-row" role="radiogroup" aria-label="Inference weights source">
+                <label class="choice-chip">
+                  <input type="radio" name="inference-weight-source" value="selected" checked>
+                  <span>Choose from runs</span>
+                </label>
+                <label class="choice-chip">
+                  <input type="radio" name="inference-weight-source" value="upload">
+                  <span>Upload .pt/.onnx</span>
+                </label>
+              </div>
+              <div id="inference-selected-weight-wrap">
+                <label>
+                  Available weights
+                  <select id="inference-weight-select"></select>
+                </label>
+                <p id="inference-weights-status" class="file-selection">Loading weights from runs...</p>
+              </div>
+              <div id="inference-upload-weight-wrap" hidden>
+                <label>
+                  Weights file
+                  <input id="inference-weight-file" type="file" accept=".pt,.onnx">
+                </label>
+                <label>
+                  Weights backend
+                  <select id="inference-upload-family">
+                    <option value="ultralytics" selected>Ultralytics YOLO</option>
+                    <option value="rfdetr">RF-DETR Nano</option>
+                    <option value="dfine">D-FINE Nano</option>
+                  </select>
+                </label>
+                <p id="inference-weight-selection" class="file-selection">No weights file selected.</p>
+                <label class="checkbox-row" id="inference-convert-onnx-row" hidden>
+                  <input id="inference-convert-onnx" type="checkbox">
+                  Convert uploaded .pt to ONNX before inference
+                </label>
+              </div>
+            </div>
+
+            <div class="advanced-group">
+              <div class="field-header">
+                <h3>Media</h3>
+              </div>
+              <label>
+                Image or video
+                <input id="inference-media-file" type="file" accept="image/*,video/*,video/quicktime,.mov,.MOV">
+              </label>
+              <p id="inference-media-selection" class="file-selection">No image or video selected.</p>
+              <div class="inference-upload-status" id="inference-upload-status" hidden>
+                <div class="field-header">
+                  <strong>Upload Progress</strong>
+                  <span id="inference-upload-percent">0%</span>
+                </div>
+                <div
+                  class="epoch-progress-track"
+                  id="inference-upload-track"
+                  role="progressbar"
+                  aria-label="Inference media upload progress"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                  aria-valuetext="Upload progress 0%"
+                >
+                  <span id="inference-upload-fill"></span>
+                </div>
+                <p id="inference-upload-detail">Waiting to upload.</p>
+              </div>
+              <div class="inference-preview-shell" id="inference-input-preview-shell" hidden>
+                <div class="field-header">
+                  <div>
+                    <h4>Uploaded Media</h4>
+                    <p id="inference-input-summary">No uploaded media selected yet.</p>
+                  </div>
+                </div>
+                <div class="inference-preview">
+                  <img id="inference-input-image" alt="Uploaded inference media preview" hidden>
+                  <video id="inference-input-video" controls hidden></video>
+                </div>
+                <p id="inference-input-preview-status" class="helper-text"></p>
+              </div>
+              <div class="grid four inference-settings">
+                <label>
+                  Image size
+                  <input id="inference-imgsz" type="number" min="32" step="32" value="512">
+                </label>
+                <label>
+                  Confidence
+                  <input id="inference-conf" type="number" min="0" max="1" step="0.01" value="0.35">
+                </label>
+                <label>
+                  NMS IoU
+                  <input id="inference-iou" type="number" min="0" max="1" step="0.01" value="0.5">
+                </label>
+                <label>
+                  Video stride
+                  <input id="inference-vid-stride" type="number" min="1" step="1" value="1">
+                </label>
+              </div>
+              <label class="checkbox-row">
+                <input id="inference-live-preview-enabled" type="checkbox" checked>
+                Show live annotated preview
+              </label>
+              <div class="button-row toggle-row" aria-label="Inference overlay options">
+                <label class="choice-chip">
+                  <input id="inference-show-masks" type="checkbox" checked>
+                  <span>Masks</span>
+                </label>
+                <label class="choice-chip">
+                  <input id="inference-show-boxes" type="checkbox" checked>
+                  <span>Boxes</span>
+                </label>
+                <label class="choice-chip">
+                  <input id="inference-show-labels" type="checkbox" checked>
+                  <span>Labels</span>
+                </label>
+                <label class="choice-chip">
+                  <input id="inference-show-conf" type="checkbox" checked>
+                  <span>Confidence</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="message status-message inference-message" id="inference-message" role="status" aria-live="polite">Ready for YOLO inference.</div>
+
+          <section class="inference-preview-shell" id="inference-live-preview-shell" hidden>
+            <div class="field-header">
+              <div>
+                <h3>Live Preview</h3>
+                <p id="inference-live-preview-summary">Waiting for annotated frames.</p>
+              </div>
+            </div>
+            <div class="inference-preview">
+              <video id="inference-live-preview-video" autoplay playsinline muted hidden></video>
+              <img id="inference-live-preview-image" alt="Latest annotated inference frame">
+            </div>
+          </section>
+
+          <section class="inference-results" id="inference-results" hidden>
+            <div class="field-header">
+              <div>
+                <h3>Result</h3>
+                <p id="inference-result-summary">No inference result yet.</p>
+              </div>
+              <a id="download-inference-result" class="button-link secondary" href="#" download>Download result</a>
+            </div>
+            <div class="inference-result-grid">
+              <div class="inference-preview-shell" id="inference-result-image-shell" hidden>
+                <div class="field-header">
+                  <div>
+                    <h4>Annotated Image</h4>
+                  </div>
+                </div>
+                <div class="inference-preview">
+                  <img id="inference-result-image" alt="Annotated inference result" hidden>
+                </div>
+              </div>
+              <div class="inference-preview-shell" id="inference-result-video-shell" hidden>
+                <div class="field-header">
+                  <div>
+                    <h4>Annotated Video</h4>
+                  </div>
+                </div>
+                <div class="inference-preview">
+                  <video id="inference-result-video" controls hidden></video>
+                </div>
+              </div>
+            </div>
+            <div class="class-metrics" id="inference-detections"></div>
+          </section>
+        </section>
+      </div>
+
+    </main>
+
+    <div class="magic-modal" id="magic-modal" hidden>
+      <div class="magic-backdrop" data-magic-close></div>
+      <section class="magic-dialog" role="dialog" aria-modal="true" aria-labelledby="magic-title" tabindex="-1">
+        <div class="magic-header">
+          <div>
+            <span class="magic-kicker">Adjusted Metrics</span>
+            <h2 id="magic-title">Magic Button</h2>
+          </div>
+          <button id="magic-close" class="secondary compact" type="button" aria-label="Close Magic Button">Close</button>
+        </div>
+        <div class="magic-body">
+          <p class="magic-intro">Choose a score, set its target, and add it to the adjustment set. All listed scores are applied together.</p>
+          <section class="magic-option-panel">
+            <h3>Overall Metrics</h3>
+            <div class="magic-option-grid" id="magic-overall-options"></div>
+          </section>
+          <section class="magic-option-panel">
+            <h3>Per-Class Metrics</h3>
+            <div class="magic-option-grid" id="magic-per-class-options"></div>
+          </section>
+          <label class="magic-field magic-field-disabled" id="magic-class-field">
+            Class
+            <select id="magic-class-select" disabled>
+              <option>Select a per-class metric first</option>
+            </select>
+          </label>
+          <label class="magic-field">
+            Target score
+            <input id="magic-target" type="number" min="0" max="1" step="0.0001">
+          </label>
+          <p class="magic-current" id="magic-current"></p>
+          <button id="magic-add" class="secondary magic-add-button" type="button">Add score</button>
+          <section class="magic-selection-panel" aria-labelledby="magic-selection-title">
+            <div class="magic-selection-header">
+              <h3 id="magic-selection-title">Selected adjustments</h3>
+              <div class="magic-selection-tools">
+                <span id="magic-selection-count">0 selected</span>
+                <button id="magic-clear" class="secondary compact" type="button" disabled>Clear pending</button>
+              </div>
+            </div>
+            <p id="magic-empty">No scores selected yet.</p>
+            <div id="magic-adjustment-list" class="magic-adjustment-list"></div>
+          </section>
+          <p class="magic-status" id="magic-status">Raw logs, results.csv, and weights stay unchanged.</p>
+        </div>
+        <div class="magic-actions">
+          <button id="magic-reset" class="secondary danger" type="button" disabled>Reset to raw</button>
+          <div class="magic-action-group">
+            <button id="magic-cancel" class="secondary" type="button">Cancel</button>
+            <button id="magic-apply" class="primary magic-apply-button" type="button" disabled>Apply all</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="qa-review-modal" id="qa-review-modal" hidden>
+      <div class="qa-review-backdrop" data-qa-review-close></div>
+      <section class="qa-review-dialog" role="dialog" aria-modal="true" aria-labelledby="qa-review-title" tabindex="-1">
+        <div class="qa-review-header">
+          <div>
+            <span id="qa-review-severity" class="qa-severity low">Low</span>
+            <h2 id="qa-review-title">Annotation QA Review</h2>
+            <p id="qa-review-subtitle"></p>
+          </div>
+          <button id="qa-review-close" class="secondary compact" type="button" aria-label="Close annotation QA review">Close</button>
+        </div>
+        <div class="qa-review-body">
+          <div class="qa-review-image-frame">
+            <img id="qa-review-image" alt="Annotation QA overlay preview">
+            <div id="qa-review-empty" class="qa-review-empty" hidden>No preview available for this issue.</div>
+          </div>
+          <aside class="qa-review-side">
+            <div class="qa-review-decision">
+              <span>Issue</span>
+              <strong id="qa-review-issue-summary"></strong>
+              <p id="qa-review-suggestion"></p>
+            </div>
+            <div class="qa-review-legend">
+              <span><i class="qa-legend-original"></i> YOLO box</span>
+              <span><i class="qa-legend-mask"></i> SAM mask</span>
+              <span><i class="qa-legend-sam"></i> SAM box</span>
+            </div>
+            <div class="qa-review-pending-fix" id="qa-review-pending-fix"></div>
+            <div class="qa-review-actions">
+              <button id="qa-review-keep-yolo" class="primary" type="button">Keep YOLO box</button>
+              <button id="qa-review-accept-sam" class="primary" type="button">Replace with SAM box</button>
+              <button id="qa-review-needs-fix" class="primary" type="button">Send to manual fix</button>
+              <button id="qa-review-false-positive" class="secondary" type="button">False Positive</button>
+              <button id="qa-review-ignore" class="secondary" type="button">Ignore</button>
+            </div>
+            <details class="qa-review-corrections">
+              <summary>Class and status</summary>
+              <label>
+                Corrected class
+                <select id="qa-review-class-fix"></select>
+              </label>
+              <button id="qa-review-accept-class" class="secondary compact" type="button">Use Selected Class</button>
+              <label>
+                Triage status
+                <select id="qa-review-status">
+                  <option value="unreviewed">unreviewed</option>
+                  <option value="fix_accepted">correction queued</option>
+                  <option value="needs_fix">manual fix</option>
+                  <option value="false_positive">false positive</option>
+                  <option value="accepted">YOLO kept</option>
+                  <option value="ignored">ignored</option>
+                </select>
+              </label>
+            </details>
+            <details class="qa-review-raw-details">
+              <summary>Details</summary>
+              <dl class="qa-review-details" id="qa-review-details"></dl>
+            </details>
+            <div class="qa-review-nav">
+              <button id="qa-review-prev" class="secondary compact" type="button">Previous</button>
+              <button id="qa-review-next" class="secondary compact" type="button">Next</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
+
+    <script src="/static/app.js?v=annotation-qa-review-simplified-20260706"></script>
+  </body>
+</html>

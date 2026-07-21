@@ -1,0 +1,34 @@
+services:
+  yolov8-training-web:
+    image: meraquetech/race_nav:yolov8-training-web.v14
+    build:
+      context: ../../..
+      dockerfile: vision/ai/web/Dockerfile.cuda
+      args:
+        HOST_UID: "${HOST_UID:-1000}"
+        HOST_GID: "${HOST_GID:-1000}"
+        BAKE_PRETRAINED_WEIGHTS: "${BAKE_PRETRAINED_WEIGHTS:-1}"
+        INSTALL_DFINE: "${INSTALL_DFINE:-1}"
+        DFINE_REPO_URL: "${DFINE_REPO_URL:-https://github.com/Peterande/D-FINE.git}"
+    container_name: yolov8-training-web
+    shm_size: "8gb"
+    env_file:
+      - .env
+    environment:
+      YOLO_CONFIG_DIR: /home/appuser/.config/Ultralytics
+      ULTRALYTICS_WEIGHTS_DIR: /home/appuser/.cache/ultralytics/weights
+      RFDETR_CACHE_DIR: /home/appuser/.roboflow/models
+      DFINE_REPO_DIR: /opt/D-FINE
+    network_mode: host
+    volumes:
+      - ../../..:/app
+      - ./datasets:/app/vision/ai/web/datasets
+      - ./logs:/app/vision/ai/web/logs
+      - ../../../runs:/app/runs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

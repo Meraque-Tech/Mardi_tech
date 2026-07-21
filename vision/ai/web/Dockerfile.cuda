@@ -1,0 +1,62 @@
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+ARG BAKE_PRETRAINED_WEIGHTS=1
+ARG INSTALL_DFINE=1
+ARG DFINE_REPO_URL=https://github.com/Peterande/D-FINE.git
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-venv \
+        ffmpeg \
+        libgl1 \
+        libglib2.0-0 \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY vision/ai/web/requirements.txt /app/vision/ai/web/requirements.txt
+RUN pip3 install --no-cache-dir -r /app/vision/ai/web/requirements.txt
+
+RUN if [ "${INSTALL_DFINE}" = "1" ]; then \
+        git clone --depth 1 "${DFINE_REPO_URL}" /opt/D-FINE \
+        && if [ -f /opt/D-FINE/requirements.txt ]; then \
+            pip3 install --no-cache-dir -r /opt/D-FINE/requirements.txt; \
+        fi; \
+    else \
+        echo "Skipping D-FINE checkout."; \
+    fi
+
+COPY . /app
+
+RUN groupadd --gid "${HOST_GID}" appuser \
+    && useradd --uid "${HOST_UID}" --gid "${HOST_GID}" --create-home appuser \
+    && chown -R appuser:appuser /app \
+    && if [ -d /opt/D-FINE ]; then chown -R appuser:appuser /opt/D-FINE; fi
+
+ENV HOME=/home/appuser
+ENV USER=appuser
+ENV LOGNAME=appuser
+ENV YOLO_CONFIG_DIR=/home/appuser/.config/Ultralytics
+ENV ULTRALYTICS_WEIGHTS_DIR=/home/appuser/.cache/ultralytics/weights
+ENV RFDETR_CACHE_DIR=/home/appuser/.roboflow/models
+ENV DFINE_REPO_DIR=/opt/D-FINE
+
+USER appuser
+
+RUN if [ "${BAKE_PRETRAINED_WEIGHTS}" = "1" ]; then \
+        python3 /app/vision/ai/web/scripts/bake_pretrained_weights.py; \
+    else \
+        echo "Skipping pretrained weight bake."; \
+    fi
+
+EXPOSE 8000
+
+CMD ["uvicorn", "vision.ai.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
