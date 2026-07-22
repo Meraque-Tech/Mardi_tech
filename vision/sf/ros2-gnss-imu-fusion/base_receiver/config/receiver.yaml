@@ -1,0 +1,9 @@
+base_receiver:
+  ros__parameters:
+    port: ""
+    baud: 115200
+    frame_id: gps
+    stale_timeout: 3.0
+    reconnect_interval: 2.0
+    fix_topic: /ublox_gps_node/fix
+    pvt_topic: /gnss/pvt

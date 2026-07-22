@@ -1,0 +1,34 @@
+# base_receiver
+
+Reads the ESP32 newline-delimited JSON stream used by `base_receiver.py` and
+publishes two ROS 2 topics:
+
+- `/ublox_gps_node/fix` (`sensor_msgs/msg/NavSatFix`): latitude, longitude,
+  altitude, fix status, and covariance when the receiver supplies both
+  horizontal and vertical accuracy.
+- `/gnss/pvt` (`std_msgs/msg/String`): the complete enriched PVT JSON,
+  including `rtkState`, `sats`, `hacc`, and `corrAgeLabel`.
+
+Build and run from this workspace:
+
+```bash
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths . --ignore-src -r -y
+colcon build --packages-select base_receiver --symlink-install
+source install/setup.bash
+ros2 launch base_receiver receiver.launch.py
+```
+
+To use a fixed serial device:
+
+```bash
+ros2 run base_receiver base_receiver --ros-args \
+  -p port:=/dev/ttyUSB0 -p baud:=115200
+```
+
+Inspect the output with:
+
+```bash
+ros2 topic echo /ublox_gps_node/fix
+ros2 topic echo /gnss/pvt
+```
