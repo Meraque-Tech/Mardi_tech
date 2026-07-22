@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix, NavSatStatus
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from serial import Serial, SerialException
 from serial.tools import list_ports
@@ -34,6 +34,7 @@ KNOWN_USB_IDS = [
     (0x0403, 0x6001),
     (0x303A, 0x1001),
 ]
+RTK_VALID_STATES = frozenset(("RTK_FIXED", "RTK_FLOAT"))
 
 
 def rtk_state(pvt: Dict[str, Any]) -> str:
@@ -47,6 +48,14 @@ def rtk_state(pvt: Dict[str, Any]) -> str:
     if pvt["diff"]:
         return "DGNSS"
     return "3D_GNSS"
+
+
+def rtk_status_from_state(state: Any) -> bool:
+    """Return whether the receiver currently has an RTK solution."""
+    try:
+        return state in RTK_VALID_STATES
+    except TypeError:
+        return False
 
 
 def find_esp32_port() -> Optional[str]:
@@ -142,6 +151,7 @@ class RoverGnssNode(Node):
         self.declare_parameter("reconnect_interval", 2.0)
         self.declare_parameter("fix_topic", "/receiver/fix")
         self.declare_parameter("pvt_topic", "/gnss/pvt")
+        self.declare_parameter("rtk_status_topic", "/gnss/rtk_status")
 
         port = self.get_parameter("port").value
         baud = int(self.get_parameter("baud").value)
@@ -155,6 +165,9 @@ class RoverGnssNode(Node):
         self.pvt_pub = self.create_publisher(
             String, str(self.get_parameter("pvt_topic").value), 10
         )
+        self.rtk_status_pub = self.create_publisher(
+            Bool, str(self.get_parameter("rtk_status_topic").value), 10
+        )
 
         self._messages: queue.Queue = queue.Queue(maxsize=100)
         self._stop_event = threading.Event()
@@ -164,9 +177,13 @@ class RoverGnssNode(Node):
         self._reader_thread.start()
         self._timer = self.create_timer(0.02, self._drain_messages)
         self._stale_logged = False
+        self._publish_rtk_status(False)
 
         self.get_logger().info(f"Publishing NavSatFix on {self.fix_pub.topic_name}")
         self.get_logger().info(f"Publishing PVT JSON on {self.pvt_pub.topic_name}")
+        self.get_logger().info(
+            f"Publishing RTK status on {self.rtk_status_pub.topic_name}"
+        )
 
     def _read_serial(self) -> None:
         for msg in self._reader.stream(self._stop_event):
@@ -198,6 +215,7 @@ class RoverGnssNode(Node):
             and not self._stale_logged
         ):
             self.get_logger().warning("GNSS PVT data is stale")
+            self._publish_rtk_status(False)
             self._stale_logged = True
 
     def _publish_pvt(self, pvt: Dict[str, Any]) -> None:
@@ -232,9 +250,15 @@ class RoverGnssNode(Node):
         pvt_msg = String()
         pvt_msg.data = json.dumps(pvt, separators=(",", ":"), allow_nan=False)
         self.pvt_pub.publish(pvt_msg)
+        self._publish_rtk_status(rtk_status_from_state(pvt.get("rtkState")))
 
         self._last_pvt_monotonic = float(pvt["timestamp"])
         self._stale_logged = False
+
+    def _publish_rtk_status(self, value: bool) -> None:
+        status_msg = Bool()
+        status_msg.data = value
+        self.rtk_status_pub.publish(status_msg)
 
     @staticmethod
     def _valid_accuracy(value: Any) -> bool:

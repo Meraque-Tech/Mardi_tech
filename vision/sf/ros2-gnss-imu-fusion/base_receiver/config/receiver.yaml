@@ -5,3 +5,4 @@ base_receiver:
     frame_id: gps
     stale_timeout: 3.0
     reconnect_interval: 2.0
+    rtk_status_topic: /gnss/rtk_status
