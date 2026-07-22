@@ -165,8 +165,8 @@ class RoverGnssNode(Node):
         self._timer = self.create_timer(0.02, self._drain_messages)
         self._stale_logged = False
 
-        self.get_logger().info("Publishing NavSatFix on %s", self.fix_pub.topic_name)
-        self.get_logger().info("Publishing PVT JSON on %s", self.pvt_pub.topic_name)
+        self.get_logger().info(f"Publishing NavSatFix on {self.fix_pub.topic_name}")
+        self.get_logger().info(f"Publishing PVT JSON on {self.pvt_pub.topic_name}")
 
     def _read_serial(self) -> None:
         for msg in self._reader.stream(self._stop_event):
@@ -190,7 +190,7 @@ class RoverGnssNode(Node):
             if msg.get("type") == "pvt":
                 self._publish_pvt(msg)
             elif msg.get("msg"):
-                self.get_logger().info("[receiver] %s", msg["msg"])
+                self.get_logger().info(f"[receiver] {msg['msg']}")
 
         if (
             self._last_pvt_monotonic is not None
