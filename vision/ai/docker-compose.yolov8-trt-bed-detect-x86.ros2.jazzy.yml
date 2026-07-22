@@ -28,6 +28,7 @@ services:
       - /dev/video0:/dev/video0
       - /dev/video1:/dev/video1
       - /dev/video2:/dev/video2
+      # - /dev/video4:/dev/video4
     volumes:
       - ./yolov8/weights:/weights
       - ./yolov8_trt_bed_detect_orin/config:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config
@@ -36,6 +37,7 @@ services:
     network_mode: host
     pid: host
     privileged: true
+    # privileged: false
     runtime: nvidia
     # depends_on:
     #   yolov8-trt-serialize-x86-jazzy:
