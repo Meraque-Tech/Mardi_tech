@@ -140,7 +140,7 @@ class RoverGnssNode(Node):
         self.declare_parameter("frame_id", "gps")
         self.declare_parameter("stale_timeout", 3.0)
         self.declare_parameter("reconnect_interval", 2.0)
-        self.declare_parameter("fix_topic", "/ublox_gps_node/fix")
+        self.declare_parameter("fix_topic", "/receiver/fix")
         self.declare_parameter("pvt_topic", "/gnss/pvt")
 
         port = self.get_parameter("port").value

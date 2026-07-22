@@ -3,7 +3,7 @@
 Reads the ESP32 newline-delimited JSON stream used by `base_receiver.py` and
 publishes two ROS 2 topics:
 
-- `/ublox_gps_node/fix` (`sensor_msgs/msg/NavSatFix`): latitude, longitude,
+- `/receiver/fix` (`sensor_msgs/msg/NavSatFix`): latitude, longitude,
   altitude, fix status, and covariance when the receiver supplies both
   horizontal and vertical accuracy.
 - `/gnss/pvt` (`std_msgs/msg/String`): the complete enriched PVT JSON,
@@ -29,6 +29,6 @@ ros2 run base_receiver base_receiver --ros-args \
 Inspect the output with:
 
 ```bash
-ros2 topic echo /ublox_gps_node/fix
+ros2 topic echo /receiver/fix
 ros2 topic echo /gnss/pvt
 ```
