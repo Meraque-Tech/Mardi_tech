@@ -34,7 +34,7 @@ KNOWN_USB_IDS = [
     (0x0403, 0x6001),
     (0x303A, 0x1001),
 ]
-RTK_VALID_STATES = frozenset(("RTK_FIXED", "RTK_FLOAT"))
+RTK_VALID_STATES = {"RTK_FIXED", "RTK_FLOAT"}
 
 
 def rtk_state(pvt: Dict[str, Any]) -> str:
