@@ -19,4 +19,17 @@ def generate_launch_description():
                 ])
             ],
         ),
+        Node(
+            package="base_receiver",
+            executable="movement_calculator",
+            name="movement_calculator",
+            output="screen",
+            parameters=[
+                PathJoinSubstitution([
+                    FindPackageShare("base_receiver"),
+                    "config",
+                    "movement_calculator.yaml",
+                ])
+            ],
+        ),
     ])

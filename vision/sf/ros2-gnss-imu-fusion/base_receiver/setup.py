@@ -10,7 +10,10 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name + "/config", ["config/receiver.yaml"]),
+        (
+            "share/" + package_name + "/config",
+            ["config/receiver.yaml", "config/movement_calculator.yaml"],
+        ),
         ("share/" + package_name + "/launch", ["launch/receiver.launch.py"]),
     ],
     install_requires=["setuptools", "pyserial"],
@@ -18,6 +21,7 @@ setup(
     entry_points={
         "console_scripts": [
             "base_receiver = base_receiver.receiver_node:main",
+            "movement_calculator = base_receiver.movement_calculator_node:main",
         ],
     },
 )

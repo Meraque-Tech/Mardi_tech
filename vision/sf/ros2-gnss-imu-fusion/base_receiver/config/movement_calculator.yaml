@@ -1,0 +1,3 @@
+movement_calculator:
+  ros__parameters:
+    distance_threshold: 0.05
