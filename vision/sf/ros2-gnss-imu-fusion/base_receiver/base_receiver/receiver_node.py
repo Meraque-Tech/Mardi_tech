@@ -34,12 +34,28 @@ KNOWN_USB_IDS = [
     (0x0403, 0x6001),
     (0x303A, 0x1001),
 ]
+POSITION_FIX_STATES = {2, 3, 4}
 RTK_VALID_STATES = {"RTK_FIXED", "RTK_FLOAT"}
+
+
+def has_position_fix(fix: Any) -> bool:
+    """Return whether a receiver fix type contains a usable position."""
+    try:
+        return fix in POSITION_FIX_STATES
+    except TypeError:
+        return False
+
+
+def navsat_status_for_fix(fix: Any) -> int:
+    """Map the receiver fix type to the ROS NavSatStatus convention."""
+    if has_position_fix(fix):
+        return NavSatStatus.STATUS_FIX
+    return NavSatStatus.STATUS_NO_FIX
 
 
 def rtk_state(pvt: Dict[str, Any]) -> str:
     """Keep the RTK classification used by base_receiver.py."""
-    if pvt["fix"] < 2:
+    if not has_position_fix(pvt["fix"]):
         return "NO_FIX"
     if pvt["carr"] == 2:
         return "RTK_FIXED"
@@ -58,6 +74,82 @@ def rtk_status_from_state(state: Any) -> bool:
         return False
 
 
+def _integer_field(pvt: Dict[str, Any], name: str) -> int:
+    value = pvt[name]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    return value
+
+
+def _finite_float_field(pvt: Dict[str, Any], name: str) -> float:
+    value = pvt[name]
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be numeric")
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be numeric") from error
+    if not math.isfinite(result):
+        raise ValueError(f"{name} must be finite")
+    return result
+
+
+def normalize_pvt(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and normalize a PVT record before it reaches ROS publishers."""
+    if not isinstance(msg, dict):
+        raise ValueError("PVT record must be a JSON object")
+
+    normalized = dict(msg)
+    fix = _integer_field(normalized, "fix")
+    if fix not in FIX_STATE:
+        raise ValueError("fix is outside the supported receiver fix types")
+
+    carr = _integer_field(normalized, "carr")
+    if carr not in (0, 1, 2):
+        raise ValueError("carr must be 0, 1, or 2")
+
+    corr_age = _integer_field(normalized, "corrAge")
+    if corr_age < 0:
+        raise ValueError("corrAge must be non-negative")
+
+    diff = normalized["diff"]
+    if isinstance(diff, bool):
+        normalized["diff"] = diff
+    elif isinstance(diff, int) and diff in (0, 1):
+        normalized["diff"] = bool(diff)
+    else:
+        raise ValueError("diff must be a boolean or 0/1")
+
+    latitude = _finite_float_field(normalized, "lat")
+    longitude = _finite_float_field(normalized, "lon")
+    altitude = _finite_float_field(normalized, "alt")
+    if not -90.0 <= latitude <= 90.0:
+        raise ValueError("lat must be between -90 and 90 degrees")
+    if not -180.0 <= longitude <= 180.0:
+        raise ValueError("lon must be between -180 and 180 degrees")
+
+    normalized["fix"] = fix
+    normalized["carr"] = carr
+    normalized["corrAge"] = corr_age
+    normalized["lat"] = latitude
+    normalized["lon"] = longitude
+    normalized["alt"] = altitude
+
+    for accuracy_name in ("hacc", "vacc"):
+        if normalized.get(accuracy_name) is None:
+            continue
+        accuracy = _finite_float_field(normalized, accuracy_name)
+        if accuracy < 0.0:
+            raise ValueError(f"{accuracy_name} must be non-negative")
+        normalized[accuracy_name] = accuracy
+
+    return normalized
+
+
+def _reject_non_finite_json_constant(value: str):
+    raise ValueError(f"non-finite JSON value is not allowed: {value}")
+
+
 def find_esp32_port() -> Optional[str]:
     for port_info in list_ports.comports():
         if (port_info.vid, port_info.pid) in KNOWN_USB_IDS:
@@ -67,7 +159,7 @@ def find_esp32_port() -> Optional[str]:
 
 def enrich_pvt(msg: Dict[str, Any]) -> Dict[str, Any]:
     """Add exactly the derived fields produced by the original script."""
-    msg = dict(msg)
+    msg = normalize_pvt(msg)
     msg["rtkState"] = rtk_state(msg)
     msg["fixLabel"] = FIX_STATE.get(msg["fix"], "UNKNOWN")
     corr_age = msg["corrAge"]
@@ -121,8 +213,13 @@ class RoverGnssReader:
             if not line.startswith("{"):
                 continue
             try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
+                msg = json.loads(
+                    line,
+                    parse_constant=_reject_non_finite_json_constant,
+                )
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(msg, dict):
                 continue
             if msg.get("type") == "pvt":
                 try:
@@ -205,7 +302,12 @@ class RoverGnssNode(Node):
             except queue.Empty:
                 break
             if msg.get("type") == "pvt":
-                self._publish_pvt(msg)
+                try:
+                    self._publish_pvt(msg)
+                except (KeyError, TypeError, ValueError, OverflowError) as error:
+                    self.get_logger().warning(
+                        f"Dropping invalid GNSS PVT record: {error}"
+                    )
             elif msg.get("msg"):
                 self.get_logger().info(f"[receiver] {msg['msg']}")
 
@@ -227,11 +329,7 @@ class RoverGnssNode(Node):
         fix.longitude = float(pvt["lon"])
         fix.altitude = float(pvt.get("alt", float("nan")))
 
-        fix.status.status = (
-            NavSatStatus.STATUS_NO_FIX
-            if int(pvt["fix"]) < 2
-            else NavSatStatus.STATUS_FIX
-        )
+        fix.status.status = navsat_status_for_fix(pvt["fix"])
         fix.status.service = NavSatStatus.SERVICE_GPS
 
         hacc = pvt.get("hacc")
