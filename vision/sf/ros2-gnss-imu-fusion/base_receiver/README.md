@@ -17,18 +17,27 @@ The launch file also starts the movement calculator. It subscribes to
 - `/receiver/moving_forward` (`std_msgs/msg/Bool`)
 - `/receiver/moving_backward` (`std_msgs/msg/Bool`)
 
-The only movement parameter is configured in
-`config/movement_calculator.yaml`:
+The movement parameters are configured in `config/movement_calculator.yaml`:
 
 ```yaml
 movement_calculator:
   ros__parameters:
-    distance_threshold: 0.05  # metres; inclusive trigger
+    distance_threshold: 1.0  # metres; inclusive trigger
+    max_yaw_age: 0.5         # seconds
 ```
 
-The calculator publishes `true` when signed forward displacement is greater
-than or equal to this value, or when signed backward displacement is less than
-or equal to its negative. It publishes `false` on both topics otherwise.
+The calculator projects each displacement between consecutive GNSS fixes onto
+the vehicle's forward axis and accumulates the signed result. It publishes
+`true` when the accumulated forward displacement reaches `distance_threshold`,
+or when backward displacement reaches its negative, then starts the next event
+from zero. It publishes `false` on both topics otherwise. Invalid GNSS fixes and
+missing or stale IMU orientation reset the partial measurement so a data gap
+cannot produce a movement event.
+
+IMU orientation must follow the ROS ENU convention: yaw zero points east,
+positive yaw turns counter-clockwise toward north, and vehicle body `+X` points
+forward. The configured distance threshold should be larger than normal GNSS
+position noise.
 
 Build and run from this workspace:
 
