@@ -6,3 +6,9 @@ base_receiver:
     stale_timeout: 3.0
     reconnect_interval: 2.0
     rtk_status_topic: /gnss/rtk_status
+
+gnss_enu:
+  ros__parameters:
+    fix_topic: /receiver/fix
+    output_topic: /gps/enu_position
+    frame_id: enu

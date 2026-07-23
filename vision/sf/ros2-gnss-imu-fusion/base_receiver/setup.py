@@ -16,11 +16,13 @@ setup(
         ),
         ("share/" + package_name + "/launch", ["launch/receiver.launch.py"]),
     ],
-    install_requires=["setuptools", "pyserial"],
+    install_requires=["setuptools", "pyserial", "pymap3d"],
+    tests_require=["pytest"],
     zip_safe=True,
     entry_points={
         "console_scripts": [
             "base_receiver = base_receiver.receiver_node:main",
+            "gnss_enu = base_receiver.enu_node:main",
         ],
     },
 )

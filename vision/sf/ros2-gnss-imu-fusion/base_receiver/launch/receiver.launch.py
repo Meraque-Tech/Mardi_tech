@@ -19,4 +19,17 @@ def generate_launch_description():
                 ])
             ],
         ),
+        Node(
+            package="base_receiver",
+            executable="gnss_enu",
+            name="gnss_enu",
+            output="screen",
+            parameters=[
+                PathJoinSubstitution([
+                    FindPackageShare("base_receiver"),
+                    "config",
+                    "receiver.yaml",
+                ])
+            ],
+        ),
     ])
