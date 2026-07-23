@@ -145,14 +145,17 @@ class MovementCalculatorNode(Node):
         self.create_subscription(Imu, "/imu/processed", self.imu_callback, 10)
 
         self.get_logger().info(
-            "Movement calculator started with distance_threshold=%.3f m",
-            self.distance_threshold_m,
+            f"Movement calculator started with "
+            f"distance_threshold={self.distance_threshold_m:.3f} m"
         )
 
     def imu_callback(self, msg: Imu) -> None:
         # REP-145 uses orientation_covariance[0] == -1 to indicate that the
         # IMU does not provide orientation. Treat its quaternion as unusable.
-        if msg.orientation_covariance and msg.orientation_covariance[0] < 0.0:
+        if (
+            len(msg.orientation_covariance) > 0
+            and msg.orientation_covariance[0] < 0.0
+        ):
             self.latest_yaw_rad = None
             return
         try:
@@ -229,7 +232,8 @@ def main(args=None) -> None:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
