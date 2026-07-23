@@ -1,4 +1,0 @@
-movement_calculator:
-  ros__parameters:
-    distance_threshold: 1.0
-    max_yaw_age: 0.5

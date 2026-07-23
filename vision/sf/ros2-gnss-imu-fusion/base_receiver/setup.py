@@ -12,7 +12,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         (
             "share/" + package_name + "/config",
-            ["config/receiver.yaml", "config/movement_calculator.yaml"],
+            ["config/receiver.yaml"],
         ),
         ("share/" + package_name + "/launch", ["launch/receiver.launch.py"]),
     ],
@@ -21,7 +21,6 @@ setup(
     entry_points={
         "console_scripts": [
             "base_receiver = base_receiver.receiver_node:main",
-            "movement_calculator = base_receiver.movement_calculator_node:main",
         ],
     },
 )
