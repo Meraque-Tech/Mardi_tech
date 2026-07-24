@@ -163,6 +163,14 @@ Inspect container state with:
 docker compose -f docker-compose.base_receiver.yaml ps
 ```
 
+Interactive Bash shells automatically load the ROS 2 environment and the
+workspace overlay:
+
+```bash
+docker exec -it base_receiver bash
+ros2 topic list
+```
+
 The Dockerfile uses the multi-architecture ROS Humble base image. Build
 natively on `amd64` or `arm64`; no GPU runtime is required.
 

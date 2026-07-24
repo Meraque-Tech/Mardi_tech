@@ -43,6 +43,10 @@ COPY --from=builder /ros2_ws/install/ /ros2_ws/install/
 COPY docker/entrypoint.sh /usr/local/bin/base-receiver-entrypoint
 
 RUN useradd --uid 10001 --user-group --create-home ros \
+    && printf '%s\n' \
+        'source /opt/ros/humble/setup.bash' \
+        'source /ros2_ws/install/setup.bash' \
+        >> /home/ros/.bashrc \
     && chmod 0755 /usr/local/bin/base-receiver-entrypoint
 
 USER ros
