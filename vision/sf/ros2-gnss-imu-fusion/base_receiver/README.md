@@ -67,8 +67,9 @@ not vehicle-relative forward, left, or right.
 
 The Compose service builds a ROS 2 Humble image containing both nodes and starts
 them through `receiver.launch.py`. It uses host networking for ROS 2 discovery
-and host IPC for the default DDS shared-memory transport. It maps one host
-serial device to the stable container path `/dev/gnss`.
+and host IPC for the default DDS shared-memory transport. It uses privileged
+device access so the receiver can auto-detect supported USB serial adapters by
+their VID/PID, matching the standalone receiver behavior.
 
 The deployment is intended for a Linux host with Docker Engine and Docker
 Compose v2:
@@ -80,37 +81,33 @@ docker compose version
 
 ### 1. Identify the receiver
 
-Prefer a persistent USB path when the host provides one:
+Check that Linux detects the receiver:
 
 ```bash
-ls -l /dev/serial/by-id/
-```
-
-If no persistent path exists, identify the current kernel device:
-
-```bash
+lsusb
 ls -l /dev/ttyUSB* /dev/ttyACM*
 ```
 
-The serial device must exist before Compose starts the service. The Compose file
-maps `/dev/ttyUSB0` by default. If the receiver uses another path, edit the
-source path under `devices` in `docker-compose.base_receiver.yaml`:
+The receiver code recognizes these USB IDs:
 
-```yaml
-devices:
-  - /dev/serial/by-id/usb-your-receiver-id:/dev/gnss
+```text
+10c4:ea60  CP210x
+1a86:7523  CH340
+0403:6001  FTDI
+303a:1001  Espressif USB
 ```
 
-The container runs as a non-root user. Check the numeric group that owns the
-device:
+The serial device must be detected before Compose starts. The container runs as
+a non-root user and retains membership in group `20`, normally Ubuntu's
+`dialout` group. If the host uses a different device group, update `group_add`
+in the Compose file. Check the group after the device appears:
 
 ```bash
-stat -c '%g' /dev/ttyUSB0
+stat -c '%g' /dev/ttyACM0
 ```
 
-If the result is not `20`, replace the value under `group_add` in the Compose
-file. If the host user also needs direct access, add that user to the
-device-owning group, commonly `dialout`, and start a new login session.
+If the host user also needs direct access, add that user to the device-owning
+group, commonly `dialout`, and start a new login session.
 
 ### 2. Build and start
 
@@ -159,20 +156,18 @@ natively on `amd64` or `arm64`; no GPU runtime is required.
 
 ### Troubleshooting
 
-**Compose reports that the device does not exist**
+**No receiver is detected**
 
-- Confirm that the source device configured under `devices` exists on the host.
-- Reconnect the receiver and check `/dev/serial/by-id`, `/dev/ttyUSB*`, and
-  `/dev/ttyACM*`.
+- Reconnect the receiver and check `lsusb`.
+- Check `/dev/ttyUSB*` and `/dev/ttyACM*`.
+- Confirm that the USB VID/PID is one of the supported IDs above.
 
-**The node cannot open `/dev/gnss`**
+**The node cannot open the serial device**
 
-- Compare `group_add` with the group reported by `stat -c '%g' /dev/ttyUSB0`.
-- Confirm the device mapping with:
+- Compare `group_add` with the group reported by `stat`, for example:
 
   ```bash
-  docker compose -f docker-compose.base_receiver.yaml \
-    exec base_receiver ls -l /dev/gnss
+  stat -c '%g %n' /dev/ttyACM0
   ```
 
 **The container is running but no GNSS topics contain data**
@@ -194,8 +189,8 @@ natively on `amd64` or `arm64`; no GPU runtime is required.
 
 **The receiver was unplugged and reconnected**
 
-Docker device mappings do not behave identically on every kernel/runtime after
-a device node is recreated. First try:
+The receiver performs USB auto-discovery and reconnects when supported devices
+reappear. If the container does not see a newly recreated device, restart it:
 
 ```bash
 docker compose -f docker-compose.base_receiver.yaml restart

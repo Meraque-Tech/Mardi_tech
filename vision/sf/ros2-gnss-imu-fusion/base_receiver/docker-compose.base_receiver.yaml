@@ -10,8 +10,7 @@ services:
     stop_signal: SIGINT
     network_mode: host
     ipc: host
-    devices:
-      - /dev/ttyUSB0:/dev/gnss
+    privileged: true
     group_add:
       - "20"
     command:
@@ -19,4 +18,3 @@ services:
       - launch
       - base_receiver
       - receiver.launch.py
-      - port:=/dev/gnss
