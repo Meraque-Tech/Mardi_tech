@@ -1,0 +1,22 @@
+name: base-receiver
+
+services:
+  base_receiver:
+    image: meraquetech/race_nav:base_receiver.v1
+    build: .
+    container_name: base_receiver
+    restart: unless-stopped
+    init: true
+    stop_signal: SIGINT
+    network_mode: host
+    ipc: host
+    devices:
+      - /dev/ttyUSB0:/dev/gnss
+    group_add:
+      - "20"
+    command:
+      - ros2
+      - launch
+      - base_receiver
+      - receiver.launch.py
+      - port:=/dev/gnss
