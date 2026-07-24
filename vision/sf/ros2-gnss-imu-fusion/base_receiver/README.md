@@ -12,6 +12,10 @@ publishes GNSS ROS 2 topics:
   `RTK_FLOAT`; `false` for all other states or stale PVT data.
 - `/gps/enu_position` (`geometry_msgs/msg/PointStamped`): displacement in
   metres from the first valid fix, with `x=East`, `y=North`, and `z=Up`.
+- `/gnss/is_forward` (`std_msgs/msg/Bool`): `true` while ENU north is above
+  the configured positive deadband.
+- `/gnss/is_backward` (`std_msgs/msg/Bool`): `true` while ENU north is below
+  the configured negative deadband.
 
 The launch file starts two separate nodes: `base_receiver` publishes the raw
 GNSS topics, and `gnss_enu` converts `/receiver/fix` into a local ENU position.
@@ -57,11 +61,17 @@ ros2 topic echo /receiver/fix
 ros2 topic echo /gnss/pvt
 ros2 topic echo /gnss/rtk_status
 ros2 topic echo /gps/enu_position
+ros2 topic echo /gnss/is_forward
+ros2 topic echo /gnss/is_backward
 ```
 
 The first valid fix publishes approximately `(0, 0, 0)`. Positive `x` is east,
 positive `y` is north, and positive `z` is up. These are geographic directions,
-not vehicle-relative forward, left, or right.
+not vehicle-relative forward, left, or right. With the default `0.10 m`
+deadband, north greater than `0.10 m` publishes `is_forward=true`, north less
+than `-0.10 m` publishes `is_backward=true`, and both flags are false inside
+the deadband. Invalid or stale fixes also clear both flags. The flags describe
+position relative to the fixed ENU origin, not the current direction of travel.
 
 ## Docker Compose deployment
 
@@ -143,6 +153,8 @@ ros2 topic echo --once /receiver/fix
 ros2 topic echo --once /gnss/pvt
 ros2 topic echo --once /gnss/rtk_status
 ros2 topic echo --once /gps/enu_position
+ros2 topic echo --once /gnss/is_forward
+ros2 topic echo --once /gnss/is_backward
 ```
 
 Inspect container state with:

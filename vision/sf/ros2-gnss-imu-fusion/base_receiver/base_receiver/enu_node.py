@@ -1,12 +1,14 @@
 """Convert GNSS fixes to local ENU displacement from the first valid fix."""
 
 import math
+import time
 
 from geometry_msgs.msg import PointStamped
 import pymap3d
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
+from std_msgs.msg import Bool
 
 
 def is_valid_fix(msg) -> bool:
@@ -24,6 +26,21 @@ def is_valid_fix(msg) -> bool:
 def _zero_if_negligible(value: float, tolerance: float = 1e-9) -> float:
     """Remove floating-point residue at the ENU origin."""
     return 0.0 if abs(value) < tolerance else float(value)
+
+
+def direction_from_north(north: float, deadband: float):
+    """Classify north displacement into mutually exclusive direction flags."""
+    north = float(north)
+    deadband = float(deadband)
+    if not math.isfinite(north):
+        return False, False
+    if not math.isfinite(deadband) or deadband < 0.0:
+        raise ValueError("north deadband must be finite and non-negative")
+    if north > deadband:
+        return True, False
+    if north < -deadband:
+        return False, True
+    return False, False
 
 
 class EnuProjector:
@@ -85,17 +102,56 @@ class GnssEnuNode(Node):
         self.declare_parameter("fix_topic", "/receiver/fix")
         self.declare_parameter("output_topic", "/gps/enu_position")
         self.declare_parameter("frame_id", "enu")
+        self.declare_parameter("is_forward_topic", "/gnss/is_forward")
+        self.declare_parameter("is_backward_topic", "/gnss/is_backward")
+        self.declare_parameter("north_deadband_m", 0.10)
+        self.declare_parameter("direction_stale_timeout", 3.0)
 
         self.fix_topic = str(self.get_parameter("fix_topic").value)
         self.output_topic = str(self.get_parameter("output_topic").value)
         self.frame_id = str(self.get_parameter("frame_id").value)
+        self.is_forward_topic = str(
+            self.get_parameter("is_forward_topic").value
+        )
+        self.is_backward_topic = str(
+            self.get_parameter("is_backward_topic").value
+        )
+        self.north_deadband_m = float(
+            self.get_parameter("north_deadband_m").value
+        )
+        self.direction_stale_timeout = float(
+            self.get_parameter("direction_stale_timeout").value
+        )
+        if (
+            not math.isfinite(self.north_deadband_m)
+            or self.north_deadband_m < 0.0
+        ):
+            raise ValueError("north_deadband_m must be finite and non-negative")
+        if (
+            not math.isfinite(self.direction_stale_timeout)
+            or self.direction_stale_timeout <= 0.0
+        ):
+            raise ValueError(
+                "direction_stale_timeout must be finite and greater than zero"
+            )
 
         self.projector = EnuProjector()
         self.invalid_fix_warning_active = False
+        self.last_valid_enu_monotonic = None
 
         self.position_pub = self.create_publisher(
             PointStamped,
             self.output_topic,
+            10,
+        )
+        self.is_forward_pub = self.create_publisher(
+            Bool,
+            self.is_forward_topic,
+            10,
+        )
+        self.is_backward_pub = self.create_publisher(
+            Bool,
+            self.is_backward_topic,
             10,
         )
         self.fix_sub = self.create_subscription(
@@ -104,10 +160,20 @@ class GnssEnuNode(Node):
             self._fix_callback,
             10,
         )
+        self.direction_stale_timer = self.create_timer(
+            min(0.5, self.direction_stale_timeout),
+            self._clear_stale_direction,
+        )
+        self._publish_direction(False, False)
 
         self.get_logger().info(
             f"Waiting for the first valid GNSS fix on {self.fix_topic}; "
             f"publishing ENU positions on {self.output_topic}"
+        )
+        self.get_logger().info(
+            f"Publishing north-position flags on {self.is_forward_topic} "
+            f"and {self.is_backward_topic} with a "
+            f"{self.north_deadband_m:.3f} m deadband"
         )
 
     def _fix_callback(self, msg: NavSatFix) -> None:
@@ -119,6 +185,7 @@ class GnssEnuNode(Node):
             self.get_logger().error(
                 f"GNSS coordinate conversion failed: {error}"
             )
+            self._invalidate_direction()
             return
 
         if enu is None:
@@ -128,10 +195,12 @@ class GnssEnuNode(Node):
                     "longitude, altitude, and a valid fix status"
                 )
                 self.invalid_fix_warning_active = True
+            self._invalidate_direction()
             return
 
         self.invalid_fix_warning_active = False
         east, north, up = enu
+        self.last_valid_enu_monotonic = time.monotonic()
 
         if establishing_origin:
             origin_lat, origin_lon, origin_alt = self.projector.origin_geodetic
@@ -150,6 +219,40 @@ class GnssEnuNode(Node):
         position.point.y = north
         position.point.z = up
         self.position_pub.publish(position)
+        is_forward, is_backward = direction_from_north(
+            north,
+            self.north_deadband_m,
+        )
+        self._publish_direction(is_forward, is_backward)
+
+    def _publish_direction(
+        self,
+        is_forward: bool,
+        is_backward: bool,
+    ) -> None:
+        forward_msg = Bool()
+        forward_msg.data = bool(is_forward)
+        backward_msg = Bool()
+        backward_msg.data = bool(is_backward)
+        self.is_forward_pub.publish(forward_msg)
+        self.is_backward_pub.publish(backward_msg)
+
+    def _invalidate_direction(self) -> None:
+        self.last_valid_enu_monotonic = None
+        self._publish_direction(False, False)
+
+    def _clear_stale_direction(self) -> None:
+        if self.last_valid_enu_monotonic is None:
+            return
+        if (
+            time.monotonic() - self.last_valid_enu_monotonic
+            <= self.direction_stale_timeout
+        ):
+            return
+        self.get_logger().warning(
+            "ENU direction data is stale; clearing forward/backward flags"
+        )
+        self._invalidate_direction()
 
 
 def main(args=None) -> None:

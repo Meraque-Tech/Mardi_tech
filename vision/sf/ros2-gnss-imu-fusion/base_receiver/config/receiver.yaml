@@ -12,3 +12,7 @@ gnss_enu:
     fix_topic: /receiver/fix
     output_topic: /gps/enu_position
     frame_id: enu
+    is_forward_topic: /gnss/is_forward
+    is_backward_topic: /gnss/is_backward
+    north_deadband_m: 1.0
+    direction_stale_timeout: 3.0
