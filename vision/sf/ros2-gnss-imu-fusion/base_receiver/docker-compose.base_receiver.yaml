@@ -2,7 +2,7 @@ name: base-receiver
 
 services:
   base_receiver:
-    image: meraquetech/race_nav:base_receiver.v2
+    image: meraquetech/race_nav:base_receiver.v3
     build: .
     container_name: base_receiver
     hostname: mardi
