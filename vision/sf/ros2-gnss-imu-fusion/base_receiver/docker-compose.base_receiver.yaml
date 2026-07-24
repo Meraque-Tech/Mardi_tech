@@ -2,9 +2,10 @@ name: base-receiver
 
 services:
   base_receiver:
-    image: meraquetech/race_nav:base_receiver.v1
+    image: meraquetech/race_nav:base_receiver.v2
     build: .
     container_name: base_receiver
+    hostname: mardi
     restart: unless-stopped
     init: true
     stop_signal: SIGINT
