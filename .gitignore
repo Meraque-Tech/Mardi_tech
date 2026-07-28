@@ -1,4 +1,6 @@
+/__pycache__/
 logs.txt
+/runs/
 *.pt
-__pycache__
-runs/
+/vision/ai/train/
+/vision/ai/web/
