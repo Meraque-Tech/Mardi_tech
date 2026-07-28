@@ -1,0 +1,7 @@
+datasets/
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+plan.md
+issue.md

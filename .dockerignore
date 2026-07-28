@@ -1,0 +1,9 @@
+.git
+.git/**
+__pycache__/
+*.py[cod]
+*.pt
+runs/
+vision/ai/web/datasets/
+vision/ai/web/logs/
+vision/ai/web/.env

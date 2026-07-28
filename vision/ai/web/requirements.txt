@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+python-multipart
+PyYAML
+roboflow
+ultralytics==8.4.101
+rfdetr[train,loggers]
+onnx
+onnxruntime-gpu
+aiortc
+av
+scikit-learn==1.7.1
+reportlab

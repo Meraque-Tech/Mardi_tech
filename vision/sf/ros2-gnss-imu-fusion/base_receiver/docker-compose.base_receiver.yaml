@@ -1,0 +1,21 @@
+name: base-receiver
+
+services:
+  base_receiver:
+    image: meraquetech/race_nav:base_receiver.v4
+    build: .
+    container_name: base_receiver
+    hostname: mardi
+    restart: unless-stopped
+    init: true
+    stop_signal: SIGINT
+    network_mode: host
+    ipc: host
+    privileged: true
+    group_add:
+      - "20"
+    command:
+      - ros2
+      - launch
+      - base_receiver
+      - receiver.launch.py
