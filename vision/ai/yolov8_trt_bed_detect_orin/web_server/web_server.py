@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """YOLOv8 TRT bed detection dashboard, REST API, and ROS 2 bridge."""
 
+import csv
 import datetime
+import io
 import json
 import math
 import os
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -20,7 +24,7 @@ from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, Int32, String, UInt8
 from std_srvs.srv import SetBool, Trigger
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_sock import Sock
 
 
@@ -162,6 +166,24 @@ def _history_rows(limit, offset):
         for row in rows
     ]
     return total, items
+
+
+def _image_history_rows():
+    with db_lock, _db_connect() as db:
+        rows = db.execute(
+            """
+            SELECT id, recorded_at, counts_json, total, bed_status, confidence, tracking,
+                   frame_filename, latitude, longitude, gnss_recorded_at
+            FROM count_history
+            WHERE frame_filename IS NOT NULL
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+    history_by_filename = {}
+    for row in rows:
+        history_by_filename.setdefault(row["frame_filename"], row)
+    return history_by_filename
 
 
 def broadcast(payload: str):
@@ -651,6 +673,94 @@ def list_images():
         }
         for item in files
     ])
+
+
+@app.route("/api/images/download")
+def download_images():
+    archive_buffer = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)
+
+    try:
+        with storage_lock:
+            image_paths = sorted(Path(SAVE_DIR).glob("*.jpg"))
+            if not image_paths:
+                archive_buffer.close()
+                return jsonify({
+                    "success": False,
+                    "message": "no saved images are available to download",
+                }), 404
+
+            history_by_filename = _image_history_rows()
+            manifest_buffer = io.StringIO(newline="")
+            fieldnames = [
+                "filename",
+                "file_size_bytes",
+                "captured_at",
+                "history_id",
+                "detection_recorded_at",
+                "class_counts_json",
+                "total_objects",
+                "object_detected",
+                "confidence",
+                "tracking_enabled",
+                "latitude",
+                "longitude",
+                "gnss_recorded_at",
+            ]
+            writer = csv.DictWriter(manifest_buffer, fieldnames=fieldnames)
+            writer.writeheader()
+
+            with zipfile.ZipFile(archive_buffer, mode="w", allowZip64=True) as archive:
+                for image_path in image_paths:
+                    file_stat = image_path.stat()
+                    history = history_by_filename.get(image_path.name)
+                    writer.writerow({
+                        "filename": image_path.name,
+                        "file_size_bytes": file_stat.st_size,
+                        "captured_at": datetime.datetime.fromtimestamp(
+                            file_stat.st_mtime, datetime.timezone.utc
+                        ).isoformat(),
+                        "history_id": history["id"] if history else "",
+                        "detection_recorded_at": history["recorded_at"] if history else "",
+                        "class_counts_json": history["counts_json"] if history else "",
+                        "total_objects": history["total"] if history else "",
+                        "object_detected": history["bed_status"] if history else "",
+                        "confidence": history["confidence"] if history else "",
+                        "tracking_enabled": history["tracking"] if history else "",
+                        "latitude": history["latitude"] if history else "",
+                        "longitude": history["longitude"] if history else "",
+                        "gnss_recorded_at": history["gnss_recorded_at"] if history else "",
+                    })
+                    archive.write(
+                        image_path,
+                        arcname="images/%s" % image_path.name,
+                        compress_type=zipfile.ZIP_STORED,
+                    )
+
+                archive.writestr(
+                    "images_manifest.csv",
+                    manifest_buffer.getvalue().encode("utf-8"),
+                    compress_type=zipfile.ZIP_DEFLATED,
+                )
+    except (OSError, sqlite3.Error, zipfile.BadZipFile) as exc:
+        archive_buffer.close()
+        app.logger.error("Could not prepare image archive: %s", exc)
+        return jsonify({
+            "success": False,
+            "message": "could not prepare image archive: %s" % exc,
+        }), 500
+
+    archive_buffer.seek(0)
+    archive_name = "saved_images_%s.zip" % datetime.datetime.now().strftime(
+        "%Y%m%d_%H%M%S"
+    )
+    response = send_file(
+        archive_buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=archive_name,
+    )
+    response.call_on_close(archive_buffer.close)
+    return response
 
 
 @app.route("/api/images/<filename>", methods=["DELETE"])
