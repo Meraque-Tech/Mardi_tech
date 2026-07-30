@@ -3,10 +3,12 @@
 
 import datetime
 import json
+import math
 import os
 import sqlite3
 import subprocess
 import threading
+import time
 import urllib.request
 from pathlib import Path
 from typing import List, Optional
@@ -14,6 +16,7 @@ from typing import List, Optional
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, Int32, String, UInt8
 from std_srvs.srv import SetBool, Trigger
 
@@ -27,7 +30,12 @@ MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
 AUTO_SAVE_INTERVAL = max(0.5, float(os.environ.get("AUTO_SAVE_INTERVAL", "0.5")))
+GNSS_FIX_TOPIC = os.environ.get("GNSS_FIX_TOPIC", "/receiver/fix")
+GNSS_STALE_TIMEOUT = float(os.environ.get("GNSS_STALE_TIMEOUT", "3.0"))
 STATIC_DIR = Path(__file__).parent / "static"
+
+if not math.isfinite(GNSS_STALE_TIMEOUT) or GNSS_STALE_TIMEOUT <= 0:
+    raise ValueError("GNSS_STALE_TIMEOUT must be a finite number greater than zero")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(HISTORY_DB) or ".", exist_ok=True)
@@ -44,8 +52,13 @@ state = {
     "last_updated": None,
     "camera_index": None,
     "infer_ms": 0.0,
+    "latitude": None,
+    "longitude": None,
+    "gnss_valid": False,
+    "gnss_received_at": None,
 }
 state_lock = threading.Lock()
+gnss_last_monotonic = None
 auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
@@ -75,13 +88,25 @@ def _init_db():
                 bed_status INTEGER NOT NULL,
                 confidence REAL NOT NULL,
                 tracking INTEGER NOT NULL,
-                frame_filename TEXT
+                frame_filename TEXT,
+                latitude REAL,
+                longitude REAL,
+                gnss_recorded_at TEXT
             )
             """
         )
         columns = {row["name"] for row in db.execute("PRAGMA table_info(count_history)")}
-        if "frame_filename" not in columns:
-            db.execute("ALTER TABLE count_history ADD COLUMN frame_filename TEXT")
+        migrations = {
+            "frame_filename": "TEXT",
+            "latitude": "REAL",
+            "longitude": "REAL",
+            "gnss_recorded_at": "TEXT",
+        }
+        for column, column_type in migrations.items():
+            if column not in columns:
+                db.execute(
+                    "ALTER TABLE count_history ADD COLUMN %s %s" % (column, column_type)
+                )
 
 
 def _store_history(snapshot, frame_filename=None):
@@ -89,8 +114,9 @@ def _store_history(snapshot, frame_filename=None):
         cursor = db.execute(
             """
             INSERT INTO count_history
-                (recorded_at, counts_json, total, bed_status, confidence, tracking, frame_filename)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (recorded_at, counts_json, total, bed_status, confidence, tracking,
+                 frame_filename, latitude, longitude, gnss_recorded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot["last_updated"],
@@ -100,6 +126,9 @@ def _store_history(snapshot, frame_filename=None):
                 snapshot["conf"],
                 int(snapshot["is_track"]),
                 frame_filename,
+                snapshot["latitude"],
+                snapshot["longitude"],
+                snapshot["gnss_received_at"],
             ),
         )
         return cursor.lastrowid
@@ -111,7 +140,7 @@ def _history_rows(limit, offset):
         rows = db.execute(
             """
             SELECT id, recorded_at, counts_json, total, bed_status, confidence, tracking,
-                   frame_filename
+                   frame_filename, latitude, longitude, gnss_recorded_at
             FROM count_history ORDER BY id DESC LIMIT ? OFFSET ?
             """,
             (limit, offset),
@@ -126,6 +155,9 @@ def _history_rows(limit, offset):
             "conf": row["confidence"],
             "tracking": bool(row["tracking"]),
             "frame": row["frame_filename"],
+            "latitude": row["latitude"],
+            "longitude": row["longitude"],
+            "gnss_time": row["gnss_recorded_at"],
         }
         for row in rows
     ]
@@ -144,10 +176,28 @@ def broadcast(payload: str):
             ws_clients.remove(ws)
 
 
-def _snapshot_payload(message_type="snapshot"):
+def _state_snapshot():
+    now_monotonic = time.monotonic()
     with state_lock:
         snapshot = dict(state)
         snapshot["counts"] = dict(state["counts"])
+
+        gnss_is_fresh = (
+            state["gnss_valid"]
+            and gnss_last_monotonic is not None
+            and now_monotonic - gnss_last_monotonic <= GNSS_STALE_TIMEOUT
+        )
+
+    if not gnss_is_fresh:
+        snapshot["latitude"] = None
+        snapshot["longitude"] = None
+        snapshot["gnss_valid"] = False
+        snapshot["gnss_received_at"] = None
+    return snapshot
+
+
+def _snapshot_payload(message_type="snapshot"):
+    snapshot = _state_snapshot()
     snapshot["type"] = message_type
     return snapshot
 
@@ -173,12 +223,17 @@ class BridgeNode(Node):
         self.create_subscription(Float32, "/conf", self._conf_cb, 10)
         self.create_subscription(Int32, "/camera_index", self._camera_index_cb, state_qos)
         self.create_subscription(Float32, "/infer_ms", self._infer_ms_cb, 10)
+        self.create_subscription(NavSatFix, GNSS_FIX_TOPIC, self._gnss_fix_cb, 10)
 
         self._start_cli = self.create_client(Trigger, "/bed_detection")
         self._stop_cli = self.create_client(Trigger, "/bed_detection_stop")
         self._reset_cli = self.create_client(Trigger, "/reset_tracker")
         self._track_cli = self.create_client(SetBool, "/set_tracking")
         self._control_lock = threading.Lock()
+        self.get_logger().info(
+            "Listening for GNSS fixes on %s (stale after %.1f s)"
+            % (GNSS_FIX_TOPIC, GNSS_STALE_TIMEOUT)
+        )
 
     def _counts_cb(self, msg):
         counts = {}
@@ -216,6 +271,35 @@ class BridgeNode(Node):
     def _infer_ms_cb(self, msg):
         with state_lock:
             state["infer_ms"] = round(float(msg.data), 2)
+
+    def _gnss_fix_cb(self, msg):
+        global gnss_last_monotonic
+
+        latitude = float(msg.latitude)
+        longitude = float(msg.longitude)
+        valid = (
+            msg.status.status >= 0
+            and math.isfinite(latitude)
+            and math.isfinite(longitude)
+            and -90.0 <= latitude <= 90.0
+            and -180.0 <= longitude <= 180.0
+        )
+
+        with state_lock:
+            if valid:
+                state["latitude"] = latitude
+                state["longitude"] = longitude
+                state["gnss_valid"] = True
+                state["gnss_received_at"] = datetime.datetime.now(
+                    datetime.timezone.utc
+                ).isoformat()
+                gnss_last_monotonic = time.monotonic()
+            else:
+                state["latitude"] = None
+                state["longitude"] = None
+                state["gnss_valid"] = False
+                state["gnss_received_at"] = None
+                gnss_last_monotonic = None
 
     def _active_cb(self, msg):
         with state_lock:
@@ -342,8 +426,7 @@ def _auto_save_loop():
         with state_lock:
             if not state["auto_save"] or not state["detecting"] or state["last_updated"] is None:
                 continue
-            snapshot = dict(state)
-            snapshot["counts"] = dict(state["counts"])
+        snapshot = _state_snapshot()
 
         snapshot["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         frame_path = None
@@ -413,8 +496,7 @@ def save_count():
     with state_lock:
         if state["last_updated"] is None:
             return jsonify({"success": False, "message": "no live count has been received yet"}), 409
-        snapshot = dict(state)
-        snapshot["counts"] = dict(state["counts"])
+    snapshot = _state_snapshot()
 
     source_updated = snapshot["last_updated"]
     snapshot["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -432,6 +514,9 @@ def save_count():
         "source_updated": source_updated,
         "counts": snapshot["counts"],
         "total": sum(snapshot["counts"].values()),
+        "latitude": snapshot["latitude"],
+        "longitude": snapshot["longitude"],
+        "gnss_time": snapshot["gnss_received_at"],
     })
 
 

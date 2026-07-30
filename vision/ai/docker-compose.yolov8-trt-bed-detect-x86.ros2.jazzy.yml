@@ -1,6 +1,6 @@
 services:
   yolov8-trt-serialize-x86-jazzy:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v1
     container_name: yolov8-trt-serialize-x86-jazzy
     # build:
     #   context: .
@@ -17,13 +17,15 @@ services:
                ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin -s /weights/yolov8n.wts /weights/yolov8n_x86_ros2_jazzy.engine n 512 512"
 
   yolov8-trt-bed-detect-x86-jazzy:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v1
     container_name: yolov8-trt-bed-detect-x86-jazzy
     build:
       context: .
       dockerfile: Dockerfile.yolov8_trt_x86.ros2.jazzy
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - GNSS_FIX_TOPIC=/receiver/fix
+      - GNSS_STALE_TIMEOUT=3.0
     devices:
       - /dev/video0:/dev/video0
       - /dev/video1:/dev/video1

@@ -7,6 +7,8 @@ services:
       dockerfile: Dockerfile.yolov8_trt_bed_detect_jetson_orien_nano
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - GNSS_FIX_TOPIC=/receiver/fix
+      - GNSS_STALE_TIMEOUT=3.0
     devices:
       - /dev/video0:/dev/video0
       - /dev/video1:/dev/video1

@@ -441,6 +441,15 @@
     return `<div>${escapeHtml(date)}</div><div style="color:var(--muted);font-size:10.5px">${escapeHtml(time)}</div>`;
   }
 
+  function formatGnss(item) {
+    if(item.latitude===null||item.latitude===undefined||item.longitude===null||item.longitude===undefined)
+      return '<span style="color:var(--muted)">—</span>';
+    const latitude=Number(item.latitude),longitude=Number(item.longitude);
+    if(!Number.isFinite(latitude)||!Number.isFinite(longitude))
+      return '<span style="color:var(--muted)">—</span>';
+    return `<div>Lat ${latitude.toFixed(8)}</div><div>Lon ${longitude.toFixed(8)}</div>`;
+  }
+
   async function loadHistory(offset=0) {
     try {
       const data=await api(`/api/history?limit=${HISTORY_PAGE}&offset=${offset}`);historyOffset=data.offset;historyTotal=data.total;
@@ -454,7 +463,7 @@
         const objBadge=item.bed?'<span class="obj-badge found">● Detected</span>':'<span class="obj-badge clear">✓ Clear</span>';
         return `<tr>
           <td class="ts">${formatTimestamp(item.time)}</td>
-          <td class="gnss">—</td>
+          <td class="gnss">${formatGnss(item)}</td>
           <td class="classes-cell">${renderClassPills(item.counts)}</td>
           <td class="total-cell" style="text-align:center">${item.total}</td>
           <td style="text-align:center">${objBadge}</td>
