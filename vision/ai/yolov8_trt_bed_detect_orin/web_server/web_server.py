@@ -71,6 +71,7 @@ ws_lock = threading.Lock()
 # Persistent count history
 db_lock = threading.Lock()
 storage_lock = threading.Lock()
+frame_filename_counters = {}
 
 
 def _db_connect():
@@ -419,13 +420,43 @@ def _grab_frame_bytes():
     return None
 
 
-def _write_frame(jpeg):
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    filename = "frame_%s.jpg" % timestamp
-    path = os.path.join(SAVE_DIR, filename)
-    with open(path, "wb") as output:
-        output.write(jpeg)
-    return filename, path
+def _coordinate_filename_token(value):
+    if value is None:
+        return "unknown"
+    try:
+        coordinate = float(value)
+    except (TypeError, ValueError):
+        return "unknown"
+    if not math.isfinite(coordinate):
+        return "unknown"
+    return "%.8f" % coordinate
+
+
+def _write_frame(jpeg, latitude=None, longitude=None):
+    gmt_plus_8 = datetime.timezone(datetime.timedelta(hours=8))
+    timestamp_token = datetime.datetime.now(gmt_plus_8).strftime(
+        "%d_%m_%Y_GMT+8_%H_%M_%S"
+    )
+    latitude_token = _coordinate_filename_token(latitude)
+    longitude_token = _coordinate_filename_token(longitude)
+    filename_stem = "%s_%s_%s" % (
+        timestamp_token,
+        latitude_token,
+        longitude_token,
+    )
+    sequence = frame_filename_counters.get(filename_stem, 1)
+
+    while True:
+        suffix = "" if sequence == 1 else "_%d" % sequence
+        filename = "%s%s.jpg" % (filename_stem, suffix)
+        path = os.path.join(SAVE_DIR, filename)
+        try:
+            with open(path, "xb") as output:
+                output.write(jpeg)
+            frame_filename_counters[filename_stem] = sequence + 1
+            return filename, path
+        except FileExistsError:
+            sequence += 1
 
 
 def _auto_save_loop():
@@ -457,7 +488,9 @@ def _auto_save_loop():
                 with state_lock:
                     if not state["auto_save"] or not state["detecting"]:
                         continue
-                frame_filename, frame_path = _write_frame(jpeg)
+                frame_filename, frame_path = _write_frame(
+                    jpeg, snapshot["latitude"], snapshot["longitude"]
+                )
                 _store_history(snapshot, frame_filename)
         except (OSError, sqlite3.Error) as exc:
             if frame_path and os.path.exists(frame_path):
@@ -576,6 +609,7 @@ def delete_all_data():
             for image_path in Path(SAVE_DIR).glob("*.jpg"):
                 image_path.unlink()
                 deleted_images += 1
+            frame_filename_counters.clear()
     except (OSError, sqlite3.Error) as exc:
         return jsonify({"success": False, "message": "could not delete all data: %s" % exc}), 500
 
@@ -657,7 +691,10 @@ def save_frame():
         jpeg = _grab_frame_bytes()
         if jpeg is None:
             return jsonify({"success": False, "message": "could not grab frame"}), 500
-        filename, _path = _write_frame(jpeg)
+        snapshot = _state_snapshot()
+        filename, _path = _write_frame(
+            jpeg, snapshot["latitude"], snapshot["longitude"]
+        )
     return jsonify({"success": True, "filename": filename})
 
 
