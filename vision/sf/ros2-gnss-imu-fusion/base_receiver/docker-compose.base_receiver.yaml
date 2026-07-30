@@ -6,6 +6,7 @@ services:
     build: .
     container_name: base_receiver
     hostname: mardi
+    user: "0:0"
     restart: unless-stopped
     init: true
     stop_signal: SIGINT
