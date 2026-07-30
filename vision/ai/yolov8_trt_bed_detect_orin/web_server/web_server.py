@@ -21,7 +21,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import Float32, Int32, String, UInt8
+from std_msgs.msg import Bool, Float32, Int32, String, UInt8
 from std_srvs.srv import SetBool, Trigger
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -36,10 +36,15 @@ HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.
 AUTO_SAVE_INTERVAL = max(0.5, float(os.environ.get("AUTO_SAVE_INTERVAL", "0.5")))
 GNSS_FIX_TOPIC = os.environ.get("GNSS_FIX_TOPIC", "/receiver/fix")
 GNSS_STALE_TIMEOUT = float(os.environ.get("GNSS_STALE_TIMEOUT", "3.0"))
+FORWARD_TOPIC = os.environ.get("FORWARD_TOPIC", "/gnss/is_forward")
+BACKWARD_TOPIC = os.environ.get("BACKWARD_TOPIC", "/gnss/is_backward")
+DIRECTION_STALE_TIMEOUT = float(os.environ.get("DIRECTION_STALE_TIMEOUT", "3.0"))
 STATIC_DIR = Path(__file__).parent / "static"
 
 if not math.isfinite(GNSS_STALE_TIMEOUT) or GNSS_STALE_TIMEOUT <= 0:
     raise ValueError("GNSS_STALE_TIMEOUT must be a finite number greater than zero")
+if not math.isfinite(DIRECTION_STALE_TIMEOUT) or DIRECTION_STALE_TIMEOUT <= 0:
+    raise ValueError("DIRECTION_STALE_TIMEOUT must be a finite number greater than zero")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(HISTORY_DB) or ".", exist_ok=True)
@@ -60,9 +65,14 @@ state = {
     "longitude": None,
     "gnss_valid": False,
     "gnss_received_at": None,
+    "is_forward": None,
+    "is_backward": None,
+    "direction_received_at": None,
 }
 state_lock = threading.Lock()
 gnss_last_monotonic = None
+forward_last_monotonic = None
+backward_last_monotonic = None
 auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
@@ -210,12 +220,23 @@ def _state_snapshot():
             and gnss_last_monotonic is not None
             and now_monotonic - gnss_last_monotonic <= GNSS_STALE_TIMEOUT
         )
+        direction_is_fresh = (
+            forward_last_monotonic is not None
+            and backward_last_monotonic is not None
+            and now_monotonic - forward_last_monotonic <= DIRECTION_STALE_TIMEOUT
+            and now_monotonic - backward_last_monotonic <= DIRECTION_STALE_TIMEOUT
+        )
 
     if not gnss_is_fresh:
         snapshot["latitude"] = None
         snapshot["longitude"] = None
         snapshot["gnss_valid"] = False
         snapshot["gnss_received_at"] = None
+    snapshot["direction_valid"] = direction_is_fresh
+    if not direction_is_fresh:
+        snapshot["is_forward"] = None
+        snapshot["is_backward"] = None
+        snapshot["direction_received_at"] = None
     return snapshot
 
 
@@ -247,15 +268,22 @@ class BridgeNode(Node):
         self.create_subscription(Int32, "/camera_index", self._camera_index_cb, state_qos)
         self.create_subscription(Float32, "/infer_ms", self._infer_ms_cb, 10)
         self.create_subscription(NavSatFix, GNSS_FIX_TOPIC, self._gnss_fix_cb, 10)
+        self.create_subscription(Bool, FORWARD_TOPIC, self._forward_cb, 10)
+        self.create_subscription(Bool, BACKWARD_TOPIC, self._backward_cb, 10)
 
         self._start_cli = self.create_client(Trigger, "/bed_detection")
         self._stop_cli = self.create_client(Trigger, "/bed_detection_stop")
         self._reset_cli = self.create_client(Trigger, "/reset_tracker")
         self._track_cli = self.create_client(SetBool, "/set_tracking")
         self._control_lock = threading.Lock()
+        self._last_direction_broadcast = (None, None, False)
         self.get_logger().info(
             "Listening for GNSS fixes on %s (stale after %.1f s)"
             % (GNSS_FIX_TOPIC, GNSS_STALE_TIMEOUT)
+        )
+        self.get_logger().info(
+            "Listening for direction flags on %s and %s (stale after %.1f s)"
+            % (FORWARD_TOPIC, BACKWARD_TOPIC, DIRECTION_STALE_TIMEOUT)
         )
 
     def _counts_cb(self, msg):
@@ -323,6 +351,36 @@ class BridgeNode(Node):
                 state["gnss_valid"] = False
                 state["gnss_received_at"] = None
                 gnss_last_monotonic = None
+
+    def _forward_cb(self, msg):
+        self._direction_cb("is_forward", bool(msg.data))
+
+    def _backward_cb(self, msg):
+        self._direction_cb("is_backward", bool(msg.data))
+
+    def _direction_cb(self, state_key, value):
+        global forward_last_monotonic, backward_last_monotonic
+
+        now_monotonic = time.monotonic()
+        with state_lock:
+            state[state_key] = value
+            state["direction_received_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat()
+            if state_key == "is_forward":
+                forward_last_monotonic = now_monotonic
+            else:
+                backward_last_monotonic = now_monotonic
+
+        snapshot = _state_snapshot()
+        direction_state = (
+            snapshot["is_forward"],
+            snapshot["is_backward"],
+            snapshot["direction_valid"],
+        )
+        if direction_state != self._last_direction_broadcast:
+            self._last_direction_broadcast = direction_state
+            broadcast_state("status")
 
     def _active_cb(self, msg):
         with state_lock:

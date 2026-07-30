@@ -28,6 +28,8 @@
     .badge { display:inline-block;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:750;background:#353b4b }
     .badge.running { color:#8cf1b9;background:#173d2b }.badge.stopped { color:#ffd178;background:#453414 }
     .badge.found { color:#ffb2b2;background:#511f27 }.badge.clear { color:#8cf1b9;background:#173d2b }
+    .badge.yes { color:#8cf1b9;background:#173d2b }.badge.no { color:#bcc4d6;background:#303646 }
+    .badge.unavailable { color:var(--muted);background:#292e3c }
     .layout { display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:18px }
     .stack { display:grid;gap:18px;align-content:start }
     .card-head { display:flex;align-items:center;justify-content:space-between;margin-bottom:12px }
@@ -131,6 +133,8 @@
   <section class="card status">
     <div class="status-item"><span class="muted">Detection</span><strong><span id="detect-badge" class="badge stopped">STOPPED</span></strong></div>
     <div class="status-item"><span class="muted">Obj result</span><strong><span id="bed-badge" class="badge clear">CLEAR</span></strong></div>
+    <div class="status-item"><span class="muted">Forward</span><strong><span id="forward-badge" class="badge unavailable">—</span></strong></div>
+    <div class="status-item"><span class="muted">Backward</span><strong><span id="backward-badge" class="badge unavailable">—</span></strong></div>
     <div class="status-item"><span class="muted">Confidence</span><strong id="confidence">0.000</strong></div>
     <div class="status-item"><span class="muted">Current total</span><strong id="current-total">0</strong></div>
     <div class="status-item"><span class="muted">Camera port</span><strong id="camera-index">—</strong></div>
@@ -324,6 +328,12 @@
   // Persistent class registry — classes never disappear once seen, only go to 0
   const knownClasses = new Map(); // id → index (for stable color assignment)
 
+  function applyDirectionBadge(id,value,valid) {
+    const badge=document.getElementById(id);
+    if(!valid||typeof value!=='boolean'){badge.textContent='—';badge.className='badge unavailable';return;}
+    badge.textContent=value?'YES':'NO';badge.className=`badge ${value?'yes':'no'}`;
+  }
+
   function applySnapshot(data) {
     const running=Boolean(data.detecting), bed=Boolean(data.bed_status);
     // Top status bar
@@ -344,6 +354,8 @@
     if(data.last_updated)document.getElementById('last-update').textContent=formatTime(data.last_updated);
     document.getElementById('camera-index').textContent=(data.camera_index===null||data.camera_index===undefined)?'—':`/dev/video${data.camera_index}`;
     document.getElementById('infer-ms').textContent=data.infer_ms?`${Number(data.infer_ms).toFixed(2)} ms`:'— ms';
+    applyDirectionBadge('forward-badge',data.is_forward,Boolean(data.direction_valid));
+    applyDirectionBadge('backward-badge',data.is_backward,Boolean(data.direction_valid));
     renderCounts(data.counts||{});
     if(typeof data.is_track==='boolean')applyTracking(data.is_track);
     if(typeof data.auto_save==='boolean')document.getElementById('auto-save-toggle').checked=data.auto_save;

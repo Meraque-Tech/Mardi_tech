@@ -26,6 +26,9 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - GNSS_FIX_TOPIC=/receiver/fix
       - GNSS_STALE_TIMEOUT=3.0
+      - FORWARD_TOPIC=/gnss/is_forward
+      - BACKWARD_TOPIC=/gnss/is_backward
+      - DIRECTION_STALE_TIMEOUT=3.0
     devices:
       - /dev/video0:/dev/video0
       - /dev/video1:/dev/video1
@@ -37,6 +40,7 @@ services:
       - ./yolov8_trt_bed_detect_orin/launch:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/launch
       - ./saved_frames:/saved_frames
     network_mode: host
+    ipc: host
     pid: host
     privileged: true
     # privileged: false
