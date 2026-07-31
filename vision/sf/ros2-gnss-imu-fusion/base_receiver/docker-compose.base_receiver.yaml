@@ -20,3 +20,14 @@ services:
       - launch
       - base_receiver
       - receiver.launch.py
+
+# Usage:
+#   docker compose -f docker-compose.base_receiver.yaml build
+#   docker compose -f docker-compose.base_receiver.yaml up -d
+#   docker compose -f docker-compose.base_receiver.yaml exec base_receiver bash
+#   docker compose -f docker-compose.base_receiver.yaml logs -f
+#   docker compose -f docker-compose.base_receiver.yaml restart
+#   docker compose -f docker-compose.base_receiver.yaml down
+#
+# Rebuild and recreate after Dockerfile changes:
+#   docker compose -f docker-compose.base_receiver.yaml up -d --build --force-recreate
