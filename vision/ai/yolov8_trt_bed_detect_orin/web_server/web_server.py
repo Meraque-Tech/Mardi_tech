@@ -7,6 +7,7 @@ import io
 import json
 import math
 import os
+import queue
 import sqlite3
 import subprocess
 import tempfile
@@ -27,6 +28,8 @@ from std_srvs.srv import SetBool, Trigger
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_sock import Sock
 
+from direction_gate import MOVEMENT_STATES, SegmentFrameBuffer
+
 
 # Configuration
 SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
@@ -38,13 +41,24 @@ GNSS_FIX_TOPIC = os.environ.get("GNSS_FIX_TOPIC", "/receiver/fix")
 GNSS_STALE_TIMEOUT = float(os.environ.get("GNSS_STALE_TIMEOUT", "3.0"))
 FORWARD_TOPIC = os.environ.get("FORWARD_TOPIC", "/gnss/is_forward")
 BACKWARD_TOPIC = os.environ.get("BACKWARD_TOPIC", "/gnss/is_backward")
-DIRECTION_STALE_TIMEOUT = float(os.environ.get("DIRECTION_STALE_TIMEOUT", "3.0"))
+MOVEMENT_STATE_TOPIC = os.environ.get(
+    "MOVEMENT_STATE_TOPIC",
+    "/gnss/movement_state",
+)
+DIRECTION_STALE_TIMEOUT = float(
+    os.environ.get("DIRECTION_STALE_TIMEOUT", "3.0")
+)
+MAX_BUFFERED_FRAMES = int(
+    os.environ.get("MAX_BUFFERED_FRAMES", "240")
+)
 STATIC_DIR = Path(__file__).parent / "static"
 
 if not math.isfinite(GNSS_STALE_TIMEOUT) or GNSS_STALE_TIMEOUT <= 0:
     raise ValueError("GNSS_STALE_TIMEOUT must be a finite number greater than zero")
 if not math.isfinite(DIRECTION_STALE_TIMEOUT) or DIRECTION_STALE_TIMEOUT <= 0:
     raise ValueError("DIRECTION_STALE_TIMEOUT must be a finite number greater than zero")
+if MAX_BUFFERED_FRAMES <= 0:
+    raise ValueError("MAX_BUFFERED_FRAMES must be greater than zero")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(HISTORY_DB) or ".", exist_ok=True)
@@ -68,12 +82,15 @@ state = {
     "is_forward": None,
     "is_backward": None,
     "direction_received_at": None,
+    "movement_state": None,
+    "movement_state_received_at": None,
 }
 state_lock = threading.Lock()
 gnss_last_monotonic = None
 forward_last_monotonic = None
 backward_last_monotonic = None
 auto_save_wakeup = threading.Event()
+movement_state_events = queue.Queue()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
 
@@ -237,13 +254,16 @@ def _state_snapshot():
         snapshot["is_forward"] = None
         snapshot["is_backward"] = None
         snapshot["direction_received_at"] = None
+        snapshot["movement_state"] = None
+        snapshot["movement_state_received_at"] = None
     return snapshot
 
 
 def _direction_allows_auto_save(snapshot):
     return bool(snapshot["direction_valid"]) and (
         snapshot["is_forward"] is True
-        or snapshot["is_backward"] is True
+        and snapshot["is_backward"] is False
+        and snapshot["movement_state"] == "forward"
     )
 
 
@@ -277,6 +297,12 @@ class BridgeNode(Node):
         self.create_subscription(NavSatFix, GNSS_FIX_TOPIC, self._gnss_fix_cb, 10)
         self.create_subscription(Bool, FORWARD_TOPIC, self._forward_cb, 10)
         self.create_subscription(Bool, BACKWARD_TOPIC, self._backward_cb, 10)
+        self.create_subscription(
+            String,
+            MOVEMENT_STATE_TOPIC,
+            self._movement_state_cb,
+            10,
+        )
 
         self._start_cli = self.create_client(Trigger, "/bed_detection")
         self._stop_cli = self.create_client(Trigger, "/bed_detection_stop")
@@ -291,6 +317,10 @@ class BridgeNode(Node):
         self.get_logger().info(
             "Listening for direction flags on %s and %s (stale after %.1f s)"
             % (FORWARD_TOPIC, BACKWARD_TOPIC, DIRECTION_STALE_TIMEOUT)
+        )
+        self.get_logger().info(
+            "Buffering frames in RAM until movement segments arrive on %s"
+            % MOVEMENT_STATE_TOPIC
         )
 
     def _counts_cb(self, msg):
@@ -388,6 +418,24 @@ class BridgeNode(Node):
         if direction_state != self._last_direction_broadcast:
             self._last_direction_broadcast = direction_state
             broadcast_state("status")
+
+    def _movement_state_cb(self, msg):
+        movement_state = str(msg.data)
+        if movement_state not in MOVEMENT_STATES:
+            self.get_logger().warning(
+                "Ignored unknown movement state: %r" % movement_state
+            )
+            return
+
+        with state_lock:
+            state["movement_state"] = movement_state
+            state["movement_state_received_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat()
+
+        movement_state_events.put(movement_state)
+        auto_save_wakeup.set()
+        broadcast_state("status")
 
     def _active_cb(self, msg):
         with state_lock:
@@ -524,8 +572,52 @@ def _write_frame(jpeg, latitude=None, longitude=None):
             sequence += 1
 
 
+def _persist_buffered_frames(buffered_frames):
+    """Persist frames from a movement segment confirmed as forward."""
+    if not buffered_frames:
+        return
+
+    with storage_lock:
+        for jpeg, snapshot in buffered_frames:
+            frame_path = None
+            try:
+                frame_filename, frame_path = _write_frame(
+                    jpeg,
+                    snapshot["latitude"],
+                    snapshot["longitude"],
+                )
+                _store_history(snapshot, frame_filename)
+            except (OSError, sqlite3.Error) as exc:
+                if frame_path and os.path.exists(frame_path):
+                    os.unlink(frame_path)
+                app.logger.error("Buffered auto-save failed: %s", exc)
+
+
+def _apply_movement_events(frame_buffer):
+    """Apply all segment decisions received since the previous capture."""
+    while True:
+        try:
+            movement_state = movement_state_events.get_nowait()
+        except queue.Empty:
+            return
+
+        committed, _discarded = frame_buffer.handle_state(movement_state)
+        _persist_buffered_frames(committed)
+
+
+def _discard_queued_movement_events():
+    while True:
+        try:
+            movement_state_events.get_nowait()
+        except queue.Empty:
+            return
+
+
 def _auto_save_loop():
-    """Auto-save while detection and a fresh direction flag are active."""
+    """Buffer JPEGs in RAM and persist only confirmed-forward segments."""
+    frame_buffer = SegmentFrameBuffer(MAX_BUFFERED_FRAMES)
+    overflow_drops = 0
+
     while True:
         auto_save_wakeup.wait(timeout=AUTO_SAVE_INTERVAL)
         auto_save_wakeup.clear()
@@ -534,47 +626,57 @@ def _auto_save_loop():
         if (
             not snapshot["auto_save"]
             or not snapshot["detecting"]
-            or not _direction_allows_auto_save(snapshot)
         ):
+            frame_buffer.clear()
+            _discard_queued_movement_events()
             continue
 
-        jpeg = _grab_frame_bytes()
-        if jpeg is None:
-            app.logger.warning("Auto-save skipped: MJPEG frame unavailable")
-            continue
+        # A state event classifies every frame gathered since the previous
+        # accepted 0.5 m position. "forward" releases that segment; reverse,
+        # stationary, and initialization events discard it.
+        _apply_movement_events(frame_buffer)
 
-        # Re-check after the blocking frame read so state changes prevent a late save.
         snapshot = _state_snapshot()
         if (
             not snapshot["auto_save"]
             or not snapshot["detecting"]
             or snapshot["last_updated"] is None
-            or not _direction_allows_auto_save(snapshot)
         ):
+            frame_buffer.clear()
             continue
 
-        frame_path = None
-        try:
-            with storage_lock:
-                snapshot = _state_snapshot()
-                if (
-                    not snapshot["auto_save"]
-                    or not snapshot["detecting"]
-                    or snapshot["last_updated"] is None
-                    or not _direction_allows_auto_save(snapshot)
-                ):
-                    continue
-                snapshot["last_updated"] = datetime.datetime.now(
-                    datetime.timezone.utc
-                ).isoformat()
-                frame_filename, frame_path = _write_frame(
-                    jpeg, snapshot["latitude"], snapshot["longitude"]
+        jpeg = _grab_frame_bytes()
+        if jpeg is None:
+            app.logger.warning(
+                "Auto-save buffer skipped: MJPEG frame unavailable"
+            )
+            continue
+
+        # A GNSS event can arrive during the blocking frame read. Apply it
+        # before adding the newly obtained frame so reversal candidates cannot
+        # be released with the preceding forward segment.
+        _apply_movement_events(frame_buffer)
+
+        snapshot = _state_snapshot()
+        if (
+            not snapshot["auto_save"]
+            or not snapshot["detecting"]
+            or snapshot["last_updated"] is None
+        ):
+            frame_buffer.clear()
+            continue
+
+        snapshot["last_updated"] = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat()
+        if frame_buffer.add((jpeg, snapshot)) is not None:
+            overflow_drops += 1
+            if overflow_drops == 1 or overflow_drops % 100 == 0:
+                app.logger.warning(
+                    "RAM frame buffer full; discarded %d oldest "
+                    "unclassified frame(s)",
+                    overflow_drops,
                 )
-                _store_history(snapshot, frame_filename)
-        except (OSError, sqlite3.Error) as exc:
-            if frame_path and os.path.exists(frame_path):
-                os.unlink(frame_path)
-            app.logger.error("Auto-save failed: %s", exc)
 
 
 # Flask app
@@ -766,11 +868,28 @@ def shutdown_device():
 
 @app.route("/api/save", methods=["POST"])
 def save_frame():
+    snapshot = _state_snapshot()
+    if not _direction_allows_auto_save(snapshot):
+        return jsonify({
+            "success": False,
+            "message": (
+                "image saving is allowed only during confirmed "
+                "forward movement"
+            ),
+        }), 409
+
     with storage_lock:
         jpeg = _grab_frame_bytes()
         if jpeg is None:
             return jsonify({"success": False, "message": "could not grab frame"}), 500
         snapshot = _state_snapshot()
+        if not _direction_allows_auto_save(snapshot):
+            return jsonify({
+                "success": False,
+                "message": (
+                    "movement changed before the image could be saved"
+                ),
+            }), 409
         filename, _path = _write_frame(
             jpeg, snapshot["latitude"], snapshot["longitude"]
         )

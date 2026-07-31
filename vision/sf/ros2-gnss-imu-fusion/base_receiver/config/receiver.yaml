@@ -12,8 +12,11 @@ gnss_enu:
     fix_topic: /receiver/fix # NavSatFix input used for ENU conversion and movement detection.
     output_topic: /gps/enu_position # PointStamped output containing local East, North, Up position.
     frame_id: enu # ROS frame ID assigned to the ENU position output.
-    is_forward_topic: /gnss/is_forward # Boolean output indicating recent movement toward geographic north.
-    is_backward_topic: /gnss/is_backward # Boolean output indicating recent movement toward geographic south.
-    movement_threshold_m: 0.2 # North/south displacement required to register movement, in metres.
+    is_forward_topic: /gnss/is_forward # True only for confirmed forward travel.
+    is_backward_topic: /gnss/is_backward # True only for confirmed reversing.
+    movement_state_topic: /gnss/movement_state # Segment event used to gate image persistence.
+    movement_threshold_m: 0.5 # Two-dimensional displacement required to accept a movement vector.
+    reversal_angle_deg: 150.0 # Minimum change from the confirmed direction to suspect a reversal.
+    direction_consistency_deg: 30.0 # Maximum difference between the two confirmation vectors.
     stationary_timeout_s: 5.0 # Seconds without threshold-crossing movement before declaring stationary.
     direction_stale_timeout: 3.0 # Seconds without a valid GNSS fix before clearing direction and its reference.

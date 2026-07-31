@@ -275,7 +275,28 @@ http://<host-ip>:8080/          ← MJPEG live stream
 ```
 
 Saved frames are written to `./vision/ai/saved_frames/` on the host (mounted into the container at `/saved_frames`).
-Live counts update continuously in the dashboard. They are persisted when `POST /api/save_count` is called, **Save current count** is pressed, or optional automatic saving is enabled. Automatic saving stores a paired frame and count every 0.5 seconds while detection runs; stopping detection pauses it. Saved history lives in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
+Live counts update continuously in the dashboard. They are persisted when `POST /api/save_count` is called, **Save current count** is pressed, or optional automatic saving is enabled.
+
+Automatic image saving is gated by `/gnss/movement_state`. JPEGs are sampled
+every `AUTO_SAVE_INTERVAL` but remain only in a capped RAM buffer until their
+0.5 m movement segment is classified:
+
+- `forward` writes the buffered images and count records to persistent storage.
+- `reverse_suspected`, `reversing`, `stationary`, and `initializing` discard
+  the buffered images.
+- `forward_suspected` keeps the images in RAM until a second forward vector
+  confirms or rejects them.
+
+The first accepted GNSS movement is assumed forward. `MAX_BUFFERED_FRAMES`
+defaults to `240`; when the buffer is full, the oldest unclassified image is
+discarded rather than written. Stopping detection or disabling auto-save also
+clears the RAM buffer. The manual `POST /api/save` endpoint returns `409` unless
+the latest fresh movement state is confirmed forward.
+
+Saved history lives in `/saved_frames/count_history.db`, so it remains
+available after a page refresh or container restart. The dashboard table is
+paginated so every stored sample remains viewable without making the page
+progressively slower.
 
 > Automatic saving can create up to 172,800 JPEG files per day. Keep it disabled when it is not required and monitor free disk space.
 
@@ -296,7 +317,7 @@ Base URL: `http://<host-ip>:8090`
 | `POST` | `/api/save_count` | None | Saved record ID, time, counts, and total | Save exactly one current live-count snapshot to SQLite |
 | `POST` | `/api/auto_save` | JSON: `{"enabled":true}` | Mode, message, and `interval_seconds` | Enable or disable paired frame-and-count saving while detection runs |
 | `GET` | `/api/history` | Query: `limit` (1–5000), `offset` (≥0) | Paginated history object | Read manually saved counts, newest first |
-| `POST` | `/api/save` | None | `{"success":true,"filename":"frame_....jpg"}` | Save the current MJPEG frame as JPEG |
+| `POST` | `/api/save` | None | `{"success":true,"filename":"frame_....jpg"}` | Save the current MJPEG frame only when movement is confirmed forward |
 | `GET` | `/api/images` | None | Array of saved-image metadata | List saved JPEG frames |
 | `DELETE` | `/api/images/{filename}` | Filename in URL | `{"success":true}` | Delete one saved JPEG frame |
 | `DELETE` | `/api/data` | None | Numbers of deleted records and images | Disable auto-save and permanently clear all count history and JPEG frames |
@@ -315,6 +336,7 @@ The `/api/status` endpoint and WebSocket messages share these fields:
 | `detecting` | boolean | Whether TensorRT inference is running |
 | `is_track` | boolean | `true` = cumulative unique tracking; `false` = per-frame counting |
 | `auto_save` | boolean | Whether paired frame-and-count automatic saving is enabled |
+| `movement_state` | string/null | Latest GNSS segment state used by the image-saving gate |
 | `last_updated` | string/null | ISO-8601 time of the latest live count |
 | `mjpeg_port` | integer | MJPEG port; present only in `/api/status` |
 

@@ -28,7 +28,9 @@ services:
       - GNSS_STALE_TIMEOUT=3.0
       - FORWARD_TOPIC=/gnss/is_forward
       - BACKWARD_TOPIC=/gnss/is_backward
+      - MOVEMENT_STATE_TOPIC=/gnss/movement_state
       - DIRECTION_STALE_TIMEOUT=3.0
+      - MAX_BUFFERED_FRAMES=240
     devices:
       - /dev/video0:/dev/video0
       - /dev/video1:/dev/video1

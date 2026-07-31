@@ -20,4 +20,5 @@
 !/launch
 !/config
 !/web_server
+!/test
 !/*.py

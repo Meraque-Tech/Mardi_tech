@@ -1,5 +1,6 @@
 """Convert GNSS fixes to local ENU displacement from the first valid fix."""
 
+from dataclasses import dataclass
 import math
 import time
 
@@ -8,7 +9,7 @@ import pymap3d
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 
 
 def is_valid_fix(msg) -> bool:
@@ -28,16 +29,38 @@ def _zero_if_negligible(value: float, tolerance: float = 1e-9) -> float:
     return 0.0 if abs(value) < tolerance else float(value)
 
 
+@dataclass(frozen=True)
+class DirectionUpdate:
+    """Result of processing one ENU position."""
+
+    state: str
+    is_forward: bool
+    is_backward: bool
+    segment_accepted: bool
+    state_changed: bool
+
+
 class MovementDirectionTracker:
-    """Track recent north/south movement independently of the ENU origin."""
+    """Infer travel direction from consecutive two-dimensional vectors."""
+
+    INITIALIZING = "initializing"
+    FORWARD = "forward"
+    REVERSE_SUSPECTED = "reverse_suspected"
+    REVERSING = "reversing"
+    FORWARD_SUSPECTED = "forward_suspected"
+    STATIONARY = "stationary"
 
     def __init__(
         self,
         movement_threshold_m: float,
         stationary_timeout_s: float,
+        reversal_angle_deg: float = 150.0,
+        direction_consistency_deg: float = 30.0,
     ) -> None:
         self.movement_threshold_m = float(movement_threshold_m)
         self.stationary_timeout_s = float(stationary_timeout_s)
+        self.reversal_angle_deg = float(reversal_angle_deg)
+        self.direction_consistency_deg = float(direction_consistency_deg)
         if (
             not math.isfinite(self.movement_threshold_m)
             or self.movement_threshold_m <= 0.0
@@ -52,66 +75,176 @@ class MovementDirectionTracker:
             raise ValueError(
                 "stationary_timeout_s must be finite and greater than zero"
             )
+        if (
+            not math.isfinite(self.reversal_angle_deg)
+            or not 90.0 < self.reversal_angle_deg < 180.0
+        ):
+            raise ValueError(
+                "reversal_angle_deg must be finite and between 90 and 180"
+            )
+        if (
+            not math.isfinite(self.direction_consistency_deg)
+            or not 0.0 <= self.direction_consistency_deg < 90.0
+        ):
+            raise ValueError(
+                "direction_consistency_deg must be finite and in [0, 90)"
+            )
 
-        self.reference_north = None
+        self.reference_position = None
+        self.travel_vector = None
+        self.candidate_vector = None
+        self.state = self.INITIALIZING
+        self.motion_active = False
         self.last_motion_monotonic = None
-        self.is_forward = False
-        self.is_backward = False
 
     @property
     def direction(self):
         """Return mutually exclusive forward/backward flags."""
-        return self.is_forward, self.is_backward
+        return (
+            self.motion_active and self.state == self.FORWARD,
+            self.motion_active and self.state == self.REVERSING,
+        )
 
-    def update(self, north: float, now_monotonic: float):
-        """Update direction from a valid north position and monotonic time."""
+    @property
+    def reported_state(self) -> str:
+        """Return the externally visible movement state."""
+        if self.state == self.INITIALIZING:
+            return self.INITIALIZING
+        if not self.motion_active:
+            return self.STATIONARY
+        return self.state
+
+    @staticmethod
+    def _angle_degrees(first, second) -> float:
+        first_length = math.hypot(*first)
+        second_length = math.hypot(*second)
+        cosine = (
+            first[0] * second[0] + first[1] * second[1]
+        ) / (first_length * second_length)
+        return math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
+
+    def _snapshot(
+        self,
+        segment_accepted: bool,
+        state_changed: bool = False,
+    ) -> DirectionUpdate:
+        is_forward, is_backward = self.direction
+        return DirectionUpdate(
+            self.reported_state,
+            is_forward,
+            is_backward,
+            segment_accepted,
+            state_changed,
+        )
+
+    def update(
+        self,
+        east: float,
+        north: float,
+        now_monotonic: float,
+    ) -> DirectionUpdate:
+        """Update direction from a valid East/North position and time."""
+        east = float(east)
         north = float(north)
         now_monotonic = float(now_monotonic)
-        if not math.isfinite(north):
-            raise ValueError("north position must be finite")
+        if not math.isfinite(east) or not math.isfinite(north):
+            raise ValueError("East/North positions must be finite")
         if not math.isfinite(now_monotonic):
             raise ValueError("monotonic time must be finite")
 
-        if self.reference_north is None:
-            self.reference_north = north
-            return self.direction
+        position = (east, north)
+        if self.reference_position is None:
+            self.reference_position = position
+            return self._snapshot(False)
 
-        delta_north = north - self.reference_north
-        reached_forward_threshold = (
-            delta_north >= self.movement_threshold_m
-            or math.isclose(
-                delta_north,
-                self.movement_threshold_m,
-                rel_tol=1e-9,
-                abs_tol=1e-9,
-            )
+        vector = (
+            position[0] - self.reference_position[0],
+            position[1] - self.reference_position[1],
         )
-        reached_backward_threshold = (
-            delta_north <= -self.movement_threshold_m
-            or math.isclose(
-                delta_north,
-                -self.movement_threshold_m,
-                rel_tol=1e-9,
-                abs_tol=1e-9,
-            )
-        )
-        if reached_forward_threshold:
-            self.reference_north = north
-            self.last_motion_monotonic = now_monotonic
-            self.is_forward = True
-            self.is_backward = False
-        elif reached_backward_threshold:
-            self.reference_north = north
-            self.last_motion_monotonic = now_monotonic
-            self.is_forward = False
-            self.is_backward = True
-        else:
-            self.clear_if_stationary(now_monotonic)
+        if (
+            math.hypot(*vector) + 1e-9
+            < self.movement_threshold_m
+        ):
+            became_stationary = self.clear_if_stationary(now_monotonic)
+            return self._snapshot(False, became_stationary)
 
-        return self.direction
+        self.reference_position = position
+        self.last_motion_monotonic = now_monotonic
+        self.motion_active = True
+
+        previous_state = self.state
+        if self.state == self.INITIALIZING:
+            # The agreed operating assumption: the first accepted movement is
+            # forward because no vehicle-heading or route direction is given.
+            self.state = self.FORWARD
+            self.travel_vector = vector
+        elif self.state == self.FORWARD:
+            if (
+                self._angle_degrees(vector, self.travel_vector)
+                >= self.reversal_angle_deg
+            ):
+                self.state = self.REVERSE_SUSPECTED
+                self.candidate_vector = vector
+            else:
+                self.travel_vector = vector
+        elif self.state == self.REVERSE_SUSPECTED:
+            candidate_angle = self._angle_degrees(
+                vector,
+                self.candidate_vector,
+            )
+            original_angle = self._angle_degrees(
+                vector,
+                self.travel_vector,
+            )
+            if (
+                candidate_angle <= self.direction_consistency_deg
+                and original_angle >= self.reversal_angle_deg
+            ):
+                self.state = self.REVERSING
+                self.travel_vector = vector
+                self.candidate_vector = None
+            elif original_angle < self.reversal_angle_deg:
+                self.state = self.FORWARD
+                self.travel_vector = vector
+                self.candidate_vector = None
+            else:
+                self.candidate_vector = vector
+        elif self.state == self.REVERSING:
+            if (
+                self._angle_degrees(vector, self.travel_vector)
+                >= self.reversal_angle_deg
+            ):
+                self.state = self.FORWARD_SUSPECTED
+                self.candidate_vector = vector
+            else:
+                self.travel_vector = vector
+        elif self.state == self.FORWARD_SUSPECTED:
+            candidate_angle = self._angle_degrees(
+                vector,
+                self.candidate_vector,
+            )
+            reverse_angle = self._angle_degrees(
+                vector,
+                self.travel_vector,
+            )
+            if (
+                candidate_angle <= self.direction_consistency_deg
+                and reverse_angle >= self.reversal_angle_deg
+            ):
+                self.state = self.FORWARD
+                self.travel_vector = vector
+                self.candidate_vector = None
+            elif reverse_angle < self.reversal_angle_deg:
+                self.state = self.REVERSING
+                self.travel_vector = vector
+                self.candidate_vector = None
+            else:
+                self.candidate_vector = vector
+
+        return self._snapshot(True, self.state != previous_state)
 
     def clear_if_stationary(self, now_monotonic: float) -> bool:
-        """Clear an active direction after the stationary timeout."""
+        """Deactivate flags after a stop while preserving travel direction."""
         if self.last_motion_monotonic is None:
             return False
         if (
@@ -120,18 +253,19 @@ class MovementDirectionTracker:
         ):
             return False
 
-        changed = self.is_forward or self.is_backward
+        changed = self.motion_active
         self.last_motion_monotonic = None
-        self.is_forward = False
-        self.is_backward = False
+        self.motion_active = False
         return changed
 
     def reset(self) -> None:
-        """Clear direction and require a new movement reference."""
-        self.reference_north = None
+        """Clear all state and assume the next accepted movement is forward."""
+        self.reference_position = None
+        self.travel_vector = None
+        self.candidate_vector = None
+        self.state = self.INITIALIZING
+        self.motion_active = False
         self.last_motion_monotonic = None
-        self.is_forward = False
-        self.is_backward = False
 
 
 class EnuProjector:
@@ -195,7 +329,13 @@ class GnssEnuNode(Node):
         self.declare_parameter("frame_id", "enu")
         self.declare_parameter("is_forward_topic", "/gnss/is_forward")
         self.declare_parameter("is_backward_topic", "/gnss/is_backward")
-        self.declare_parameter("movement_threshold_m", 0.20)
+        self.declare_parameter(
+            "movement_state_topic",
+            "/gnss/movement_state",
+        )
+        self.declare_parameter("movement_threshold_m", 0.50)
+        self.declare_parameter("reversal_angle_deg", 150.0)
+        self.declare_parameter("direction_consistency_deg", 30.0)
         self.declare_parameter("stationary_timeout_s", 5.0)
         self.declare_parameter("direction_stale_timeout", 3.0)
 
@@ -208,8 +348,17 @@ class GnssEnuNode(Node):
         self.is_backward_topic = str(
             self.get_parameter("is_backward_topic").value
         )
+        self.movement_state_topic = str(
+            self.get_parameter("movement_state_topic").value
+        )
         self.movement_threshold_m = float(
             self.get_parameter("movement_threshold_m").value
+        )
+        self.reversal_angle_deg = float(
+            self.get_parameter("reversal_angle_deg").value
+        )
+        self.direction_consistency_deg = float(
+            self.get_parameter("direction_consistency_deg").value
         )
         self.stationary_timeout_s = float(
             self.get_parameter("stationary_timeout_s").value
@@ -229,6 +378,8 @@ class GnssEnuNode(Node):
         self.direction_tracker = MovementDirectionTracker(
             self.movement_threshold_m,
             self.stationary_timeout_s,
+            self.reversal_angle_deg,
+            self.direction_consistency_deg,
         )
         self.invalid_fix_warning_active = False
         self.last_valid_enu_monotonic = None
@@ -248,6 +399,11 @@ class GnssEnuNode(Node):
             self.is_backward_topic,
             10,
         )
+        self.movement_state_pub = self.create_publisher(
+            String,
+            self.movement_state_topic,
+            10,
+        )
         self.fix_sub = self.create_subscription(
             NavSatFix,
             self.fix_topic,
@@ -263,16 +419,21 @@ class GnssEnuNode(Node):
             self._check_direction_timeouts,
         )
         self._publish_direction(False, False)
+        self._publish_movement_state(
+            self.direction_tracker.reported_state
+        )
 
         self.get_logger().info(
             f"Waiting for the first valid GNSS fix on {self.fix_topic}; "
             f"publishing ENU positions on {self.output_topic}"
         )
         self.get_logger().info(
-            f"Publishing recent north/south movement flags on "
-            f"{self.is_forward_topic} and {self.is_backward_topic} with a "
-            f"{self.movement_threshold_m:.3f} m threshold and "
-            f"{self.stationary_timeout_s:.3f} s stationary timeout"
+            f"Publishing inferred movement on {self.movement_state_topic}, "
+            f"{self.is_forward_topic}, and {self.is_backward_topic}; "
+            f"threshold={self.movement_threshold_m:.3f} m, "
+            f"reversal={self.reversal_angle_deg:.1f} degrees, "
+            f"confirmation tolerance="
+            f"{self.direction_consistency_deg:.1f} degrees"
         )
 
     def _fix_callback(self, msg: NavSatFix) -> None:
@@ -319,11 +480,20 @@ class GnssEnuNode(Node):
         position.point.y = north
         position.point.z = up
         self.position_pub.publish(position)
-        is_forward, is_backward = self.direction_tracker.update(
+        direction_update = self.direction_tracker.update(
+            east,
             north,
             now_monotonic,
         )
-        self._publish_direction(is_forward, is_backward)
+        self._publish_direction(
+            direction_update.is_forward,
+            direction_update.is_backward,
+        )
+        if (
+            direction_update.segment_accepted
+            or direction_update.state_changed
+        ):
+            self._publish_movement_state(direction_update.state)
 
     def _publish_direction(
         self,
@@ -337,10 +507,18 @@ class GnssEnuNode(Node):
         self.is_forward_pub.publish(forward_msg)
         self.is_backward_pub.publish(backward_msg)
 
+    def _publish_movement_state(self, state: str) -> None:
+        state_msg = String()
+        state_msg.data = state
+        self.movement_state_pub.publish(state_msg)
+
     def _invalidate_direction(self) -> None:
         self.last_valid_enu_monotonic = None
         self.direction_tracker.reset()
         self._publish_direction(False, False)
+        self._publish_movement_state(
+            self.direction_tracker.reported_state
+        )
 
     def _check_direction_timeouts(self) -> None:
         if self.last_valid_enu_monotonic is None:
@@ -359,10 +537,12 @@ class GnssEnuNode(Node):
 
         if self.direction_tracker.clear_if_stationary(now_monotonic):
             self.get_logger().info(
-                "No meaningful north/south movement detected; "
-                "clearing forward/backward flags"
+                "No threshold-crossing movement detected; marking stationary"
             )
             self._publish_direction(False, False)
+            self._publish_movement_state(
+                self.direction_tracker.reported_state
+            )
 
 
 def main(args=None) -> None:

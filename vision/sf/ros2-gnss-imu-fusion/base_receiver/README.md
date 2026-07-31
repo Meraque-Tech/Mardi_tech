@@ -12,10 +12,13 @@ publishes GNSS ROS 2 topics:
   `RTK_FLOAT`; `false` for all other states or stale PVT data.
 - `/gps/enu_position` (`geometry_msgs/msg/PointStamped`): displacement in
   metres from the first valid fix, with `x=East`, `y=North`, and `z=Up`.
-- `/gnss/is_forward` (`std_msgs/msg/Bool`): `true` after recent movement
-  toward geographic north.
-- `/gnss/is_backward` (`std_msgs/msg/Bool`): `true` after recent movement
-  toward geographic south.
+- `/gnss/is_forward` (`std_msgs/msg/Bool`): `true` during confirmed forward
+  travel.
+- `/gnss/is_backward` (`std_msgs/msg/Bool`): `true` during confirmed reverse
+  travel.
+- `/gnss/movement_state` (`std_msgs/msg/String`): an event for every accepted
+  movement segment. Values are `initializing`, `forward`,
+  `reverse_suspected`, `reversing`, `forward_suspected`, and `stationary`.
 
 The launch file starts two separate nodes: `base_receiver` publishes the raw
 GNSS topics, and `gnss_enu` converts `/receiver/fix` into a local ENU position.
@@ -63,26 +66,37 @@ ros2 topic echo /gnss/rtk_status
 ros2 topic echo /gps/enu_position
 ros2 topic echo /gnss/is_forward
 ros2 topic echo /gnss/is_backward
+ros2 topic echo /gnss/movement_state
 ```
 
 The first valid fix publishes approximately `(0, 0, 0)`. Positive `x` is east,
 positive `y` is north, and positive `z` is up. These are geographic directions,
 not vehicle-relative forward, left, or right.
 
-The first valid fix also establishes a separate movement reference and publishes
-both direction flags as `false`. North/south changes accumulate from that
-reference. Once the change reaches `movement_threshold_m`, the matching
-direction flag becomes `true`, the other flag becomes `false`, and the current
-north position becomes the next movement reference. If no threshold-crossing
-movement occurs for `stationary_timeout_s`, both flags become `false`. Invalid
-or stale fixes clear both flags and reset the movement reference, so the first
-valid fix after recovery is not classified as movement.
+The first valid fix establishes a movement reference and publishes both
+direction flags as `false`. East/North displacement accumulates from that
+reference. At the default `0.50 m` threshold, the complete two-dimensional
+movement vector is accepted and its endpoint becomes the next reference.
 
-The default `0.20 m` movement threshold is intended for sufficiently accurate
-RTK fixes. Configure a larger threshold or add accuracy filtering when normal
-GNSS position noise can exceed `0.20 m`. The flags describe recent geographic
-north/south movement, not vehicle-relative forward/reverse unless the vehicle
-is aligned north/south.
+Because no gear, vehicle-heading, or route-direction input is available, the
+first accepted vector is assumed to be forward. A change of at least
+`reversal_angle_deg` (default `150` degrees) creates a suspected reversal. A
+second vector within `direction_consistency_deg` (default `30` degrees) of the
+candidate is required to publish `reversing`. Returning to forward uses the
+same two-segment confirmation. Suspected states publish both Boolean flags as
+`false`.
+
+Gradual turns update the confirmed travel vector and remain forward. A single
+abrupt direction change can therefore be treated as a reversal candidate, even
+if it was physically caused by a very tight turn. GNSS positions alone cannot
+determine which way the vehicle body faces.
+
+If no threshold-crossing movement occurs for `stationary_timeout_s`, the
+Boolean flags become `false`, but the confirmed travel vector is retained so a
+reversal after a stop can still be detected. Invalid or stale fixes reset the
+tracker; after recovery, the first accepted vector is again assumed forward.
+Use a larger movement threshold when normal GNSS position noise can approach
+`0.50 m`.
 
 ## Docker Compose deployment
 
