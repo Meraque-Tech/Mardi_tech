@@ -1,19 +1,19 @@
 base_receiver:
   ros__parameters:
-    port: ""
-    baud: 115200
-    frame_id: gps
-    stale_timeout: 3.0
-    reconnect_interval: 2.0
-    rtk_status_topic: /gnss/rtk_status
+    port: "" # Serial device path; empty enables supported USB receiver auto-detection.
+    baud: 115200 # Serial communication speed in bits per second.
+    frame_id: gps # ROS frame ID assigned to published GNSS messages.
+    stale_timeout: 3.0 # Seconds without valid receiver data before its outputs are marked stale.
+    reconnect_interval: 2.0 # Seconds to wait between serial reconnection attempts.
+    rtk_status_topic: /gnss/rtk_status # Topic that reports whether the receiver has an RTK float or fixed solution.
 
 gnss_enu:
   ros__parameters:
-    fix_topic: /receiver/fix
-    output_topic: /gps/enu_position
-    frame_id: enu
-    is_forward_topic: /gnss/is_forward
-    is_backward_topic: /gnss/is_backward
-    movement_threshold_m: 0.2
-    stationary_timeout_s: 5.0
-    direction_stale_timeout: 3.0
+    fix_topic: /receiver/fix # NavSatFix input used for ENU conversion and movement detection.
+    output_topic: /gps/enu_position # PointStamped output containing local East, North, Up position.
+    frame_id: enu # ROS frame ID assigned to the ENU position output.
+    is_forward_topic: /gnss/is_forward # Boolean output indicating recent movement toward geographic north.
+    is_backward_topic: /gnss/is_backward # Boolean output indicating recent movement toward geographic south.
+    movement_threshold_m: 0.2 # North/south displacement required to register movement, in metres.
+    stationary_timeout_s: 5.0 # Seconds without threshold-crossing movement before declaring stationary.
+    direction_stale_timeout: 3.0 # Seconds without a valid GNSS fix before clearing direction and its reference.
