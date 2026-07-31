@@ -28,19 +28,110 @@ def _zero_if_negligible(value: float, tolerance: float = 1e-9) -> float:
     return 0.0 if abs(value) < tolerance else float(value)
 
 
-def direction_from_north(north: float, deadband: float):
-    """Classify north displacement into mutually exclusive direction flags."""
-    north = float(north)
-    deadband = float(deadband)
-    if not math.isfinite(north):
-        return False, False
-    if not math.isfinite(deadband) or deadband < 0.0:
-        raise ValueError("north deadband must be finite and non-negative")
-    if north > deadband:
-        return True, False
-    if north < -deadband:
-        return False, True
-    return False, False
+class MovementDirectionTracker:
+    """Track recent north/south movement independently of the ENU origin."""
+
+    def __init__(
+        self,
+        movement_threshold_m: float,
+        stationary_timeout_s: float,
+    ) -> None:
+        self.movement_threshold_m = float(movement_threshold_m)
+        self.stationary_timeout_s = float(stationary_timeout_s)
+        if (
+            not math.isfinite(self.movement_threshold_m)
+            or self.movement_threshold_m <= 0.0
+        ):
+            raise ValueError(
+                "movement_threshold_m must be finite and greater than zero"
+            )
+        if (
+            not math.isfinite(self.stationary_timeout_s)
+            or self.stationary_timeout_s <= 0.0
+        ):
+            raise ValueError(
+                "stationary_timeout_s must be finite and greater than zero"
+            )
+
+        self.reference_north = None
+        self.last_motion_monotonic = None
+        self.is_forward = False
+        self.is_backward = False
+
+    @property
+    def direction(self):
+        """Return mutually exclusive forward/backward flags."""
+        return self.is_forward, self.is_backward
+
+    def update(self, north: float, now_monotonic: float):
+        """Update direction from a valid north position and monotonic time."""
+        north = float(north)
+        now_monotonic = float(now_monotonic)
+        if not math.isfinite(north):
+            raise ValueError("north position must be finite")
+        if not math.isfinite(now_monotonic):
+            raise ValueError("monotonic time must be finite")
+
+        if self.reference_north is None:
+            self.reference_north = north
+            return self.direction
+
+        delta_north = north - self.reference_north
+        reached_forward_threshold = (
+            delta_north >= self.movement_threshold_m
+            or math.isclose(
+                delta_north,
+                self.movement_threshold_m,
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+        )
+        reached_backward_threshold = (
+            delta_north <= -self.movement_threshold_m
+            or math.isclose(
+                delta_north,
+                -self.movement_threshold_m,
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            )
+        )
+        if reached_forward_threshold:
+            self.reference_north = north
+            self.last_motion_monotonic = now_monotonic
+            self.is_forward = True
+            self.is_backward = False
+        elif reached_backward_threshold:
+            self.reference_north = north
+            self.last_motion_monotonic = now_monotonic
+            self.is_forward = False
+            self.is_backward = True
+        else:
+            self.clear_if_stationary(now_monotonic)
+
+        return self.direction
+
+    def clear_if_stationary(self, now_monotonic: float) -> bool:
+        """Clear an active direction after the stationary timeout."""
+        if self.last_motion_monotonic is None:
+            return False
+        if (
+            float(now_monotonic) - self.last_motion_monotonic
+            <= self.stationary_timeout_s
+        ):
+            return False
+
+        changed = self.is_forward or self.is_backward
+        self.last_motion_monotonic = None
+        self.is_forward = False
+        self.is_backward = False
+        return changed
+
+    def reset(self) -> None:
+        """Clear direction and require a new movement reference."""
+        self.reference_north = None
+        self.last_motion_monotonic = None
+        self.is_forward = False
+        self.is_backward = False
 
 
 class EnuProjector:
@@ -104,7 +195,8 @@ class GnssEnuNode(Node):
         self.declare_parameter("frame_id", "enu")
         self.declare_parameter("is_forward_topic", "/gnss/is_forward")
         self.declare_parameter("is_backward_topic", "/gnss/is_backward")
-        self.declare_parameter("north_deadband_m", 0.10)
+        self.declare_parameter("movement_threshold_m", 0.20)
+        self.declare_parameter("stationary_timeout_s", 5.0)
         self.declare_parameter("direction_stale_timeout", 3.0)
 
         self.fix_topic = str(self.get_parameter("fix_topic").value)
@@ -116,17 +208,15 @@ class GnssEnuNode(Node):
         self.is_backward_topic = str(
             self.get_parameter("is_backward_topic").value
         )
-        self.north_deadband_m = float(
-            self.get_parameter("north_deadband_m").value
+        self.movement_threshold_m = float(
+            self.get_parameter("movement_threshold_m").value
+        )
+        self.stationary_timeout_s = float(
+            self.get_parameter("stationary_timeout_s").value
         )
         self.direction_stale_timeout = float(
             self.get_parameter("direction_stale_timeout").value
         )
-        if (
-            not math.isfinite(self.north_deadband_m)
-            or self.north_deadband_m < 0.0
-        ):
-            raise ValueError("north_deadband_m must be finite and non-negative")
         if (
             not math.isfinite(self.direction_stale_timeout)
             or self.direction_stale_timeout <= 0.0
@@ -136,6 +226,10 @@ class GnssEnuNode(Node):
             )
 
         self.projector = EnuProjector()
+        self.direction_tracker = MovementDirectionTracker(
+            self.movement_threshold_m,
+            self.stationary_timeout_s,
+        )
         self.invalid_fix_warning_active = False
         self.last_valid_enu_monotonic = None
 
@@ -160,9 +254,13 @@ class GnssEnuNode(Node):
             self._fix_callback,
             10,
         )
-        self.direction_stale_timer = self.create_timer(
-            min(0.5, self.direction_stale_timeout),
-            self._clear_stale_direction,
+        self.direction_timer = self.create_timer(
+            min(
+                0.5,
+                self.stationary_timeout_s,
+                self.direction_stale_timeout,
+            ),
+            self._check_direction_timeouts,
         )
         self._publish_direction(False, False)
 
@@ -171,9 +269,10 @@ class GnssEnuNode(Node):
             f"publishing ENU positions on {self.output_topic}"
         )
         self.get_logger().info(
-            f"Publishing north-position flags on {self.is_forward_topic} "
-            f"and {self.is_backward_topic} with a "
-            f"{self.north_deadband_m:.3f} m deadband"
+            f"Publishing recent north/south movement flags on "
+            f"{self.is_forward_topic} and {self.is_backward_topic} with a "
+            f"{self.movement_threshold_m:.3f} m threshold and "
+            f"{self.stationary_timeout_s:.3f} s stationary timeout"
         )
 
     def _fix_callback(self, msg: NavSatFix) -> None:
@@ -200,7 +299,8 @@ class GnssEnuNode(Node):
 
         self.invalid_fix_warning_active = False
         east, north, up = enu
-        self.last_valid_enu_monotonic = time.monotonic()
+        now_monotonic = time.monotonic()
+        self.last_valid_enu_monotonic = now_monotonic
 
         if establishing_origin:
             origin_lat, origin_lon, origin_alt = self.projector.origin_geodetic
@@ -219,9 +319,9 @@ class GnssEnuNode(Node):
         position.point.y = north
         position.point.z = up
         self.position_pub.publish(position)
-        is_forward, is_backward = direction_from_north(
+        is_forward, is_backward = self.direction_tracker.update(
             north,
-            self.north_deadband_m,
+            now_monotonic,
         )
         self._publish_direction(is_forward, is_backward)
 
@@ -239,20 +339,30 @@ class GnssEnuNode(Node):
 
     def _invalidate_direction(self) -> None:
         self.last_valid_enu_monotonic = None
+        self.direction_tracker.reset()
         self._publish_direction(False, False)
 
-    def _clear_stale_direction(self) -> None:
+    def _check_direction_timeouts(self) -> None:
         if self.last_valid_enu_monotonic is None:
             return
+
+        now_monotonic = time.monotonic()
         if (
-            time.monotonic() - self.last_valid_enu_monotonic
-            <= self.direction_stale_timeout
+            now_monotonic - self.last_valid_enu_monotonic
+            > self.direction_stale_timeout
         ):
+            self.get_logger().warning(
+                "ENU direction data is stale; clearing forward/backward flags"
+            )
+            self._invalidate_direction()
             return
-        self.get_logger().warning(
-            "ENU direction data is stale; clearing forward/backward flags"
-        )
-        self._invalidate_direction()
+
+        if self.direction_tracker.clear_if_stationary(now_monotonic):
+            self.get_logger().info(
+                "No meaningful north/south movement detected; "
+                "clearing forward/backward flags"
+            )
+            self._publish_direction(False, False)
 
 
 def main(args=None) -> None:

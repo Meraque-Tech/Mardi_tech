@@ -14,5 +14,6 @@ gnss_enu:
     frame_id: enu
     is_forward_topic: /gnss/is_forward
     is_backward_topic: /gnss/is_backward
-    north_deadband_m: 1.0
+    movement_threshold_m: 0.2
+    stationary_timeout_s: 5.0
     direction_stale_timeout: 3.0
