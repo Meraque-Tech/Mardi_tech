@@ -240,6 +240,13 @@ def _state_snapshot():
     return snapshot
 
 
+def _direction_allows_auto_save(snapshot):
+    return bool(snapshot["direction_valid"]) and (
+        snapshot["is_forward"] is True
+        or snapshot["is_backward"] is True
+    )
+
+
 def _snapshot_payload(message_type="snapshot"):
     snapshot = _state_snapshot()
     snapshot["type"] = message_type
@@ -518,14 +525,17 @@ def _write_frame(jpeg, latitude=None, longitude=None):
 
 
 def _auto_save_loop():
-    """Save one matching frame and count while detection and auto-save are active."""
+    """Auto-save while detection and a fresh direction flag are active."""
     while True:
         auto_save_wakeup.wait(timeout=AUTO_SAVE_INTERVAL)
         auto_save_wakeup.clear()
 
-        with state_lock:
-            should_save = state["auto_save"] and state["detecting"]
-        if not should_save:
+        snapshot = _state_snapshot()
+        if (
+            not snapshot["auto_save"]
+            or not snapshot["detecting"]
+            or not _direction_allows_auto_save(snapshot)
+        ):
             continue
 
         jpeg = _grab_frame_bytes()
@@ -533,19 +543,30 @@ def _auto_save_loop():
             app.logger.warning("Auto-save skipped: MJPEG frame unavailable")
             continue
 
-        # Re-check after the blocking frame read so Stop prevents a late save.
-        with state_lock:
-            if not state["auto_save"] or not state["detecting"] or state["last_updated"] is None:
-                continue
+        # Re-check after the blocking frame read so state changes prevent a late save.
         snapshot = _state_snapshot()
+        if (
+            not snapshot["auto_save"]
+            or not snapshot["detecting"]
+            or snapshot["last_updated"] is None
+            or not _direction_allows_auto_save(snapshot)
+        ):
+            continue
 
-        snapshot["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         frame_path = None
         try:
             with storage_lock:
-                with state_lock:
-                    if not state["auto_save"] or not state["detecting"]:
-                        continue
+                snapshot = _state_snapshot()
+                if (
+                    not snapshot["auto_save"]
+                    or not snapshot["detecting"]
+                    or snapshot["last_updated"] is None
+                    or not _direction_allows_auto_save(snapshot)
+                ):
+                    continue
+                snapshot["last_updated"] = datetime.datetime.now(
+                    datetime.timezone.utc
+                ).isoformat()
                 frame_filename, frame_path = _write_frame(
                     jpeg, snapshot["latitude"], snapshot["longitude"]
                 )
