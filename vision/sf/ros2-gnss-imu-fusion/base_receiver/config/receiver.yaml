@@ -27,8 +27,8 @@ gnss_motion_classifier:
     headland_turn_completed_topic: /gnss/headland_turn_completed
     filter_window: 3 # Rolling median window for GNSS positions.
     segment_distance_m: 0.3 # Minimum filtered displacement before calculating course.
-    straight_min_distance_m: 2.0 # Straight travel needed to learn the forward reference.
-    turn_entry_deg: 30.0 # Course deviation that starts a turn candidate.
+    straight_min_distance_m: 1.5 # Straight travel needed to learn the forward reference.
+    turn_entry_deg: 45.0 # Course deviation that starts a turn candidate.
     turn_completion_min_deg: 150.0 # Minimum final course change for a completed U-turn.
     turn_exit_straight_distance_m: 2.0 # Stable opposite travel needed to finish a turn.
     reverse_min_distance_m: 1.0 # Opposite along-row displacement needed for backtracking.
