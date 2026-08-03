@@ -32,7 +32,7 @@ class GnssMotionClassifierNode(Node):
             "turn_confirmation_segments": 3,
             "turn_completion_min_deg": 150.0,
             "turn_exit_straight_distance_m": 4.0,
-            "turn_timeout_s": 30.0,
+            "turn_timeout_s": 60.0,
             "turn_max_distance_m": 60.0,
             "reverse_min_distance_m": 1.0,
             "reverse_angle_deg": 135.0,
