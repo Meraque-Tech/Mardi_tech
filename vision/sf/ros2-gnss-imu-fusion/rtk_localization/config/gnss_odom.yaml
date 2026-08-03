@@ -1,0 +1,19 @@
+gnss_fix_enu_odom:
+  ros__parameters:
+    fix_topic: /receiver/fix
+    rtk_status_topic: /gnss/rtk_status
+    odom_topic: /gnss/odom
+    path_topic: /gnss/path
+
+    map_frame: map
+    base_frame: gnss_base_link
+
+    require_rtk: false
+    min_heading_distance: 0.5
+    heading_variance: 0.05
+    fallback_horizontal_variance: 1.0
+    fallback_vertical_variance: 4.0
+
+    two_d_mode: true
+    publish_tf: true
+    path_max_poses: 5000
