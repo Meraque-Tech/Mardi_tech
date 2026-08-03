@@ -124,6 +124,37 @@ than a semantic geographic headland. A similar U-turn elsewhere will also be
 classified as a headland turn. The initial defaults target RTK-quality fixes;
 increase the distance thresholds when position noise is larger.
 
+The standard configuration exposes the parameters that correspond most
+directly to observable vehicle behaviour:
+
+- `filter_window`, `segment_distance_m`, and `straight_min_distance_m` control
+  position smoothing and how quickly the row direction is learned.
+- `turn_entry_deg`, `turn_completion_min_deg`, and
+  `turn_exit_straight_distance_m` control turn detection and completion.
+- `reverse_angle_deg`, `reverse_min_distance_m`, and
+  `reverse_cross_track_m` control backtracking detection.
+- `stationary_timeout_s`, `stale_timeout_s`, and `max_speed_mps` control input
+  timeouts and implausible-position-jump rejection.
+
+The following advanced parameters use internal defaults and are intentionally
+omitted from `receiver.yaml`:
+
+| Parameter | Default | Purpose |
+| --- | ---: | --- |
+| `straight_course_spread_deg` | `12.0` | Maximum segment-course variation accepted as straight travel. |
+| `straight_cross_track_m` | `1.0` | Maximum line-fit deviation accepted while learning a row. |
+| `turn_abort_deg` | `15.0` | Cancels a turn candidate when its course returns near the learned row. |
+| `turn_confirmation_segments` | `3` | Consecutive deviating segments required to confirm a turn. |
+| `turn_timeout_s` | `30.0` | Maximum elapsed time allowed for a turn. |
+| `turn_max_distance_m` | `60.0` | Maximum trajectory distance allowed for a turn. |
+| `reverse_confirmation_segments` | `3` | Consecutive opposite segments required to confirm backtracking. |
+
+These remain declared ROS parameters and can be added to `receiver.yaml` when
+advanced tuning is necessary. Their thresholds are coupled: values must satisfy
+`turn_abort_deg < turn_entry_deg < reverse_angle_deg <
+turn_completion_min_deg < 180`. In addition, `stale_timeout_s` must be less
+than `stationary_timeout_s`.
+
 Run only the classifier against an existing fix publisher with:
 
 ```bash
