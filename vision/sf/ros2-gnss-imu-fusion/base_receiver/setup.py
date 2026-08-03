@@ -23,6 +23,7 @@ setup(
         "console_scripts": [
             "base_receiver = base_receiver.receiver_node:main",
             "gnss_enu = base_receiver.enu_node:main",
+            "gnss_motion_classifier = base_receiver.motion_node:main",
         ],
     },
 )

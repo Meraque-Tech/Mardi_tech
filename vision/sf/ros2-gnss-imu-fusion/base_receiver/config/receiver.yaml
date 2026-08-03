@@ -17,3 +17,30 @@ gnss_enu:
     movement_threshold_m: 0.2 # North/south displacement required to register movement, in metres.
     stationary_timeout_s: 5.0 # Seconds without threshold-crossing movement before declaring stationary.
     direction_stale_timeout: 3.0 # Seconds without a valid GNSS fix before clearing direction and its reference.
+
+gnss_motion_classifier:
+  ros__parameters:
+    fix_topic: /receiver/fix # NavSatFix input; only latitude and longitude are used.
+    motion_state_topic: /gnss/motion_state
+    is_backtracking_topic: /gnss/is_backtracking
+    is_headland_turning_topic: /gnss/is_headland_turning
+    headland_turn_completed_topic: /gnss/headland_turn_completed
+    filter_window: 5 # Rolling median window for GNSS positions.
+    segment_distance_m: 0.5 # Minimum filtered displacement before calculating course.
+    straight_min_distance_m: 7.0 # Straight travel needed to learn the forward reference.
+    straight_course_spread_deg: 12.0 # Maximum course variation while learning a row.
+    straight_cross_track_m: 1.0 # Maximum line-fit deviation for a straight row.
+    turn_entry_deg: 30.0 # Course deviation that starts a turn candidate.
+    turn_abort_deg: 15.0 # Candidate is cancelled after returning within this angle.
+    turn_confirmation_segments: 3 # Sustained deviating segments needed to confirm a turn.
+    turn_completion_min_deg: 150.0 # Minimum final course change for a completed U-turn.
+    turn_exit_straight_distance_m: 4.0 # Stable opposite travel needed to finish a turn.
+    turn_timeout_s: 30.0 # Maximum time allowed for a turn maneuver.
+    turn_max_distance_m: 60.0 # Maximum trajectory length allowed for a turn maneuver.
+    reverse_min_distance_m: 1.0 # Opposite along-row displacement needed for backtracking.
+    reverse_angle_deg: 135.0 # Minimum course difference for backtracking.
+    reverse_confirmation_segments: 3 # Opposite segments needed to confirm backtracking.
+    reverse_cross_track_m: 1.0 # Maximum departure from the learned row during backtracking.
+    stationary_timeout_s: 5.0 # No accepted displacement before declaring stationary.
+    stale_timeout_s: 3.0 # No lat/lon fixes before resetting learned state.
+    max_speed_mps: 10.0 # Reject position jumps faster than this plausible vehicle speed.

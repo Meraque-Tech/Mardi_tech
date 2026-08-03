@@ -51,6 +51,14 @@ def generate_launch_description():
         parameters=[config_file],
     )
 
+    motion_classifier_node = Node(
+        package="base_receiver",
+        executable="gnss_motion_classifier",
+        name="gnss_motion_classifier",
+        output="screen",
+        parameters=[config_file],
+    )
+
     def shutdown_when_node_exits(node, reason):
         return RegisterEventHandler(
             OnProcessExit(
@@ -63,7 +71,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "config_file",
             default_value=default_config,
-            description="ROS parameter file used by both receiver nodes",
+            description="ROS parameter file used by all receiver nodes",
         ),
         DeclareLaunchArgument(
             "port",
@@ -93,6 +101,11 @@ def generate_launch_description():
             enu_node,
             "gnss_enu exited",
         ),
+        shutdown_when_node_exits(
+            motion_classifier_node,
+            "gnss_motion_classifier exited",
+        ),
         receiver_node,
         enu_node,
+        motion_classifier_node,
     ])

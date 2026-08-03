@@ -16,9 +16,19 @@ publishes GNSS ROS 2 topics:
   toward geographic north.
 - `/gnss/is_backward` (`std_msgs/msg/Bool`): `true` after recent movement
   toward geographic south.
+- `/gnss/motion_state` (`std_msgs/msg/String`): lat/lon-only trajectory state:
+  `UNKNOWN`, `LEARNING`, `STATIONARY`, `FORWARD`, `BACKTRACKING`,
+  `TURN_CANDIDATE`, or `HEADLAND_TURNING`.
+- `/gnss/is_backtracking` (`std_msgs/msg/Bool`): `true` after sustained motion
+  opposite a recently learned straight path. This is not proof of reverse gear.
+- `/gnss/is_headland_turning` (`std_msgs/msg/Bool`): `true` during a confirmed
+  progressive course change after a straight approach.
+- `/gnss/headland_turn_completed` (`std_msgs/msg/Bool`): a one-update `true`
+  pulse after the course settles approximately opposite the approach course.
 
-The launch file starts two separate nodes: `base_receiver` publishes the raw
-GNSS topics, and `gnss_enu` converts `/receiver/fix` into a local ENU position.
+The launch file starts three separate nodes: `base_receiver` publishes the raw
+GNSS topics, `gnss_enu` converts `/receiver/fix` into a local ENU position, and
+`gnss_motion_classifier` classifies the two-dimensional lat/lon trajectory.
 The ENU origin remains fixed until `gnss_enu` restarts.
 
 Build and run from this workspace:
@@ -63,6 +73,10 @@ ros2 topic echo /gnss/rtk_status
 ros2 topic echo /gps/enu_position
 ros2 topic echo /gnss/is_forward
 ros2 topic echo /gnss/is_backward
+ros2 topic echo /gnss/motion_state
+ros2 topic echo /gnss/is_backtracking
+ros2 topic echo /gnss/is_headland_turning
+ros2 topic echo /gnss/headland_turn_completed
 ```
 
 The first valid fix publishes approximately `(0, 0, 0)`. Positive `x` is east,
@@ -84,13 +98,46 @@ GNSS position noise can exceed `0.20 m`. The flags describe recent geographic
 north/south movement, not vehicle-relative forward/reverse unless the vehicle
 is aligned north/south.
 
+## Lat/lon-only motion and headland-turn classification
+
+`gnss_motion_classifier` reads only the latitude and longitude fields from
+`/receiver/fix`. It projects them into a local two-dimensional metric frame,
+applies a rolling median, and waits for displacement of at least
+`segment_distance_m` before calculating a new course segment.
+
+After sufficiently straight travel over `straight_min_distance_m`, the node
+learns the current row direction. Sustained motion approximately opposite that
+direction and within `reverse_cross_track_m` of the learned line becomes
+`BACKTRACKING`. The term is deliberate: a single GNSS antenna cannot distinguish
+reverse gear from forward travel after the vehicle has turned around.
+
+A course deviation over `turn_entry_deg` first becomes `TURN_CANDIDATE`.
+Progressive deviation across `turn_confirmation_segments` changes the state to
+`HEADLAND_TURNING` and suppresses backtracking classification. After the course
+settles at least `turn_completion_min_deg` from the approach course for
+`turn_exit_straight_distance_m`, the node emits the completion pulse and learns
+the new row direction.
+
+This requires no boundary or row map. Consequently, it recognizes the
+trajectory pattern "straight row, large turn, opposite straight row" rather
+than a semantic geographic headland. A similar U-turn elsewhere will also be
+classified as a headland turn. The initial defaults target RTK-quality fixes;
+increase the distance thresholds when position noise is larger.
+
+Run only the classifier against an existing fix publisher with:
+
+```bash
+ros2 run base_receiver gnss_motion_classifier --ros-args \
+  --params-file install/base_receiver/share/base_receiver/config/receiver.yaml
+```
+
 ## Docker Compose deployment
 
-The Compose service builds a ROS 2 Humble image containing both nodes and starts
-them through `receiver.launch.py`. It uses host networking for ROS 2 discovery
-and host IPC for the default DDS shared-memory transport. It uses privileged
-device access so the receiver can auto-detect supported USB serial adapters by
-their VID/PID, matching the standalone receiver behavior.
+The Compose service builds a ROS 2 Humble image containing all three nodes and
+starts them through `receiver.launch.py`. It uses host networking for ROS 2
+discovery and host IPC for the default DDS shared-memory transport. It uses
+privileged device access so the receiver can auto-detect supported USB serial
+adapters by their VID/PID, matching the standalone receiver behavior.
 
 The deployment is intended for a Linux host with Docker Engine and Docker
 Compose v2:
