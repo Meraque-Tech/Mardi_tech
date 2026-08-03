@@ -12,10 +12,6 @@ publishes GNSS ROS 2 topics:
   `RTK_FLOAT`; `false` for all other states or stale PVT data.
 - `/gps/enu_position` (`geometry_msgs/msg/PointStamped`): displacement in
   metres from the first valid fix, with `x=East`, `y=North`, and `z=Up`.
-- `/gnss/is_forward` (`std_msgs/msg/Bool`): `true` after recent movement
-  toward geographic north.
-- `/gnss/is_backward` (`std_msgs/msg/Bool`): `true` after recent movement
-  toward geographic south.
 
 The launch file starts two separate nodes: `base_receiver` publishes the raw
 GNSS topics, and `gnss_enu` converts `/receiver/fix` into a local ENU position.
@@ -61,28 +57,11 @@ ros2 topic echo /receiver/fix
 ros2 topic echo /gnss/pvt
 ros2 topic echo /gnss/rtk_status
 ros2 topic echo /gps/enu_position
-ros2 topic echo /gnss/is_forward
-ros2 topic echo /gnss/is_backward
 ```
 
 The first valid fix publishes approximately `(0, 0, 0)`. Positive `x` is east,
 positive `y` is north, and positive `z` is up. These are geographic directions,
 not vehicle-relative forward, left, or right.
-
-The first valid fix also establishes a separate movement reference and publishes
-both direction flags as `false`. North/south changes accumulate from that
-reference. Once the change reaches `movement_threshold_m`, the matching
-direction flag becomes `true`, the other flag becomes `false`, and the current
-north position becomes the next movement reference. If no threshold-crossing
-movement occurs for `stationary_timeout_s`, both flags become `false`. Invalid
-or stale fixes clear both flags and reset the movement reference, so the first
-valid fix after recovery is not classified as movement.
-
-The default `0.20 m` movement threshold is intended for sufficiently accurate
-RTK fixes. Configure a larger threshold or add accuracy filtering when normal
-GNSS position noise can exceed `0.20 m`. The flags describe recent geographic
-north/south movement, not vehicle-relative forward/reverse unless the vehicle
-is aligned north/south.
 
 ## Docker Compose deployment
 
@@ -164,8 +143,6 @@ ros2 topic echo --once /receiver/fix
 ros2 topic echo --once /gnss/pvt
 ros2 topic echo --once /gnss/rtk_status
 ros2 topic echo --once /gps/enu_position
-ros2 topic echo --once /gnss/is_forward
-ros2 topic echo --once /gnss/is_backward
 ```
 
 Inspect container state with:

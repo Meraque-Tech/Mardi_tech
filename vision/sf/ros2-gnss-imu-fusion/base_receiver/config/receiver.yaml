@@ -9,11 +9,6 @@ base_receiver:
 
 gnss_enu:
   ros__parameters:
-    fix_topic: /receiver/fix # NavSatFix input used for ENU conversion and movement detection.
+    fix_topic: /receiver/fix # NavSatFix input used for ENU conversion.
     output_topic: /gps/enu_position # PointStamped output containing local East, North, Up position.
     frame_id: enu # ROS frame ID assigned to the ENU position output.
-    is_forward_topic: /gnss/is_forward # Boolean output indicating recent movement toward geographic north.
-    is_backward_topic: /gnss/is_backward # Boolean output indicating recent movement toward geographic south.
-    movement_threshold_m: 0.2 # North/south displacement required to register movement, in metres.
-    stationary_timeout_s: 5.0 # Seconds without threshold-crossing movement before declaring stationary.
-    direction_stale_timeout: 3.0 # Seconds without a valid GNSS fix before clearing direction and its reference.

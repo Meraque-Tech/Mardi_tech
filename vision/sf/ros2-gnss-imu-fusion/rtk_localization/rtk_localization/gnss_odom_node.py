@@ -1,6 +1,7 @@
 """Publish local ENU odometry from base_receiver NavSatFix messages."""
 
 import math
+import time
 from typing import Optional
 
 from geometry_msgs.msg import PoseStamped, TransformStamped
@@ -11,7 +12,11 @@ from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import Bool
 from tf2_ros import TransformBroadcaster
 
-from .enu_odometry import EnuCourseEstimator, valid_geodetic
+from .enu_odometry import (
+    EnuCourseEstimator,
+    PathDirectionTracker,
+    valid_geodetic,
+)
 
 
 UNOBSERVED_VARIANCE = 1.0e6
@@ -27,10 +32,16 @@ class GnssFixEnuOdomNode(Node):
         self.declare_parameter("rtk_status_topic", "/gnss/rtk_status")
         self.declare_parameter("odom_topic", "/gnss/odom")
         self.declare_parameter("path_topic", "/gnss/path")
+        self.declare_parameter("is_forward_topic", "/gnss/is_forward")
+        self.declare_parameter("is_backward_topic", "/gnss/is_backward")
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("base_frame", "gnss_base_link")
         self.declare_parameter("require_rtk", False)
         self.declare_parameter("min_heading_distance", 0.1)
+        self.declare_parameter("stationary_timeout_s", 5.0)
+        self.declare_parameter("direction_stale_timeout_s", 3.0)
+        self.declare_parameter("reversal_angle_deg", 150.0)
+        self.declare_parameter("direction_consistency_deg", 30.0)
         self.declare_parameter("heading_variance", 0.05)
         self.declare_parameter("fallback_horizontal_variance", 1.0)
         self.declare_parameter("fallback_vertical_variance", 4.0)
@@ -44,9 +55,24 @@ class GnssFixEnuOdomNode(Node):
         )
         self.odom_topic = str(self.get_parameter("odom_topic").value)
         self.path_topic = str(self.get_parameter("path_topic").value)
+        self.is_forward_topic = str(
+            self.get_parameter("is_forward_topic").value
+        )
+        self.is_backward_topic = str(
+            self.get_parameter("is_backward_topic").value
+        )
         self.map_frame = str(self.get_parameter("map_frame").value)
         self.base_frame = str(self.get_parameter("base_frame").value)
         self.require_rtk = bool(self.get_parameter("require_rtk").value)
+        self.min_heading_distance = self._positive_parameter(
+            "min_heading_distance"
+        )
+        self.stationary_timeout_s = self._positive_parameter(
+            "stationary_timeout_s"
+        )
+        self.direction_stale_timeout_s = self._positive_parameter(
+            "direction_stale_timeout_s"
+        )
         self.heading_variance = self._positive_parameter("heading_variance")
         self.fallback_horizontal_variance = self._positive_parameter(
             "fallback_horizontal_variance"
@@ -61,14 +87,31 @@ class GnssFixEnuOdomNode(Node):
             raise ValueError("path_max_poses must be at least 1")
 
         self.estimator = EnuCourseEstimator(
-            float(self.get_parameter("min_heading_distance").value)
+            self.min_heading_distance
+        )
+        self.direction_tracker = PathDirectionTracker(
+            self.min_heading_distance,
+            self.stationary_timeout_s,
+            float(self.get_parameter("reversal_angle_deg").value),
+            float(self.get_parameter("direction_consistency_deg").value),
         )
         self.rtk_active = False
         self._invalid_fix_warning_active = False
         self._rtk_wait_warning_active = False
+        self._last_valid_odom_monotonic: Optional[float] = None
 
         self.odom_pub = self.create_publisher(Odometry, self.odom_topic, 10)
         self.path_pub = self.create_publisher(Path, self.path_topic, 10)
+        self.is_forward_pub = self.create_publisher(
+            Bool,
+            self.is_forward_topic,
+            10,
+        )
+        self.is_backward_pub = self.create_publisher(
+            Bool,
+            self.is_backward_topic,
+            10,
+        )
         self.tf_broadcaster: Optional[TransformBroadcaster] = None
         if self.publish_tf:
             self.tf_broadcaster = TransformBroadcaster(self)
@@ -85,9 +128,18 @@ class GnssFixEnuOdomNode(Node):
             self._rtk_status_callback,
             10,
         )
+        self.direction_timer = self.create_timer(
+            min(
+                0.5,
+                self.stationary_timeout_s,
+                self.direction_stale_timeout_s,
+            ),
+            self._check_direction_timeouts,
+        )
 
         self.path = Path()
         self.path.header.frame_id = self.map_frame
+        self._publish_direction(False, False)
 
         self.get_logger().info(
             f"Waiting for GNSS fixes on {self.fix_topic}; publishing ENU "
@@ -96,6 +148,10 @@ class GnssFixEnuOdomNode(Node):
         self.get_logger().info(
             f"Frames: {self.map_frame} -> {self.base_frame}; "
             f"require_rtk={self.require_rtk}, publish_tf={self.publish_tf}"
+        )
+        self.get_logger().info(
+            f"Publishing path-based direction on {self.is_forward_topic} "
+            f"and {self.is_backward_topic}"
         )
 
     def _positive_parameter(self, name: str) -> float:
@@ -108,6 +164,8 @@ class GnssFixEnuOdomNode(Node):
         self.rtk_active = bool(msg.data)
         if self.rtk_active:
             self._rtk_wait_warning_active = False
+        elif self.require_rtk:
+            self._invalidate_direction()
 
     def _fix_callback(self, msg: NavSatFix) -> None:
         if not self._valid_fix(msg):
@@ -117,6 +175,7 @@ class GnssFixEnuOdomNode(Node):
                     "NavSatFix"
                 )
                 self._invalid_fix_warning_active = True
+            self._invalidate_direction()
             return
         self._invalid_fix_warning_active = False
 
@@ -126,6 +185,7 @@ class GnssFixEnuOdomNode(Node):
                     "Ignoring GNSS fixes until RTK float/fixed status is active"
                 )
                 self._rtk_wait_warning_active = True
+            self._invalidate_direction()
             return
 
         establishing_origin = self.estimator.origin is None
@@ -137,6 +197,7 @@ class GnssFixEnuOdomNode(Node):
             )
         except (TypeError, ValueError, OverflowError) as error:
             self.get_logger().error(f"GNSS coordinate conversion failed: {error}")
+            self._invalidate_direction()
             return
 
         if establishing_origin:
@@ -178,6 +239,15 @@ class GnssFixEnuOdomNode(Node):
             del self.path.poses[: len(self.path.poses) - self.path_max_poses]
         self.path_pub.publish(self.path)
 
+        now_monotonic = time.monotonic()
+        self._last_valid_odom_monotonic = now_monotonic
+        is_forward, is_backward = self.direction_tracker.update(
+            estimate.east,
+            estimate.north,
+            now_monotonic,
+        )
+        self._publish_direction(is_forward, is_backward)
+
         if self.tf_broadcaster is not None:
             transform = TransformStamped()
             transform.header = odom.header
@@ -187,6 +257,41 @@ class GnssFixEnuOdomNode(Node):
             transform.transform.translation.z = z_position
             transform.transform.rotation = odom.pose.pose.orientation
             self.tf_broadcaster.sendTransform(transform)
+
+    def _publish_direction(
+        self,
+        is_forward: bool,
+        is_backward: bool,
+    ) -> None:
+        forward = Bool()
+        forward.data = bool(is_forward)
+        backward = Bool()
+        backward.data = bool(is_backward)
+        self.is_forward_pub.publish(forward)
+        self.is_backward_pub.publish(backward)
+
+    def _invalidate_direction(self) -> None:
+        self._last_valid_odom_monotonic = None
+        self.direction_tracker.reset()
+        self._publish_direction(False, False)
+
+    def _check_direction_timeouts(self) -> None:
+        if self._last_valid_odom_monotonic is None:
+            return
+
+        now_monotonic = time.monotonic()
+        if (
+            now_monotonic - self._last_valid_odom_monotonic
+            > self.direction_stale_timeout_s
+        ):
+            self.get_logger().warning(
+                "GNSS odometry is stale; clearing direction flags"
+            )
+            self._invalidate_direction()
+            return
+
+        if self.direction_tracker.clear_if_stationary(now_monotonic):
+            self._publish_direction(False, False)
 
     @staticmethod
     def _valid_fix(msg: NavSatFix) -> bool:
