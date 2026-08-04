@@ -8,7 +8,7 @@ services:
       context: ./vision/sf
       dockerfile: Dockerfile.bwt901ble_imu
     command: >
-      ros2 launch bwt901ble_imu imu.launch.py
+      ros2 launch bwt901ble_imu imu_gps_raw.launch.py
     tty: true
     hostname: bwt901ble_imu
     user: "65534:65534"
