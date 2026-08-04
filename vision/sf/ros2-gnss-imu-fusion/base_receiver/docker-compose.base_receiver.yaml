@@ -16,10 +16,7 @@ services:
     group_add:
       - "20"
     command:
-      - ros2
-      - launch 
-      - base_receiver
-      - receiver.launch.py
+      - ros2 launch  base_receiver receiver.launch.py
 
 # Usage:
 #   docker compose -f docker-compose.base_receiver.yaml build
