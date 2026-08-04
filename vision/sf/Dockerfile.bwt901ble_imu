@@ -11,16 +11,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         bluez \
         dbus \
         python3-pip \
+        python3-pymap3d \
+        python3-serial \
+        ros-${ROS_DISTRO}-robot-localization \
     && python3 -m pip install --no-cache-dir 'bleak>=0.20' \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR ${AGV_WS}
 COPY ./bwt901ble_imu src/bwt901ble_imu
+COPY ./ros2-gnss-imu-fusion src/ros2-gnss-imu-fusion
 
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash \
     && colcon build \
-        --merge-install \
-        --packages-select bwt901ble_imu
+        --merge-install --symlink-install
 
 # Copy custom entrypoint
 COPY ./amr_entrypoint.bash /amr_entrypoint.bash
