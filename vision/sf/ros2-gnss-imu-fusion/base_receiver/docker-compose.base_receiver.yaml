@@ -31,8 +31,3 @@ services:
 #
 # Rebuild and recreate after Dockerfile changes:
 #   docker compose -f docker-compose.base_receiver.yaml up -d --build --force-recreate
-
-# on jetson: docker exec -it base_receiver bash
-# ros2 bag record -a
-# docker cp base_receiver:/ros2_ws/rosbag2_2026_08_03-02_29_59 ./rosbags
-# on local: scp -r mardi@100.85.58.71:/home/mardi/Mardi_tech/rosbags /home/aloy/Mardi_tech/
