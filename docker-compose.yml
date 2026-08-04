@@ -11,14 +11,10 @@ services:
       ros2 launch bwt901ble_imu imu_gps_raw.launch.py
     tty: true
     hostname: bwt901ble_imu
-    user: "65534:65534"
-    privileged: false
-    cap_drop:
-      - ALL
-    read_only: true
-    security_opt:
-      - apparmor=unconfined
-      - no-new-privileges:true
+    user: "0:0"
+    privileged: true
+    group_add:
+      - "20"
     network_mode: host
     ipc: host
     restart: always
