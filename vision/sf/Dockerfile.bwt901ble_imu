@@ -1,0 +1,31 @@
+FROM meraquetech/race_nav:humble.imu.dep AS base
+
+SHELL ["/bin/bash", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    ROS_DISTRO=humble \
+    AGV_WS=/opt/agv_ws \
+    DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bluez \
+        dbus \
+        python3-pip \
+    && python3 -m pip install --no-cache-dir 'bleak>=0.20' \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR ${AGV_WS}
+COPY ./bwt901ble_imu src/bwt901ble_imu
+
+RUN source /opt/ros/${ROS_DISTRO}/setup.bash \
+    && colcon build \
+        --merge-install \
+        --packages-select bwt901ble_imu
+
+# Copy custom entrypoint
+COPY ./amr_entrypoint.bash /amr_entrypoint.bash
+RUN chmod +x /amr_entrypoint.bash
+
+# Entrypoint
+ENTRYPOINT ["/amr_entrypoint.bash"]
+CMD ["ros2", "launch", "bwt901ble_imu", "imu.launch.py"]
