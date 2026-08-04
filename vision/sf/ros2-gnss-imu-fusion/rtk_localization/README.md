@@ -17,7 +17,7 @@ Published topics:
 - `/gnss/path` (`nav_msgs/msg/Path`)
 - `/gnss/is_forward` (`std_msgs/msg/Bool`)
 - `/gnss/is_backward` (`std_msgs/msg/Bool`)
-- TF `map -> gnss_base_link` when `publish_tf` is enabled.
+- TF `map -> base_link` when `publish_tf` is enabled.
 
 The first accepted fix establishes the fixed ENU origin. X is East, Y is
 North, and Z is Up. In the default two-dimensional mode, published Z is zero.
@@ -36,6 +36,11 @@ exclusive.
 This is the strongest inference possible from one GNSS antenna without vehicle
 heading or gear data. A tight U-turn that appears as two opposite path segments
 can still be indistinguishable from reversing.
+
+The default `base_link` position is the GNSS antenna position. This assumes the
+antenna and vehicle reference point are sufficiently close for visualization.
+An installation with a meaningful antenna offset should apply a calibrated
+offset before using this pose as the vehicle centre.
 
 ## Build and run
 
@@ -117,6 +122,13 @@ rviz2 -d "$(ros2 pkg prefix rtk_localization)/share/rtk_localization/rviz/gnss_o
 Start RViz while the bag is still playing so it receives the odometry and path
 messages.
 
+Verify the odometry child frame and transform with:
+
+```bash
+ros2 topic echo /gnss/odom --once
+ros2 run tf2_ros tf2_echo map base_link
+```
+
 ## Important parameters
 
 - `require_rtk`: reject otherwise-valid fixes until `/gnss/rtk_status` is true.
@@ -130,5 +142,5 @@ messages.
 - `direction_consistency_deg`: maximum difference between the two segments
   required to confirm a direction change.
 - `two_d_mode`: publish zero altitude and treat Z as unobserved.
-- `publish_tf`: broadcast `map -> gnss_base_link`.
+- `publish_tf`: broadcast `map -> base_link`.
 - `path_max_poses`: maximum number of poses retained in `/gnss/path`.

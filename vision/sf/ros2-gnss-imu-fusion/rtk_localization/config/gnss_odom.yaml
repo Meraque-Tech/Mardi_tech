@@ -8,10 +8,10 @@ gnss_fix_enu_odom:
     is_backward_topic: /gnss/is_backward
 
     map_frame: map
-    base_frame: gnss_base_link
+    base_frame: base_link
 
     require_rtk: false
-    min_heading_distance: 0.5
+    min_heading_distance: 1.0
     stationary_timeout_s: 5.0
     direction_stale_timeout_s: 3.0
     reversal_angle_deg: 150.0

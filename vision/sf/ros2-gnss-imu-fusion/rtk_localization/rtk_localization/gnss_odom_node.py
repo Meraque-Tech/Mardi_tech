@@ -35,7 +35,7 @@ class GnssFixEnuOdomNode(Node):
         self.declare_parameter("is_forward_topic", "/gnss/is_forward")
         self.declare_parameter("is_backward_topic", "/gnss/is_backward")
         self.declare_parameter("map_frame", "map")
-        self.declare_parameter("base_frame", "gnss_base_link")
+        self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("require_rtk", False)
         self.declare_parameter("min_heading_distance", 0.1)
         self.declare_parameter("stationary_timeout_s", 5.0)

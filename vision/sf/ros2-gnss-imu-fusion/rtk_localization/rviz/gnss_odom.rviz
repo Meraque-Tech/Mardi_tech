@@ -36,6 +36,9 @@ Visualization Manager:
       Frame Timeout: 15
       Marker Scale: 1
       Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
