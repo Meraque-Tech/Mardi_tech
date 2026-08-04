@@ -22,10 +22,6 @@ services:
     tmpfs:
       - /tmp
     volumes:
-      # rw so the node can power-cycle the BLE adapter via org.bluez
-      # (bluetoothctl power off/on) to clear stale BlueZ connection
-      # state; bluetoothd's own D-Bus policy still gates what the
-      # container's unprivileged user is allowed to do over this bus.
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:rw
       - ./cyclone_dds_profile.xml:/dds_ws/cyclone_dds_profile.xml:ro
       - /etc/timezone:/etc/timezone:ro
@@ -36,7 +32,30 @@ services:
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
       - CYCLONEDDS_URI=file:///dds_ws/cyclone_dds_profile.xml
 
-# docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
-
-
-# docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
+  rosbag_recorder:
+    image: meraquetech/race_nav:bwt901ble_imu.humble.jetson
+    container_name: rosbag_recorder
+    depends_on:
+      - bwt901ble_imu
+    network_mode: host
+    ipc: host
+    restart: always
+    user: "0:0"
+    tty: true
+    volumes:
+      - ./bags:/bags
+      - ./cyclone_dds_profile.xml:/dds_ws/cyclone_dds_profile.xml:ro
+    environment:
+      - HOME=/tmp
+      - ROS_HOME=/tmp/ros
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///dds_ws/cyclone_dds_profile.xml
+    command: >
+      bash -c "
+      sleep 10 &&
+      source /opt/ros/humble/setup.bash &&
+      ros2 bag record
+      -o /bags/imu_gps_$(date +%Y%m%d_%H%M%S)
+      /gnss/pvt
+      /imu/data
+      "
