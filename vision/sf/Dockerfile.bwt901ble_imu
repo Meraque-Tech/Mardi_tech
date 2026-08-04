@@ -29,3 +29,6 @@ RUN chmod +x /amr_entrypoint.bash
 # Entrypoint
 ENTRYPOINT ["/amr_entrypoint.bash"]
 CMD ["ros2", "launch", "bwt901ble_imu", "imu.launch.py"]
+
+# docker build -f Dockerfile.bwt901ble_imu -t meraquetech/race_nav:bwt901ble_imu.humble.jetson .
+# docker push meraquetech/race_nav:bwt901ble_imu.humble.jetson
