@@ -1,4 +1,4 @@
-FROM meraquetech/race_nav:humble.imu.dep AS base
+FROM meraquetech/race_nav:humble.imu.dep_jetson AS base
 
 SHELL ["/bin/bash", "-c"]
 
