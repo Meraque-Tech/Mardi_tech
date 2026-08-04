@@ -74,6 +74,49 @@ ros2 run rtk_localization gnss_pvt_enu_odom
 Despite that compatibility name, the node consumes `/receiver/fix`, not JSON
 from `/gnss/pvt`.
 
+### Run with the recorded rosbag
+
+From the `ros2-gnss-imu-fusion` workspace, build and start localization:
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-select rtk_localization --merge-install
+source install/setup.bash
+ros2 run rtk_localization gnss_pvt_enu_odom
+```
+
+In another terminal, replay only the input topics needed by localization:
+
+```bash
+ros2 bag play /home/aloy/Mardi_tech/rosbags/rosbag2_2026_08_03-07_13_15 \
+  --topics /receiver/fix /gnss/rtk_status
+```
+
+Restricting playback to these inputs prevents recorded `/gnss/is_forward` and
+`/gnss/is_backward` messages from conflicting with the flags recomputed by the
+running localization node.
+
+In a third terminal, start RViz:
+
+```bash
+source install/setup.bash
+rviz2
+```
+
+Use `map` as the fixed frame, then add these displays using **Add > By topic**:
+
+- `/gnss/odom` as an **Odometry** display.
+- `/gnss/path` as a **Path** display.
+
+Alternatively, load the supplied RViz configuration directly:
+
+```bash
+rviz2 -d "$(ros2 pkg prefix rtk_localization)/share/rtk_localization/rviz/gnss_odom.rviz"
+```
+
+Start RViz while the bag is still playing so it receives the odometry and path
+messages.
+
 ## Important parameters
 
 - `require_rtk`: reject otherwise-valid fixes until `/gnss/rtk_status` is true.
