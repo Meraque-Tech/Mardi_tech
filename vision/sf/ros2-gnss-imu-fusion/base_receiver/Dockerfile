@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG ROS_IMAGE=ros:humble-ros-base-jammy
+ARG ROS_IMAGE=meraquetech/race_nav:humble.imu.dep_jetson AS base
 
 FROM ${ROS_IMAGE} AS base
 

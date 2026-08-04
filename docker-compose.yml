@@ -1,0 +1,46 @@
+version: "3.3"
+
+services:
+  bwt901ble_imu:
+    image: meraquetech/race_nav:bwt901ble_imu.humble.jetson
+    container_name: bwt901ble_imu
+    build:
+      context: ./vision/sf
+      dockerfile: Dockerfile.bwt901ble_imu
+    command: >
+      ros2 launch bwt901ble_imu imu_gps_raw.launch.py
+    tty: true
+    hostname: bwt901ble_imu
+    user: "65534:65534"
+    privileged: false
+    cap_drop:
+      - ALL
+    read_only: true
+    security_opt:
+      - apparmor=unconfined
+      - no-new-privileges:true
+    network_mode: host
+    ipc: host
+    restart: always
+    stop_grace_period: 5s
+    tmpfs:
+      - /tmp
+    volumes:
+      # rw so the node can power-cycle the BLE adapter via org.bluez
+      # (bluetoothctl power off/on) to clear stale BlueZ connection
+      # state; bluetoothd's own D-Bus policy still gates what the
+      # container's unprivileged user is allowed to do over this bus.
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:rw
+      - ./cyclone_dds_profile.xml:/dds_ws/cyclone_dds_profile.xml:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - HOME=/tmp
+      - ROS_HOME=/tmp/ros
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///dds_ws/cyclone_dds_profile.xml
+
+# docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
+
+
+# docker-compose -f docker-compose.yolov8-trt-jetson-nano.yml build
