@@ -38,5 +38,6 @@ RUN source /opt/ros/${ROS_DISTRO}/setup.sh \
 #         && cmake .. && make -j \
 #         && sudo make install
 
+# sudo systemctl restart bluetooth
 # docker build -f Dockerfile.imu.dep -t meraquetech/race_nav:humble.imu.dep_jetson .
 # docker push meraquetech/race_nav:humble.imu.dep_jetson
