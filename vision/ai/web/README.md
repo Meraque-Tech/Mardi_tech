@@ -96,10 +96,14 @@ two-pixel minimum allowance for small boxes. Differences up to `Maximum SAM
 difference (%)` are reviewable SAM suggestions. Larger differences preserve
 YOLO and require manual review; they cannot be queued as SAM replacements. SAM
 replacements inside the review band must also pass confidence, overlap,
-coverage, center-shift, and area checks. Suggestions are never automatically
-applied, and reports created before the
-current prompt-mapping and difference-band safeguards must be rerun before SAM
-box corrections can be accepted.
+coverage, center-shift, area, and prompt-stability checks. `Shadow` mode
+(recommended) calculates strict automatic decisions without queueing them;
+`Automatic with audit` queues only strict candidates and requires sampled
+audit decisions to be reviewed before a corrected dataset can be created.
+`Manual review only` preserves the original review workflow. All corrected
+datasets are copy-on-write, and reports created before the current
+prompt-mapping, difference-band, and stability safeguards must be rerun before
+SAM box corrections can be accepted.
 
 ## Run With CUDA Container
 

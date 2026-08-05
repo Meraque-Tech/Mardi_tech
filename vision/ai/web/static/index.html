@@ -447,7 +447,58 @@
             <input id="annotation-qa-max-difference" type="number" min="0.5" max="100" step="0.5" value="25">
             <small class="field-note">Larger differences are manual-review only.</small>
           </label>
+          <label>
+            <span class="tooltip-label" tabindex="0" data-tooltip="Shadow calculates automatic decisions without queueing corrections. Automatic queues only strict high-confidence SAM replacements. Manual disables automatic queueing.">Auto-correction mode</span>
+            <select id="annotation-qa-auto-mode">
+              <option value="shadow" selected>Shadow (recommended)</option>
+              <option value="automatic">Automatic with audit</option>
+              <option value="manual">Manual review only</option>
+            </select>
+          </label>
+          <label>
+            <span class="tooltip-label" tabindex="0" data-tooltip="Sampled automatic decisions must be checked before a corrected dataset can be created.">Audit sample (%)</span>
+            <input id="annotation-qa-audit" type="number" min="0" max="100" step="0.5" value="5">
+            <small class="field-note">Audit automatic keep/replace decisions.</small>
+          </label>
         </div>
+
+        <details class="qa-policy-details">
+          <summary>Advanced stability and automatic-correction policy</summary>
+          <div class="grid four qa-policy-grid">
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Expand each YOLO box by this percentage for the second SAM prompt.">Prompt expansion (%)</span>
+              <input id="annotation-qa-prompt-expansion" type="number" min="0" max="50" step="0.5" value="8">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Shift the expanded prompt slightly to test SAM prompt stability.">Prompt jitter (%)</span>
+              <input id="annotation-qa-prompt-jitter" type="number" min="0" max="20" step="0.5" value="2">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Minimum pairwise IoU between SAM boxes produced by the three prompts.">Stability box IoU</span>
+              <input id="annotation-qa-stability-iou" type="number" min="0" max="1" step="0.01" value="0.90">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Maximum edge movement between prompt variants, relative to the YOLO box.">Stability edge max (%)</span>
+              <input id="annotation-qa-stability-edge" type="number" min="0" max="50" step="0.5" value="3">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Minimum SAM quality score for unattended replacement. This is stricter than the review threshold.">Auto quality minimum</span>
+              <input id="annotation-qa-auto-quality" type="number" min="0" max="1" step="0.01" value="0.85">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Minimum YOLO-to-SAM bounding-box IoU for unattended replacement.">Auto YOLO IoU minimum</span>
+              <input id="annotation-qa-auto-iou" type="number" min="0" max="1" step="0.01" value="0.70">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Maximum normalized center movement allowed for unattended replacement.">Auto center shift max</span>
+              <input id="annotation-qa-auto-center" type="number" min="0" max="1" step="0.01" value="0.10">
+            </label>
+            <label>
+              <span class="tooltip-label" tabindex="0" data-tooltip="Maximum overlap with a neighboring YOLO box allowed for unattended replacement.">Neighbor IoU max</span>
+              <input id="annotation-qa-auto-neighbor" type="number" min="0" max="1" step="0.01" value="0.15">
+            </label>
+          </div>
+        </details>
 
         <div class="annotation-qa-status-card" id="annotation-qa-status-card">
           <div>
@@ -1341,6 +1392,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=annotation-qa-review-simplified-20260706"></script>
+    <script src="/static/app.js?v=annotation-qa-policy-v4-20260805"></script>
   </body>
 </html>

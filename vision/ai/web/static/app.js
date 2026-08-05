@@ -73,7 +73,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-const ANNOTATION_QA_REPORT_VERSION = 3;
+const ANNOTATION_QA_REPORT_VERSION = 4;
 
 const STATUS_LABELS = {
   idle: "Idle",
@@ -2011,6 +2011,11 @@ function annotationQaAcceptedFixCount() {
   )).length;
 }
 
+function annotationQaPendingAuditCount() {
+  const issues = Array.isArray(state.annotationQaReport?.issues) ? state.annotationQaReport.issues : [];
+  return issues.filter((issue) => issue.audit_required && issue.audit_status === "pending").length;
+}
+
 function annotationQaFixCounts() {
   const issues = Array.isArray(state.annotationQaReport?.issues) ? state.annotationQaReport.issues : [];
   return issues.reduce((counts, issue) => {
@@ -2045,6 +2050,11 @@ function renderAnnotationQaFixSummary() {
     summary.textContent = "Queued SAM fixes use an older QA report. Rerun SAM QA to apply the maximum-difference safety gate before creating a corrected dataset.";
     return;
   }
+  const pendingAudits = annotationQaPendingAuditCount();
+  if (pendingAudits) {
+    summary.textContent = `${pendingAudits} sampled automatic decision${pendingAudits === 1 ? "" : "s"} require an audit before creating a corrected dataset.`;
+    return;
+  }
   const total = counts.box + counts.class;
   if (!total) {
     summary.textContent = state.annotationQaCorrectedDatasetYaml
@@ -2074,7 +2084,13 @@ function syncAnnotationQaActionStates() {
   $("stop-annotation-qa").disabled = !state.annotationQaRunning || state.annotationQaStopping;
   $("stop-annotation-qa").textContent = state.annotationQaStopping ? "Stopping..." : "Stop";
   $("stop-annotation-qa").setAttribute("aria-busy", String(state.annotationQaStopping));
-  ["annotation-qa-model", "annotation-qa-scope", "annotation-qa-preset", "annotation-qa-tolerance", "annotation-qa-max-difference"].forEach((id) => {
+  [
+    "annotation-qa-model", "annotation-qa-scope", "annotation-qa-preset", "annotation-qa-tolerance",
+    "annotation-qa-max-difference", "annotation-qa-auto-mode", "annotation-qa-audit",
+    "annotation-qa-prompt-expansion", "annotation-qa-prompt-jitter", "annotation-qa-stability-iou",
+    "annotation-qa-stability-edge", "annotation-qa-auto-quality", "annotation-qa-auto-iou",
+    "annotation-qa-auto-center", "annotation-qa-auto-neighbor",
+  ].forEach((id) => {
     $(id).disabled = !hasDataset || preparing || trainingLocked || testLocked || running;
   });
   const reportReady = Boolean(state.annotationQaJobId && state.annotationQaReport);
@@ -2082,6 +2098,7 @@ function syncAnnotationQaActionStates() {
   $("download-annotation-qa-json").disabled = !reportReady;
   $("apply-annotation-qa-fixes").disabled = !reportReady
     || annotationQaAcceptedFixCount() === 0
+    || annotationQaPendingAuditCount() > 0
     || annotationQaHasLegacySamFixes()
     || preparing
     || trainingLocked
@@ -2133,11 +2150,26 @@ function renderAnnotationQaSummary(summary = {}) {
       <div><span>Manual only</span><strong>${summary.large_disagreements || 0}</strong></div>
       <div><span>SAM available</span><strong>${summary.sam_replacements_available || 0}</strong></div>
       <div><span>SAM blocked</span><strong>${summary.sam_replacements_blocked || 0}</strong></div>
+      <div><span>Auto kept</span><strong>${summary.qa_decisions?.auto_keep_yolo || summary.yolo_boxes_accepted || 0}</strong></div>
+      <div><span>Auto replace</span><strong>${summary.qa_decisions?.auto_replace_sam || 0}</strong></div>
+      <div><span>Human review</span><strong>${summary.qa_decisions?.human_review || 0}</strong></div>
+      <div><span>Manual only</span><strong>${summary.qa_decisions?.manual_only || 0}</strong></div>
+      <div><span>Audits pending</span><strong>${summary.audits_pending || 0}</strong></div>
       <div><span>High</span><strong>${summary.high || 0}</strong></div>
       <div><span>Medium</span><strong>${summary.medium || 0}</strong></div>
       <div><span>Low</span><strong>${summary.low || 0}</strong></div>
     </div>
   `;
+}
+
+function annotationQaDecisionLabel(decision) {
+  const labels = {
+    auto_keep_yolo: "Auto kept YOLO",
+    auto_replace_sam: "Auto replace candidate",
+    human_review: "Human review",
+    manual_only: "Manual only",
+  };
+  return labels[String(decision || "")] || "Human review";
 }
 
 function annotationQaPreviewUrl(issue) {
@@ -2169,6 +2201,8 @@ function annotationQaIssueTypeLabel(issueType) {
     possibly_tight_box: "Possibly tight YOLO box",
     moderate_box_difference: "Moderate box difference",
     large_box_disagreement: "Large box disagreement",
+    unstable_sam_prompt: "Unstable SAM prompt result",
+    auto_keep_audit: "Automatic keep audit",
     empty_mask: "Empty SAM mask",
     sam_mapping_error: "SAM mapping error",
     duplicate_box: "Possible duplicate box",
@@ -2190,6 +2224,7 @@ function annotationQaIssueRows(issues) {
     const imageName = escapeHtml(issue.image_name || "image");
     const splitClass = escapeHtml(`${issue.split || ""} · ${issue.class_name || ""}`);
     const issueType = escapeHtml(annotationQaIssueTypeLabel(issue.issue_type));
+    const decision = escapeHtml(annotationQaDecisionLabel(issue.qa_decision));
     const issueId = escapeHtml(issue.issue_id);
     const severity = escapeHtml(annotationQaSeverityKey(issue));
     const thumb = previewUrl
@@ -2208,6 +2243,7 @@ function annotationQaIssueRows(issues) {
         </td>
         <td title="${issueType}">${issueType}</td>
         <td>${metricText(issue.score)}</td>
+        <td title="${decision}">${decision}</td>
         <td>
           <select data-qa-issue="${issueId}">
             ${["unreviewed", "fix_accepted", "needs_fix", "accepted", "false_positive", "ignored"].map((status) => (
@@ -2242,6 +2278,7 @@ function annotationQaIssueTable(issues, severity, limit = 30) {
               <th>Image</th>
               <th>Issue</th>
               <th>Score</th>
+              <th>Decision</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -2307,6 +2344,8 @@ function renderAnnotationQaJob(job) {
     labels_checked: job.labels_checked,
     box_tolerance_percent: job.box_tolerance_percent,
     sam_max_difference_percent: job.sam_max_difference_percent,
+    qa_decisions: job.summary?.qa_decisions,
+    audits_pending: job.summary?.audits_pending,
     high: job.high,
     medium: job.medium,
     low: job.low,
@@ -2385,6 +2424,38 @@ async function runAnnotationQa() {
     if (maximumDifference <= tolerance) {
       throw new Error("Maximum SAM difference must be greater than the YOLO box tolerance.");
     }
+    const mode = $("annotation-qa-auto-mode").value;
+    if (!["manual", "shadow", "automatic"].includes(mode)) {
+      throw new Error("Choose a valid automatic-correction mode.");
+    }
+    const policy = {
+      sam_prompt_expansion_percent: Number($("annotation-qa-prompt-expansion").value),
+      sam_prompt_jitter_percent: Number($("annotation-qa-prompt-jitter").value),
+      sam_stability_bbox_iou_min: Number($("annotation-qa-stability-iou").value),
+      sam_stability_edge_percent_max: Number($("annotation-qa-stability-edge").value),
+      sam_auto_quality_min: Number($("annotation-qa-auto-quality").value),
+      sam_auto_yolo_iou_min: Number($("annotation-qa-auto-iou").value),
+      sam_auto_center_shift_max: Number($("annotation-qa-auto-center").value),
+      sam_auto_neighbor_iou_max: Number($("annotation-qa-auto-neighbor").value),
+      auto_audit_percent: Number($("annotation-qa-audit").value),
+    };
+    const policyLimits = {
+      sam_prompt_expansion_percent: [0, 50],
+      sam_prompt_jitter_percent: [0, 20],
+      sam_stability_bbox_iou_min: [0, 1],
+      sam_stability_edge_percent_max: [0, 50],
+      sam_auto_quality_min: [0, 1],
+      sam_auto_yolo_iou_min: [0, 1],
+      sam_auto_center_shift_max: [0, 1],
+      sam_auto_neighbor_iou_max: [0, 1],
+      auto_audit_percent: [0, 100],
+    };
+    Object.entries(policyLimits).forEach(([key, limits]) => {
+      const value = policy[key];
+      if (!Number.isFinite(value) || value < limits[0] || value > limits[1]) {
+        throw new Error(`${key} must be between ${limits[0]} and ${limits[1]}.`);
+      }
+    });
     setMessage("Starting annotation QA...");
     const job = await apiJson("/api/annotation-qa/start", {
       method: "POST",
@@ -2395,6 +2466,8 @@ async function runAnnotationQa() {
         preset: $("annotation-qa-preset").value,
         box_tolerance_percent: tolerance,
         sam_max_difference_percent: maximumDifference,
+        auto_correction_mode: mode,
+        ...policy,
       }),
     });
     renderAnnotationQaJob(job);
@@ -2437,10 +2510,14 @@ async function markAnnotationQaIssue(issueId, status) {
       const issue = state.annotationQaReport.issues.find((item) => item.issue_id === issueId);
       if (issue) {
         issue.review_status = status;
+        if (issue.audit_required) {
+          issue.audit_status = status === "fix_accepted" ? "passed" : "failed";
+        }
         if (status !== "fix_accepted") {
           issue.accepted_fix = "";
           issue.accepted_class_id = null;
           issue.accepted_class_name = "";
+          issue.accepted_fix_source = "";
         }
       }
     }
@@ -2474,6 +2551,8 @@ async function acceptAnnotationQaSamBox(issueId) {
       const issue = state.annotationQaReport.issues.find((item) => item.issue_id === issueId);
       if (issue) {
         issue.accepted_fix = result.accepted_fix || "sam_box";
+        issue.accepted_fix_source = result.accepted_fix_source || issue.accepted_fix_source || "human";
+        issue.audit_status = result.audit_status || issue.audit_status || "not_required";
         issue.review_status = result.review_status || "fix_accepted";
         if (state.annotationQaActiveIssueId === issueId) {
           renderAnnotationQaReview(issue);
@@ -2578,11 +2657,19 @@ function annotationQaIssuesList() {
 }
 
 function annotationQaReviewIssuesList(currentIssue = null) {
-  const severity = state.annotationQaReviewSeverity || (currentIssue ? annotationQaSeverityKey(currentIssue) : "");
-  if (!severity) {
-    return annotationQaIssuesList();
+  const allIssues = annotationQaIssuesList();
+  if (currentIssue?.image) {
+    const sameImage = allIssues
+      .filter((issue) => issue.image === currentIssue.image)
+      .sort((left, right) => Number(left.label_row || 0) - Number(right.label_row || 0));
+    if (sameImage.length > 1) {
+      return sameImage;
+    }
   }
-  return annotationQaIssuesList().filter((issue) => annotationQaSeverityKey(issue) === severity);
+  const severity = state.annotationQaReviewSeverity || (currentIssue ? annotationQaSeverityKey(currentIssue) : "");
+  return severity
+    ? allIssues.filter((issue) => annotationQaSeverityKey(issue) === severity)
+    : allIssues;
 }
 
 function annotationQaIssueById(issueId) {
@@ -2689,6 +2776,12 @@ function annotationQaReviewSuggestion(issue) {
   if (type === "large_box_disagreement") {
     return "Automatic SAM replacement is blocked because the disagreement is too large. Preserve YOLO or send the annotation for manual correction.";
   }
+  if (type === "unstable_sam_prompt") {
+    return "SAM changed when the prompt was expanded or shifted. Keep YOLO or review the object manually.";
+  }
+  if (type === "auto_keep_audit") {
+    return "YOLO and SAM agree within tolerance. Confirm that the original YOLO box is correct for this audit sample.";
+  }
   return "Choose the annotation to keep, or send it to manual fix when neither box is reliable.";
 }
 
@@ -2733,17 +2826,32 @@ function annotationQaMetricSummaryText(issue) {
   if (metrics.sam_confidence !== null && metrics.sam_confidence !== undefined) {
     parts.push(`SAM confidence: ${(Number(metrics.sam_confidence) * 100).toFixed(1)}%`);
   }
+  const stability = metrics.prompt_stability;
+  if (stability) {
+    parts.push(`Prompt stability: ${stability.passed ? "passed" : "failed"} · bbox IoU ${Number(stability.minimum_bbox_iou || 0).toFixed(2)} · edge spread ${Number(stability.max_edge_spread_percent || 0).toFixed(1)}%`);
+  }
+  if (issue.qa_decision) {
+    parts.push(`Policy: ${annotationQaDecisionLabel(issue.qa_decision)}`);
+  }
+  if (Array.isArray(issue.decision_reasons) && issue.decision_reasons.length) {
+    parts.push(`Reason: ${issue.decision_reasons.join(", ").replace(/_/g, " ")}`);
+  }
+  if (issue.audit_required) {
+    parts.push(`Audit: ${issue.audit_status || "pending"}`);
+  }
   return parts.join(" · ");
 }
 
 function issueCanAcceptSamBox(issue) {
   const edgeDifferences = issue?.metrics?.edge_differences || {};
+  const promptStability = issue?.metrics?.prompt_stability || {};
   return issue?.auto_fix_eligible === true
     && issue?.quality_gate_passed === true
     && issue?.difference_band === "reviewable"
     && issue?.fix_type === "replace_box"
     && Array.isArray(issue.recommended_bbox)
     && issue.recommended_bbox.length === 4
+    && promptStability.passed !== false
     && edgeDifferences.within_tolerance === false
     && edgeDifferences.within_max_difference === true;
 }
@@ -2826,7 +2934,9 @@ function renderAnnotationQaReview(issue) {
   const classDetail = hasClassId ? `${classLabel} (ID ${issue.class_id})` : classLabel;
   $("qa-review-severity").className = `qa-severity ${severity}`;
   $("qa-review-severity").textContent = severity;
-  $("qa-review-title").textContent = issue.issue_type ? issue.issue_type.replace(/_/g, " ") : "Annotation QA Review";
+  $("qa-review-title").textContent = issue.issue_type
+    ? annotationQaIssueTypeLabel(issue.issue_type)
+    : "Annotation QA Review";
   $("qa-review-subtitle").textContent = `${issue.image_name || "image"} · ${issue.split || "split"} · ${issue.class_name || "class"}`;
   $("qa-review-subtitle").title = $("qa-review-subtitle").textContent;
   $("qa-review-status").value = issue.review_status || "unreviewed";
@@ -2862,7 +2972,9 @@ function renderAnnotationQaReview(issue) {
   const canAcceptSam = issueCanAcceptSamBox(issue);
   $("qa-review-accept-sam").disabled = !canAcceptSam;
   $("qa-review-accept-sam").textContent = issue.accepted_fix === "sam_box"
-    ? "SAM box queued"
+    ? issue.audit_required && issue.audit_status !== "passed"
+      ? "Confirm audited SAM box"
+      : "SAM box queued"
     : issue.difference_band === "large_disagreement"
       ? "SAM replacement blocked"
       : issue.difference_band === "reviewable" && !canAcceptSam

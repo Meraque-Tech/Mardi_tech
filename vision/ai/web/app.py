@@ -2,6 +2,7 @@
 """FastAPI web UI backend for YOLOv8 training."""
 
 import csv
+import hashlib
 import json
 import math
 import mimetypes
@@ -238,7 +239,7 @@ ANNOTATION_QA_REPORT_CSV_FILE = "qa_report.csv"
 ANNOTATION_QA_REVIEW_FILE = "review_state.json"
 ANNOTATION_QA_FIX_SUMMARY_FILE = "fix_summary.json"
 ANNOTATION_QA_MODEL_DEFAULT = os.getenv("SAM_QA_MODEL", "sam2.1_s.pt")
-ANNOTATION_QA_REPORT_VERSION = 3
+ANNOTATION_QA_REPORT_VERSION = 4
 ANNOTATION_QA_SAFE_MAPPING_VERSION = 2
 
 app = FastAPI(title="YOLOv8 Training UI")
@@ -301,6 +302,16 @@ class AnnotationQaRequest(BaseModel):
     preset: str = "balanced"
     box_tolerance_percent: float = Field(default=5.0, ge=0.0, le=50.0)
     sam_max_difference_percent: float = Field(default=25.0, ge=0.0, le=100.0)
+    auto_correction_mode: str = "shadow"
+    sam_prompt_expansion_percent: float = Field(default=8.0, ge=0.0, le=50.0)
+    sam_prompt_jitter_percent: float = Field(default=2.0, ge=0.0, le=20.0)
+    sam_stability_bbox_iou_min: float = Field(default=0.90, ge=0.0, le=1.0)
+    sam_stability_edge_percent_max: float = Field(default=3.0, ge=0.0, le=50.0)
+    sam_auto_quality_min: float = Field(default=0.85, ge=0.0, le=1.0)
+    sam_auto_yolo_iou_min: float = Field(default=0.70, ge=0.0, le=1.0)
+    sam_auto_center_shift_max: float = Field(default=0.10, ge=0.0, le=1.0)
+    sam_auto_neighbor_iou_max: float = Field(default=0.15, ge=0.0, le=1.0)
+    auto_audit_percent: float = Field(default=5.0, ge=0.0, le=100.0)
     max_images: Optional[int] = Field(default=None, ge=1)
     max_side: int = Field(default=1280, ge=320, le=4096)
 
@@ -4041,14 +4052,230 @@ def annotation_qa_difference_band(edge_differences: dict) -> str:
     return "large_disagreement"
 
 
+def annotation_qa_prompt_box(
+    box: tuple[int, int, int, int],
+    width: int,
+    height: int,
+    expansion_percent: float = 0.0,
+    shift_x_percent: float = 0.0,
+    shift_y_percent: float = 0.0,
+) -> tuple[int, int, int, int]:
+    box_width = max(1, box[2] - box[0])
+    box_height = max(1, box[3] - box[1])
+    expand_x = box_width * max(0.0, float(expansion_percent)) / 100
+    expand_y = box_height * max(0.0, float(expansion_percent)) / 100
+    shift_x = box_width * float(shift_x_percent) / 100
+    shift_y = box_height * float(shift_y_percent) / 100
+    x1 = max(0, min(width - 1, int(round(box[0] - expand_x + shift_x))))
+    y1 = max(0, min(height - 1, int(round(box[1] - expand_y + shift_y))))
+    x2 = max(x1 + 1, min(width, int(round(box[2] + expand_x + shift_x))))
+    y2 = max(y1 + 1, min(height, int(round(box[3] + expand_y + shift_y))))
+    return x1, y1, x2, y2
+
+
+def annotation_qa_prompt_plan(
+    labels: list[dict],
+    width: int,
+    height: int,
+    expansion_percent: float,
+    jitter_percent: float,
+) -> tuple[list[tuple[int, int, int, int]], list[dict]]:
+    prompts: list[tuple[int, int, int, int]] = []
+    references: list[dict] = []
+    for label_index, label in enumerate(labels):
+        original = tuple(label["bbox"])
+        direction = -1.0 if label_index % 2 else 1.0
+        variants = (
+            ("original", annotation_qa_prompt_box(original, width, height)),
+            ("expanded", annotation_qa_prompt_box(
+                original, width, height, expansion_percent,
+            )),
+            ("jittered", annotation_qa_prompt_box(
+                original, width, height, expansion_percent,
+                direction * jitter_percent, -direction * jitter_percent,
+            )),
+        )
+        for variant, prompt_box in variants:
+            references.append({
+                "label_index": label_index,
+                "label_row": label.get("row_index"),
+                "variant": variant,
+                "prompt_bbox": prompt_box,
+            })
+            prompts.append(prompt_box)
+    return prompts, references
+
+
+def annotation_qa_mask_iou(mask_a, mask_b) -> float:
+    import numpy as np
+
+    first = np.asarray(mask_a) > 0
+    second = np.asarray(mask_b) > 0
+    intersection = int(np.logical_and(first, second).sum())
+    union = int(np.logical_or(first, second).sum())
+    return intersection / union if union > 0 else 0.0
+
+
+def annotation_qa_prompt_stability(
+    candidates: list[dict],
+    yolo_box: tuple[int, int, int, int],
+    bbox_iou_min: float,
+    edge_percent_max: float,
+) -> dict:
+    expected_variants = {"original", "expanded", "jittered"}
+    valid = [candidate for candidate in candidates if candidate.get("bbox") is not None]
+    variants = {str(candidate.get("variant")) for candidate in valid}
+    complete = expected_variants.issubset(variants)
+    pairwise_bbox_ious = []
+    pairwise_mask_ious = []
+    for left in range(len(valid)):
+        for right in range(left + 1, len(valid)):
+            pairwise_bbox_ious.append(bbox_iou(valid[left]["bbox"], valid[right]["bbox"]))
+            if valid[left].get("mask") is not None and valid[right].get("mask") is not None:
+                pairwise_mask_ious.append(annotation_qa_mask_iou(valid[left]["mask"], valid[right]["mask"]))
+    yolo_width = max(1, yolo_box[2] - yolo_box[0])
+    yolo_height = max(1, yolo_box[3] - yolo_box[1])
+    edge_spreads = {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    if valid:
+        boxes = [candidate["bbox"] for candidate in valid]
+        edge_spreads = {
+            "left": (max(box[0] for box in boxes) - min(box[0] for box in boxes)) / yolo_width * 100,
+            "right": (max(box[2] for box in boxes) - min(box[2] for box in boxes)) / yolo_width * 100,
+            "top": (max(box[1] for box in boxes) - min(box[1] for box in boxes)) / yolo_height * 100,
+            "bottom": (max(box[3] for box in boxes) - min(box[3] for box in boxes)) / yolo_height * 100,
+        }
+    max_edge_spread = max(edge_spreads.values())
+    minimum_bbox_iou = min(pairwise_bbox_ious) if pairwise_bbox_ious else 0.0
+    minimum_mask_iou = min(pairwise_mask_ious) if pairwise_mask_ious else 0.0
+    confidences = [
+        float(candidate["confidence"])
+        for candidate in valid
+        if candidate.get("confidence") is not None
+    ]
+    confidence_complete = len(confidences) == len(valid) and complete
+    expanded_edge_clipped = False
+    for candidate in valid:
+        if candidate.get("variant") not in {"expanded", "jittered"}:
+            continue
+        prompt = candidate.get("prompt_bbox")
+        candidate_box = candidate.get("bbox")
+        if not prompt or not candidate_box:
+            continue
+        margin_x = max(2, int((prompt[2] - prompt[0]) * 0.02))
+        margin_y = max(2, int((prompt[3] - prompt[1]) * 0.02))
+        if any((
+            abs(candidate_box[0] - prompt[0]) <= margin_x,
+            abs(candidate_box[2] - prompt[2]) <= margin_x,
+            abs(candidate_box[1] - prompt[1]) <= margin_y,
+            abs(candidate_box[3] - prompt[3]) <= margin_y,
+        )):
+            expanded_edge_clipped = True
+            break
+    passed = (
+        complete
+        and minimum_bbox_iou >= float(bbox_iou_min)
+        and max_edge_spread <= float(edge_percent_max)
+    )
+    return {
+        "complete": complete,
+        "variants_expected": sorted(expected_variants),
+        "variants_available": sorted(variants),
+        "minimum_bbox_iou": round(minimum_bbox_iou, 4),
+        "minimum_mask_iou": round(minimum_mask_iou, 4),
+        "edge_spread_percent": {key: round(value, 4) for key, value in edge_spreads.items()},
+        "max_edge_spread_percent": round(max_edge_spread, 4),
+        "bbox_iou_minimum_required": round(float(bbox_iou_min), 4),
+        "edge_percent_maximum_allowed": round(float(edge_percent_max), 4),
+        "confidence_min": round(min(confidences), 4) if confidences else None,
+        "confidence_mean": round(sum(confidences) / len(confidences), 4) if confidences else None,
+        "confidence_complete": confidence_complete,
+        "expanded_edge_clipped": expanded_edge_clipped,
+        "passed": passed,
+    }
+
+
+def annotation_qa_select_candidate(candidates: list[dict]) -> Optional[dict]:
+    valid = [candidate for candidate in candidates if candidate.get("bbox") is not None]
+    if not valid:
+        return None
+    variant_priority = {"expanded": 2, "original": 1, "jittered": 0}
+    return max(
+        valid,
+        key=lambda candidate: (
+            float(candidate.get("confidence")) if candidate.get("confidence") is not None else -1.0,
+            variant_priority.get(str(candidate.get("variant")), -1),
+        ),
+    )
+
+
+def annotation_qa_max_neighbor_iou(labels: list[dict], label_index: int) -> float:
+    if label_index < 0 or label_index >= len(labels):
+        return 0.0
+    box = labels[label_index]["bbox"]
+    overlaps = [
+        bbox_iou(box, other["bbox"])
+        for index, other in enumerate(labels)
+        if index != label_index
+    ]
+    return max(overlaps) if overlaps else 0.0
+
+
+def annotation_qa_auto_gate(
+    *,
+    stability: dict,
+    sam_confidence: Optional[float],
+    bbox_overlap: float,
+    center_shift: float,
+    neighbor_iou: float,
+    quality_gate_passed: bool,
+    thresholds: dict,
+) -> tuple[bool, list[str]]:
+    reasons = []
+    if not quality_gate_passed:
+        reasons.append("review_quality_gate_failed")
+    if not stability.get("passed"):
+        reasons.append("prompt_stability_failed")
+    if stability.get("expanded_edge_clipped"):
+        reasons.append("expanded_prompt_edge_clipped")
+    if sam_confidence is None or sam_confidence < thresholds["sam_auto_quality_min"]:
+        reasons.append("sam_quality_below_auto_threshold")
+    if not stability.get("confidence_complete", True):
+        reasons.append("sam_quality_missing_for_prompt_variant")
+    if bbox_overlap < thresholds["sam_auto_yolo_iou_min"]:
+        reasons.append("yolo_sam_iou_below_auto_threshold")
+    if center_shift > thresholds["sam_auto_center_shift_max"]:
+        reasons.append("center_shift_above_auto_threshold")
+    if neighbor_iou > thresholds["sam_auto_neighbor_iou_max"]:
+        reasons.append("neighbor_overlap_ambiguous")
+    return not reasons, reasons
+
+
+def annotation_qa_audit_required(
+    job_id: str,
+    image_name: str,
+    class_id: Optional[int],
+    label_row: Optional[int],
+    decision: str,
+    audit_percent: float,
+) -> bool:
+    percentage = max(0.0, min(100.0, float(audit_percent)))
+    if percentage <= 0:
+        return False
+    key = f"{job_id}:{image_name}:{class_id}:{label_row}:{decision}".encode("utf-8")
+    bucket = int(hashlib.sha256(key).hexdigest()[:8], 16) / 0xFFFFFFFF * 100
+    return bucket < percentage
+
+
 def issue_is_safe_sam_replacement(issue: dict) -> bool:
     edge_differences = (issue.get("metrics") or {}).get("edge_differences") or {}
+    prompt_stability = (issue.get("metrics") or {}).get("prompt_stability") or {}
     recommended_bbox = issue.get("recommended_bbox")
     return (
         issue.get("auto_fix_eligible") is True
         and issue.get("quality_gate_passed") is True
         and issue.get("difference_band") == "reviewable"
         and issue.get("fix_type") == "replace_box"
+        and prompt_stability.get("passed", True) is True
         and isinstance(recommended_bbox, list)
         and len(recommended_bbox) == 4
         and edge_differences.get("within_tolerance") is False
@@ -4162,12 +4389,26 @@ def annotation_qa_summary(
     box_tolerance_percent: float = 5.0,
     sam_max_difference_percent: float = 25.0,
     yolo_boxes_accepted: int = 0,
+    policy: Optional[dict] = None,
+    class_label_counts: Optional[dict] = None,
 ) -> dict:
     severity_counts = {"high": 0, "medium": 0, "low": 0}
     type_counts: dict[str, int] = {}
     difference_band_counts: dict[str, int] = {}
     replacements_available = 0
     replacements_blocked = 0
+    decision_counts: dict[str, int] = {"auto_keep_yolo": yolo_boxes_accepted}
+    automatic_fixes_queued = 0
+    audits_pending = 0
+    calibration: dict[str, dict] = {
+        str(class_id): {
+            "labels": int(count),
+            "issues": 0,
+            "decisions": {},
+            "audits": {"pending": 0, "passed": 0, "failed": 0},
+        }
+        for class_id, count in (class_label_counts or {}).items()
+    }
     for issue in issues:
         severity = issue.get("severity", "low")
         severity_counts[severity] = severity_counts.get(severity, 0) + 1
@@ -4176,6 +4417,26 @@ def annotation_qa_summary(
         difference_band = issue.get("difference_band")
         if difference_band:
             difference_band_counts[difference_band] = difference_band_counts.get(difference_band, 0) + 1
+        decision = str(issue.get("qa_decision") or "human_review")
+        if decision != "auto_keep_yolo":
+            decision_counts[decision] = decision_counts.get(decision, 0) + 1
+        if issue.get("accepted_fix") == "sam_box" and issue.get("accepted_fix_source") == "automatic":
+            automatic_fixes_queued += 1
+        if issue.get("audit_required") and issue.get("audit_status") == "pending":
+            audits_pending += 1
+        if issue.get("class_id") is not None:
+            class_key = str(issue.get("class_id"))
+            class_row = calibration.setdefault(class_key, {
+                "labels": 0,
+                "issues": 0,
+                "decisions": {},
+                "audits": {"pending": 0, "passed": 0, "failed": 0},
+            })
+            class_row["issues"] += 1
+            class_row["decisions"][decision] = class_row["decisions"].get(decision, 0) + 1
+            if issue.get("audit_required"):
+                audit_status = str(issue.get("audit_status") or "pending")
+                class_row["audits"][audit_status] = class_row["audits"].get(audit_status, 0) + 1
         if issue_is_safe_sam_replacement(issue):
             replacements_available += 1
         elif issue.get("sam_bbox") and difference_band in {"reviewable", "large_disagreement"}:
@@ -4195,6 +4456,11 @@ def annotation_qa_summary(
         "large_disagreements": difference_band_counts.get("large_disagreement", 0),
         "sam_replacements_available": replacements_available,
         "sam_replacements_blocked": replacements_blocked,
+        "qa_decisions": decision_counts,
+        "automatic_fixes_queued": automatic_fixes_queued,
+        "audits_pending": audits_pending,
+        "auto_correction_policy": dict(policy or {}),
+        "calibration_by_class": calibration,
         "issues": len(issues),
         "high": severity_counts.get("high", 0),
         "medium": severity_counts.get("medium", 0),
@@ -4220,6 +4486,8 @@ def write_annotation_qa_report(run_dir: Path, issues: list[dict], summary: dict)
         "accepted_class_id", "accepted_class_name", "sam_prompt_index", "sam_confidence",
         "box_tolerance_percent", "sam_max_difference_percent", "difference_band",
         "quality_gate_passed", "auto_fix_eligible", "applied", "corrected_label_path",
+        "qa_decision", "decision_reasons", "automatic_fix_eligible", "accepted_fix_source",
+        "audit_required", "audit_status", "sam_selected_variant",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
@@ -4278,6 +4546,9 @@ def set_annotation_qa_issue_fix(run_dir: Path, issue_id: str, fix: str, class_id
             )
         issue["accepted_fix"] = "sam_box"
         issue["review_status"] = "fix_accepted"
+        if issue.get("audit_required"):
+            issue["audit_status"] = "passed"
+            issue["accepted_fix_source"] = "human_audited"
     elif fix_value == "class":
         if class_id is None:
             raise HTTPException(status_code=400, detail="Class fix requires a class id.")
@@ -4383,6 +4654,17 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
         for item in report["issues"]
     )
     report_version = int(summary.get("report_version", 1))
+    pending_audits = [
+        item for item in report["issues"]
+        if isinstance(item, dict)
+        and item.get("audit_required")
+        and item.get("audit_status") == "pending"
+    ]
+    if pending_audits:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Review the {len(pending_audits)} sampled automatic SAM correction(s) before creating the corrected dataset.",
+        )
     if has_legacy_sam_fix and report_version < ANNOTATION_QA_SAFE_MAPPING_VERSION:
         raise HTTPException(
             status_code=409,
@@ -4538,6 +4820,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
     labels_checked = 0
     images_scanned = 0
     yolo_boxes_accepted = 0
+    class_label_counts: dict[str, int] = {}
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
         yaml_path, dataset_root, payload = prepared_dataset_yaml(request_payload["dataset_yaml"])
@@ -4575,7 +4858,96 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             request_payload.get("box_tolerance_percent"),
             request_payload.get("sam_max_difference_percent"),
         )
+        thresholds.update({
+            "sam_prompt_expansion_percent": float(request_payload.get("sam_prompt_expansion_percent", 8.0)),
+            "sam_prompt_jitter_percent": float(request_payload.get("sam_prompt_jitter_percent", 2.0)),
+            "sam_stability_bbox_iou_min": float(request_payload.get("sam_stability_bbox_iou_min", 0.90)),
+            "sam_stability_edge_percent_max": float(request_payload.get("sam_stability_edge_percent_max", 3.0)),
+            "sam_auto_quality_min": float(request_payload.get("sam_auto_quality_min", 0.85)),
+            "sam_auto_yolo_iou_min": float(request_payload.get("sam_auto_yolo_iou_min", 0.70)),
+            "sam_auto_center_shift_max": float(request_payload.get("sam_auto_center_shift_max", 0.10)),
+            "sam_auto_neighbor_iou_max": float(request_payload.get("sam_auto_neighbor_iou_max", 0.15)),
+            "auto_audit_percent": float(request_payload.get("auto_audit_percent", 5.0)),
+        })
+        auto_correction_mode = str(request_payload.get("auto_correction_mode", "shadow")).lower()
+        policy = {
+            "mode": auto_correction_mode,
+            **{
+                key: thresholds[key]
+                for key in (
+                    "sam_prompt_expansion_percent",
+                    "sam_prompt_jitter_percent",
+                    "sam_stability_bbox_iou_min",
+                    "sam_stability_edge_percent_max",
+                    "sam_auto_quality_min",
+                    "sam_auto_yolo_iou_min",
+                    "sam_auto_center_shift_max",
+                    "sam_auto_neighbor_iou_max",
+                    "auto_audit_percent",
+                )
+            },
+        }
         processed_limit = int(max_images) if max_images else None
+        audited_classes: set[str] = set()
+
+        def should_audit_decision(
+            image_name: str,
+            class_id: Optional[int],
+            label_row: Optional[int],
+            decision: str,
+        ) -> bool:
+            class_key = str(class_id)
+            required = annotation_qa_audit_required(
+                job_id,
+                image_name,
+                class_id,
+                label_row,
+                decision,
+                thresholds["auto_audit_percent"],
+            )
+            if thresholds["auto_audit_percent"] > 0 and class_key not in audited_classes:
+                required = True
+            if required:
+                audited_classes.add(class_key)
+            return required
+
+        def append_qa_issue(
+            issue: dict,
+            *,
+            metrics: Optional[dict] = None,
+            sam_prompt_index: Optional[int] = None,
+            sam_prompt_variant: str = "",
+            sam_confidence: Optional[float] = None,
+            difference_band: str = "",
+            quality_gate_passed: bool = False,
+            auto_fix_eligible: bool = False,
+            automatic_fix_eligible: bool = False,
+            qa_decision: str = "human_review",
+            decision_reasons: Optional[list[str]] = None,
+            accepted_fix_source: str = "",
+            audit_required: bool = False,
+            audit_status: str = "not_required",
+            mask=None,
+        ):
+            issue.update({
+                "sam_prompt_index": sam_prompt_index,
+                "sam_selected_variant": sam_prompt_variant,
+                "sam_confidence": round(sam_confidence, 4) if sam_confidence is not None else None,
+                "box_tolerance_percent": thresholds["box_tolerance_percent"],
+                "sam_max_difference_percent": thresholds["sam_max_difference_percent"],
+                "difference_band": difference_band,
+                "quality_gate_passed": quality_gate_passed,
+                "auto_fix_eligible": auto_fix_eligible,
+                "automatic_fix_eligible": automatic_fix_eligible,
+                "qa_decision": qa_decision,
+                "decision_reasons": list(decision_reasons or []),
+                "accepted_fix_source": accepted_fix_source,
+                "audit_required": audit_required,
+                "audit_status": audit_status,
+            })
+            issue["preview"] = f"previews/{issue['issue_id']}.jpg"
+            draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask)
+            issues.append(issue)
 
         for split, _images_path, labels_path, images in split_contexts:
             for image_path in images:
@@ -4663,8 +5035,14 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             )
                             issues.append(issue)
 
-                boxes = [label["bbox"] for label in labels]
-                masks = sam_masks_for_image(model, image_path, boxes, device)
+                prompt_boxes, prompt_refs = annotation_qa_prompt_plan(
+                    labels,
+                    width,
+                    height,
+                    thresholds["sam_prompt_expansion_percent"],
+                    thresholds["sam_prompt_jitter_percent"],
+                )
+                masks = sam_masks_for_image(model, image_path, prompt_boxes, device)
                 if masks is None:
                     issue_index += 1
                     issues.append(annotation_issue(
@@ -4673,26 +5051,47 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         "SAM returned masks without reliable prompt indices; no box comparison was made.",
                     ))
                     continue
+                candidates_by_label: list[list[dict]] = [[] for _ in labels]
+                for prompt_index, reference in enumerate(prompt_refs):
+                    result = masks[prompt_index] if prompt_index < len(masks) else None
+                    if result is None or result.get("mask") is None:
+                        continue
+                    candidate_mask = mask_to_uint8(result["mask"], width, height)
+                    candidate_box = mask_bbox(candidate_mask)
+                    if candidate_box is None:
+                        continue
+                    candidates_by_label[reference["label_index"]].append({
+                        "variant": reference["variant"],
+                        "prompt_bbox": reference["prompt_bbox"],
+                        "bbox": candidate_box,
+                        "mask": candidate_mask,
+                        "confidence": result.get("confidence"),
+                        "prompt_index": result.get("prompt_index", prompt_index),
+                    })
                 for label_index, label in enumerate(labels):
                     labels_checked += 1
+                    class_key = str(label["class_id"])
+                    class_label_counts[class_key] = class_label_counts.get(class_key, 0) + 1
                     box = label["bbox"]
                     box_area = max(1, bbox_area(box))
-                    result = masks[label_index] if label_index < len(masks) else None
-                    if result is None:
+                    candidates_for_label = candidates_by_label[label_index]
+                    selected_candidate = annotation_qa_select_candidate(candidates_for_label)
+                    if selected_candidate is None:
                         issue_index += 1
                         issue = annotation_issue(
                             job_id, issue_index, image_path, split,
                             label["class_id"], label["class_name"],
                             "empty_mask", "high", 1.0,
-                            "SAM did not return a mask for this box.",
+                            "SAM did not return a usable mask for one or more prompts for this box.",
                             box,
                             label_row=label.get("row_index"),
                         )
                         issues.append(issue)
                         continue
-                    mask = result.get("mask")
-                    sam_confidence = result.get("confidence")
-                    sam_prompt_index = result.get("prompt_index")
+                    mask = selected_candidate["mask"]
+                    sam_confidence = selected_candidate.get("confidence")
+                    sam_prompt_index = selected_candidate.get("prompt_index")
+                    sam_prompt_variant = selected_candidate.get("variant", "")
                     if mask is None:
                         issue_index += 1
                         issues.append(annotation_issue(
@@ -4720,6 +5119,13 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, None)
                         issues.append(issue)
                         continue
+                    stability = annotation_qa_prompt_stability(
+                        candidates_for_label,
+                        box,
+                        thresholds["sam_stability_bbox_iou_min"],
+                        thresholds["sam_stability_edge_percent_max"],
+                    )
+                    neighbor_iou = annotation_qa_max_neighbor_iou(labels, label_index)
                     overlap = bbox_iou(box, sam_box)
                     center_shift = bbox_center_shift(box, sam_box)
                     mask_area = int(mask_array.sum())
@@ -4730,6 +5136,8 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         "center_shift": round(center_shift, 4),
                         "mask_area_ratio": round(mask_area_ratio, 4),
                         "sam_bbox_area_ratio": round(sam_box_area_ratio, 4),
+                        "prompt_stability": stability,
+                        "neighbor_iou": round(neighbor_iou, 4),
                     }
                     edge_differences = bbox_edge_differences(
                         box,
@@ -4746,6 +5154,35 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
 
                     if difference_band == "within_tolerance":
                         yolo_boxes_accepted += 1
+                        audit_required = auto_correction_mode != "manual" and should_audit_decision(
+                            image_path.name, label["class_id"], label.get("row_index"), "auto_keep_yolo",
+                        )
+                        if audit_required:
+                            issue_index += 1
+                            issue = annotation_issue(
+                                job_id, issue_index, image_path, split,
+                                label["class_id"], label["class_name"],
+                                "auto_keep_audit", "low", 0.0,
+                                "YOLO and SAM agree within tolerance. This automatic keep was sampled for audit.",
+                                box, sam_box, metrics,
+                                label_row=label.get("row_index"),
+                            )
+                            append_qa_issue(
+                                issue,
+                                metrics=metrics,
+                                sam_prompt_index=sam_prompt_index,
+                                sam_prompt_variant=sam_prompt_variant,
+                                sam_confidence=sam_confidence,
+                                difference_band=difference_band,
+                                quality_gate_passed=True,
+                                auto_fix_eligible=False,
+                                automatic_fix_eligible=False,
+                                qa_decision="auto_keep_yolo",
+                                decision_reasons=["within_tolerance"],
+                                audit_required=True,
+                                audit_status="pending",
+                                mask=mask_array,
+                            )
                         continue
 
                     if difference_band == "large_disagreement":
@@ -4759,18 +5196,17 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             box, sam_box, metrics,
                             label_row=label.get("row_index"),
                         )
-                        issue.update({
-                            "sam_prompt_index": sam_prompt_index,
-                            "sam_confidence": round(sam_confidence, 4) if sam_confidence is not None else None,
-                            "box_tolerance_percent": thresholds["box_tolerance_percent"],
-                            "sam_max_difference_percent": thresholds["sam_max_difference_percent"],
-                            "difference_band": difference_band,
-                            "quality_gate_passed": False,
-                            "auto_fix_eligible": False,
-                        })
-                        issue["preview"] = f"previews/{issue['issue_id']}.jpg"
-                        draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask_array)
-                        issues.append(issue)
+                        append_qa_issue(
+                            issue,
+                            metrics=metrics,
+                            sam_prompt_index=sam_prompt_index,
+                            sam_prompt_variant=sam_prompt_variant,
+                            sam_confidence=sam_confidence,
+                            difference_band=difference_band,
+                            qa_decision="manual_only",
+                            decision_reasons=["large_disagreement"],
+                            mask=mask_array,
+                        )
                         continue
 
                     if (
@@ -4787,18 +5223,17 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             box, sam_box, metrics,
                             label_row=label.get("row_index"),
                         )
-                        issue.update({
-                            "sam_prompt_index": sam_prompt_index,
-                            "sam_confidence": round(sam_confidence, 4) if sam_confidence is not None else None,
-                            "box_tolerance_percent": thresholds["box_tolerance_percent"],
-                            "sam_max_difference_percent": thresholds["sam_max_difference_percent"],
-                            "difference_band": difference_band,
-                            "quality_gate_passed": False,
-                            "auto_fix_eligible": False,
-                        })
-                        issue["preview"] = f"previews/{issue['issue_id']}.jpg"
-                        draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask_array)
-                        issues.append(issue)
+                        append_qa_issue(
+                            issue,
+                            metrics=metrics,
+                            sam_prompt_index=sam_prompt_index,
+                            sam_prompt_variant=sam_prompt_variant,
+                            sam_confidence=sam_confidence,
+                            difference_band=difference_band,
+                            qa_decision="manual_only",
+                            decision_reasons=["sam_quality_below_review_threshold"],
+                            mask=mask_array,
+                        )
                         continue
 
                     quality_checks = {
@@ -4810,6 +5245,26 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                     quality_gate_passed = all(quality_checks.values())
                     quality_checks["passed"] = quality_gate_passed
                     metrics["sam_quality_checks"] = quality_checks
+                    automatic_gate_passed, automatic_gate_reasons = annotation_qa_auto_gate(
+                        stability=stability,
+                        sam_confidence=stability.get("confidence_min"),
+                        bbox_overlap=overlap,
+                        center_shift=center_shift,
+                        neighbor_iou=neighbor_iou,
+                        quality_gate_passed=quality_gate_passed,
+                        thresholds=thresholds,
+                    )
+                    if auto_correction_mode == "manual":
+                        automatic_gate_passed = False
+                        automatic_gate_reasons = [*automatic_gate_reasons, "automatic_correction_disabled"]
+                    metrics["automatic_quality_gate"] = {
+                        "passed": automatic_gate_passed,
+                        "reasons": automatic_gate_reasons,
+                        "quality_min_required": thresholds["sam_auto_quality_min"],
+                        "yolo_iou_min_required": thresholds["sam_auto_yolo_iou_min"],
+                        "center_shift_max_allowed": thresholds["sam_auto_center_shift_max"],
+                        "neighbor_iou_max_allowed": thresholds["sam_auto_neighbor_iou_max"],
+                    }
 
                     edge_margin_x = max(2, int((box[2] - box[0]) * 0.03))
                     edge_margin_y = max(2, int((box[3] - box[1]) * 0.03))
@@ -4831,6 +5286,13 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         candidates.append(("loose_box", "medium", 1 - sam_box_area_ratio, "YOLO box is much larger than the SAM mask bbox."))
                     if edge_hits >= thresholds["tight_edge_count"] and mask_area_ratio > 0.35:
                         candidates.append(("possibly_tight_box", "low", edge_hits / 4, "SAM mask touches multiple edges of the YOLO box."))
+                    if not stability.get("passed"):
+                        candidates.append((
+                            "unstable_sam_prompt",
+                            "medium",
+                            min(1.0, max(0.0, 1.0 - stability.get("minimum_bbox_iou", 0.0))),
+                            "SAM produced materially different boxes when the prompt was expanded or jittered.",
+                        ))
 
                     if candidates:
                         issue_type, severity, score, message = sorted(
@@ -4844,26 +5306,54 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         score = min(1.0, edge_differences["max_percent"] / 100)
                         message = "SAM and YOLO differ beyond the acceptance tolerance and require review."
 
+                    stability_passed = bool(stability.get("passed"))
+                    auto_fix_eligible = quality_gate_passed and stability_passed
+                    if not stability_passed:
+                        qa_decision = "manual_only"
+                        decision_reasons = ["prompt_stability_failed"]
+                    elif automatic_gate_passed:
+                        qa_decision = "auto_replace_sam"
+                        decision_reasons = ["strict_automatic_gate_passed"]
+                    else:
+                        qa_decision = "human_review"
+                        decision_reasons = automatic_gate_reasons or ["strict_automatic_gate_failed"]
+                    audit_required = qa_decision == "auto_replace_sam" and should_audit_decision(
+                        image_path.name, label["class_id"], label.get("row_index"), qa_decision,
+                    )
+                    accepted_fix_source = ""
+                    accepted_fix = ""
+                    review_status = "unreviewed"
+                    if qa_decision == "auto_replace_sam" and auto_correction_mode == "automatic":
+                        accepted_fix = "sam_box"
+                        accepted_fix_source = "automatic"
+                        review_status = "fix_accepted"
                     issue_index += 1
                     issue = annotation_issue(
                         job_id, issue_index, image_path, split,
                         label["class_id"], label["class_name"], issue_type, severity,
                         score, message, box, sam_box, metrics,
                         label_row=label.get("row_index"),
-                        recommended_bbox=sam_box if quality_gate_passed else None,
+                        recommended_bbox=sam_box if auto_fix_eligible else None,
                     )
-                    issue.update({
-                        "sam_prompt_index": sam_prompt_index,
-                        "sam_confidence": round(sam_confidence, 4),
-                        "box_tolerance_percent": thresholds["box_tolerance_percent"],
-                        "sam_max_difference_percent": thresholds["sam_max_difference_percent"],
-                        "difference_band": difference_band,
-                        "quality_gate_passed": quality_gate_passed,
-                        "auto_fix_eligible": quality_gate_passed,
-                    })
-                    issue["preview"] = f"previews/{issue['issue_id']}.jpg"
-                    draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask_array)
-                    issues.append(issue)
+                    issue["accepted_fix"] = accepted_fix
+                    issue["review_status"] = review_status
+                    append_qa_issue(
+                        issue,
+                        metrics=metrics,
+                        sam_prompt_index=sam_prompt_index,
+                        sam_prompt_variant=sam_prompt_variant,
+                        sam_confidence=sam_confidence,
+                        difference_band=difference_band,
+                        quality_gate_passed=quality_gate_passed,
+                        auto_fix_eligible=auto_fix_eligible,
+                        automatic_fix_eligible=automatic_gate_passed,
+                        qa_decision=qa_decision,
+                        decision_reasons=decision_reasons,
+                        accepted_fix_source=accepted_fix_source,
+                        audit_required=audit_required,
+                        audit_status="pending" if audit_required else "not_required",
+                        mask=mask_array,
+                    )
             if processed_limit is not None and images_scanned >= processed_limit:
                 break
 
@@ -4877,6 +5367,8 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             request_payload.get("box_tolerance_percent", 5.0),
             request_payload.get("sam_max_difference_percent", 25.0),
             yolo_boxes_accepted,
+            policy,
+            class_label_counts,
         )
         summary.update({
             "dataset_yaml": str(yaml_path),
@@ -4910,6 +5402,8 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             request_payload.get("box_tolerance_percent", 5.0),
             request_payload.get("sam_max_difference_percent", 25.0),
             yolo_boxes_accepted,
+            policy,
+            class_label_counts,
         )
         write_annotation_qa_report(run_dir, issues, summary)
         update_annotation_qa_job(
@@ -6033,6 +6527,12 @@ def start_annotation_qa(request: AnnotationQaRequest):
             status_code=422,
             detail="Maximum SAM difference must be greater than the YOLO box tolerance.",
         )
+    auto_correction_mode = str(request.auto_correction_mode or "shadow").strip().lower()
+    if auto_correction_mode not in {"manual", "shadow", "automatic"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Automatic correction mode must be manual, shadow, or automatic.",
+        )
     with annotation_qa_jobs_lock:
         active = next(
             (
@@ -6058,6 +6558,16 @@ def start_annotation_qa(request: AnnotationQaRequest):
         "preset": request.preset,
         "box_tolerance_percent": request.box_tolerance_percent,
         "sam_max_difference_percent": request.sam_max_difference_percent,
+        "auto_correction_mode": auto_correction_mode,
+        "sam_prompt_expansion_percent": request.sam_prompt_expansion_percent,
+        "sam_prompt_jitter_percent": request.sam_prompt_jitter_percent,
+        "sam_stability_bbox_iou_min": request.sam_stability_bbox_iou_min,
+        "sam_stability_edge_percent_max": request.sam_stability_edge_percent_max,
+        "sam_auto_quality_min": request.sam_auto_quality_min,
+        "sam_auto_yolo_iou_min": request.sam_auto_yolo_iou_min,
+        "sam_auto_center_shift_max": request.sam_auto_center_shift_max,
+        "sam_auto_neighbor_iou_max": request.sam_auto_neighbor_iou_max,
+        "auto_audit_percent": request.auto_audit_percent,
         "max_images": request.max_images,
         "max_side": request.max_side,
     }
@@ -6074,6 +6584,16 @@ def start_annotation_qa(request: AnnotationQaRequest):
         "preset": request.preset,
         "box_tolerance_percent": request.box_tolerance_percent,
         "sam_max_difference_percent": request.sam_max_difference_percent,
+        "auto_correction_mode": auto_correction_mode,
+        "sam_prompt_expansion_percent": request.sam_prompt_expansion_percent,
+        "sam_prompt_jitter_percent": request.sam_prompt_jitter_percent,
+        "sam_stability_bbox_iou_min": request.sam_stability_bbox_iou_min,
+        "sam_stability_edge_percent_max": request.sam_stability_edge_percent_max,
+        "sam_auto_quality_min": request.sam_auto_quality_min,
+        "sam_auto_yolo_iou_min": request.sam_auto_yolo_iou_min,
+        "sam_auto_center_shift_max": request.sam_auto_center_shift_max,
+        "sam_auto_neighbor_iou_max": request.sam_auto_neighbor_iou_max,
+        "auto_audit_percent": request.auto_audit_percent,
         "images_scanned": 0,
         "total_images": 0,
         "labels_checked": 0,
@@ -6197,10 +6717,13 @@ def mark_annotation_qa_issue(job_id: str, request: AnnotationQaMarkRequest):
     for issue in issues:
         if isinstance(issue, dict) and issue.get("issue_id") == request.issue_id:
             issue["review_status"] = status
+            if issue.get("audit_required"):
+                issue["audit_status"] = "passed" if status == "fix_accepted" else "failed"
             if status != "fix_accepted":
                 issue["accepted_fix"] = ""
                 issue["accepted_class_id"] = None
                 issue["accepted_class_name"] = ""
+                issue["accepted_fix_source"] = ""
             matched = True
             break
     if not matched:
@@ -6216,9 +6739,11 @@ def accept_annotation_qa_fix(job_id: str, request: AnnotationQaFixRequest):
     return {
         "issue_id": request.issue_id,
         "accepted_fix": issue.get("accepted_fix", ""),
+        "accepted_fix_source": issue.get("accepted_fix_source", ""),
         "accepted_class_id": issue.get("accepted_class_id"),
         "accepted_class_name": issue.get("accepted_class_name", ""),
         "review_status": issue.get("review_status", "unreviewed"),
+        "audit_status": issue.get("audit_status", "not_required"),
     }
 
 

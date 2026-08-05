@@ -294,6 +294,16 @@ class CollapsibleSectionTests(unittest.TestCase):
             "annotation-qa-preset",
             "annotation-qa-tolerance",
             "annotation-qa-max-difference",
+            "annotation-qa-auto-mode",
+            "annotation-qa-audit",
+            "annotation-qa-prompt-expansion",
+            "annotation-qa-prompt-jitter",
+            "annotation-qa-stability-iou",
+            "annotation-qa-stability-edge",
+            "annotation-qa-auto-quality",
+            "annotation-qa-auto-iou",
+            "annotation-qa-auto-center",
+            "annotation-qa-auto-neighbor",
             "annotation-qa-status",
             "annotation-qa-issues",
         ):
@@ -301,6 +311,8 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("sam2.1_s.pt", markup)
         self.assertIn("box_tolerance_percent", script)
         self.assertIn("sam_max_difference_percent", script)
+        self.assertIn("auto_correction_mode", script)
+        self.assertIn("prompt_stability", script)
         self.assertIn("box_tolerance_percent", app_source)
         self.assertIn("sam_max_difference_percent", app_source)
         self.assertIn("function runAnnotationQa", script)

@@ -1524,6 +1524,24 @@ textarea:focus {
   min-width: 0;
 }
 
+.qa-policy-details {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.qa-policy-details > summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.qa-policy-grid {
+  padding: 0 12px 12px;
+}
+
 .annotation-qa-status-card span,
 .qa-summary-grid span {
   display: block;
@@ -1643,7 +1661,7 @@ textarea:focus {
 
 .qa-table {
   width: 100%;
-  min-width: 760px;
+  min-width: 900px;
   border-collapse: collapse;
   font-size: 13px;
   table-layout: fixed;
@@ -1732,6 +1750,11 @@ textarea:focus {
 
 .qa-table th:nth-child(5),
 .qa-table td:nth-child(5) {
+  width: 140px;
+}
+
+.qa-table th:nth-child(6),
+.qa-table td:nth-child(6) {
   width: 150px;
 }
 

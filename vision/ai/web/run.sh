@@ -135,7 +135,7 @@ case "$ACTION" in
     start)
         prepare_start
         echo "[YOLOv8 Web UI] Starting container..."
-        compose up -d --build
+        compose up -d
         compose ps
         wait_for_ready
         echo

@@ -1,6 +1,7 @@
 """Regression tests for SAM prompt mapping and box-tolerance decisions."""
 
 import ast
+import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -20,6 +21,16 @@ def load_qa_helpers():
         "issue_is_safe_sam_replacement",
         "annotation_qa_thresholds",
         "annotation_qa_summary",
+        "bbox_area",
+        "bbox_iou",
+        "annotation_qa_prompt_box",
+        "annotation_qa_prompt_plan",
+        "annotation_qa_mask_iou",
+        "annotation_qa_prompt_stability",
+        "annotation_qa_select_candidate",
+        "annotation_qa_max_neighbor_iou",
+        "annotation_qa_auto_gate",
+        "annotation_qa_audit_required",
     }
     module = ast.Module(
         body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names],
@@ -30,7 +41,8 @@ def load_qa_helpers():
         "Path": Path,
         "datetime": datetime,
         "MYT": timezone(timedelta(hours=8)),
-        "ANNOTATION_QA_REPORT_VERSION": 3,
+        "ANNOTATION_QA_REPORT_VERSION": 4,
+        "hashlib": hashlib,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace
@@ -177,7 +189,7 @@ class AnnotationQaTests(unittest.TestCase):
             [], 2, 3, "sam2.1_s.pt", "val", "balanced", 7.5, 30.0, 2,
         )
 
-        self.assertEqual(summary["report_version"], 3)
+        self.assertEqual(summary["report_version"], 4)
         self.assertEqual(summary["box_tolerance_percent"], 7.5)
         self.assertEqual(summary["sam_max_difference_percent"], 30.0)
         self.assertEqual(summary["yolo_boxes_accepted"], 2)
@@ -226,6 +238,52 @@ class AnnotationQaTests(unittest.TestCase):
         self.assertEqual(summary["large_disagreements"], 1)
         self.assertEqual(summary["sam_replacements_available"], 1)
         self.assertEqual(summary["sam_replacements_blocked"], 1)
+
+    def test_prompt_plan_has_original_expanded_and_jittered_variants(self):
+        labels = [{"bbox": (20, 20, 80, 100), "row_index": 3}]
+        prompts, references = QA_HELPERS["annotation_qa_prompt_plan"](labels, 120, 140, 8.0, 2.0)
+
+        self.assertEqual(len(prompts), 3)
+        self.assertEqual({item["variant"] for item in references}, {"original", "expanded", "jittered"})
+        self.assertEqual(prompts[0], (20, 20, 80, 100))
+        self.assertGreater(prompts[1][2] - prompts[1][0], prompts[0][2] - prompts[0][0])
+
+    def test_prompt_stability_rejects_changed_sam_box(self):
+        mask = np.ones((20, 20), dtype=np.uint8)
+        stable = [
+            {"variant": "original", "prompt_bbox": (20, 20, 80, 100), "bbox": (25, 25, 75, 95), "mask": mask, "confidence": 0.9},
+            {"variant": "expanded", "prompt_bbox": (15, 15, 85, 105), "bbox": (25, 25, 75, 95), "mask": mask, "confidence": 0.91},
+            {"variant": "jittered", "prompt_bbox": (17, 13, 87, 103), "bbox": (25, 25, 75, 95), "mask": mask, "confidence": 0.89},
+        ]
+        result = QA_HELPERS["annotation_qa_prompt_stability"](stable, (20, 20, 80, 100), 0.9, 3.0)
+        self.assertTrue(result["passed"])
+        unstable = [*stable]
+        unstable[2] = {**unstable[2], "bbox": (40, 25, 90, 95)}
+        result = QA_HELPERS["annotation_qa_prompt_stability"](unstable, (20, 20, 80, 100), 0.9, 3.0)
+        self.assertFalse(result["passed"])
+
+    def test_automatic_gate_requires_stability_and_geometry(self):
+        thresholds = {
+            "sam_auto_quality_min": 0.85,
+            "sam_auto_yolo_iou_min": 0.70,
+            "sam_auto_center_shift_max": 0.10,
+            "sam_auto_neighbor_iou_max": 0.15,
+        }
+        stable = {"passed": True, "expanded_edge_clipped": False}
+        passed, reasons = QA_HELPERS["annotation_qa_auto_gate"](
+            stability=stable, sam_confidence=0.9, bbox_overlap=0.8,
+            center_shift=0.05, neighbor_iou=0.05,
+            quality_gate_passed=True, thresholds=thresholds,
+        )
+        self.assertTrue(passed)
+        self.assertEqual(reasons, [])
+        passed, reasons = QA_HELPERS["annotation_qa_auto_gate"](
+            stability={"passed": False, "expanded_edge_clipped": False}, sam_confidence=0.9,
+            bbox_overlap=0.8, center_shift=0.05, neighbor_iou=0.05,
+            quality_gate_passed=True, thresholds=thresholds,
+        )
+        self.assertFalse(passed)
+        self.assertIn("prompt_stability_failed", reasons)
 
 
 if __name__ == "__main__":
