@@ -3,3 +3,4 @@ logs.txt
 /runs/
 *.pt
 /rosbags
+/bags2
