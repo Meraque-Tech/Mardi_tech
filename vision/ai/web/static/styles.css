@@ -151,6 +151,7 @@ p {
   grid-template-columns: minmax(0, 1fr) minmax(360px, 0.82fr);
   gap: 16px;
   align-items: start;
+  margin-bottom: 16px;
 }
 
 .workspace-side {
@@ -1501,6 +1502,11 @@ textarea:focus {
   overflow: hidden;
 }
 
+.annotation-qa-controls {
+  align-items: start;
+  margin-top: 0;
+}
+
 .annotation-qa-status-card {
   display: flex;
   align-items: center;
@@ -1550,7 +1556,7 @@ textarea:focus {
 
 .qa-summary-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
 }
@@ -3009,5 +3015,31 @@ pre:focus {
     right: auto;
     left: 0;
     width: min(220px, calc(100vw - 48px));
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1100px) {
+  .qa-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 521px) and (max-width: 900px) {
+  .grid.annotation-qa-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .qa-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .grid.annotation-qa-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .qa-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

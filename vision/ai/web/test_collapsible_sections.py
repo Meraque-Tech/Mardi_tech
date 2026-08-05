@@ -305,6 +305,17 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("/api/annotation-qa/start", app_source)
         self.assertIn("AnnotationQaRequest", app_source)
 
+    def test_annotation_qa_follows_top_workspace(self):
+        markup = INDEX_HTML.read_text(encoding="utf-8")
+
+        workspace_start = markup.index('<section class="workspace">')
+        workspace_end = markup.index('</section>', workspace_start)
+        workspace_markup = markup[workspace_start:workspace_end]
+        self.assertNotIn('id="annotation-qa-panel"', workspace_markup)
+        self.assertLess(markup.index('id="dataset-panel"'), markup.index('id="annotation-qa-panel"'))
+        self.assertLess(markup.index('id="training-panel"'), markup.index('id="annotation-qa-panel"'))
+        self.assertLess(markup.index('id="gpu-monitor-panel"'), markup.index('id="annotation-qa-panel"'))
+
     def test_task_specific_project_defaults_are_exposed(self):
         app_module = ast.parse(APP_PY.read_text(encoding="utf-8"))
         project_defaults = None
