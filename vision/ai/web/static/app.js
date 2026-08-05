@@ -2062,7 +2062,7 @@ function syncAnnotationQaActionStates() {
   $("stop-annotation-qa").disabled = !state.annotationQaRunning || state.annotationQaStopping;
   $("stop-annotation-qa").textContent = state.annotationQaStopping ? "Stopping..." : "Stop";
   $("stop-annotation-qa").setAttribute("aria-busy", String(state.annotationQaStopping));
-  ["annotation-qa-model", "annotation-qa-scope", "annotation-qa-preset"].forEach((id) => {
+  ["annotation-qa-model", "annotation-qa-scope", "annotation-qa-preset", "annotation-qa-tolerance"].forEach((id) => {
     $(id).disabled = !hasDataset || preparing || trainingLocked || testLocked || running;
   });
   const reportReady = Boolean(state.annotationQaJobId && state.annotationQaReport);
@@ -2113,6 +2113,8 @@ function renderAnnotationQaSummary(summary = {}) {
     <div class="qa-summary-grid">
       <div><span>Images</span><strong>${summary.images_scanned || 0}</strong></div>
       <div><span>Labels</span><strong>${summary.labels_checked || 0}</strong></div>
+      <div><span>YOLO kept</span><strong>${summary.yolo_boxes_accepted || 0}</strong></div>
+      <div><span>Tolerance</span><strong>${Number(summary.box_tolerance_percent ?? 5).toFixed(1)}%</strong></div>
       <div><span>High</span><strong>${summary.high || 0}</strong></div>
       <div><span>Medium</span><strong>${summary.medium || 0}</strong></div>
       <div><span>Low</span><strong>${summary.low || 0}</strong></div>
@@ -2312,6 +2314,10 @@ async function runAnnotationQa() {
   $("annotation-qa-issues").innerHTML = "";
   $("annotation-qa-summary").innerHTML = "";
   try {
+    const tolerance = Number($("annotation-qa-tolerance").value);
+    if (!Number.isFinite(tolerance) || tolerance < 0 || tolerance > 50) {
+      throw new Error("Box tolerance must be between 0% and 50%.");
+    }
     setMessage("Starting annotation QA...");
     const job = await apiJson("/api/annotation-qa/start", {
       method: "POST",
@@ -2320,6 +2326,7 @@ async function runAnnotationQa() {
         model: $("annotation-qa-model").value,
         scope: $("annotation-qa-scope").value,
         preset: $("annotation-qa-preset").value,
+        box_tolerance_percent: tolerance,
       }),
     });
     renderAnnotationQaJob(job);
@@ -2524,7 +2531,15 @@ function metricsText(metrics = {}) {
     return "none";
   }
   return entries
-    .map(([key, value]) => `${key.replace(/_/g, " ")}: ${metricText(value)}`)
+    .map(([key, value]) => {
+      if (value && typeof value === "object") {
+        const nested = Object.entries(value)
+          .map(([nestedKey, nestedValue]) => `${nestedKey.replace(/_/g, " ")}: ${metricText(nestedValue)}`)
+          .join(", ");
+        return `${key.replace(/_/g, " ")}: ${nested}`;
+      }
+      return `${key.replace(/_/g, " ")}: ${metricText(value)}`;
+    })
     .join(" · ");
 }
 
@@ -2575,6 +2590,8 @@ function annotationQaReviewSummary(issue) {
     low_mask_coverage: "SAM mask covers only a small part of the YOLO box.",
     possibly_tight_box: "YOLO box may be too tight around the object.",
     empty_mask: "SAM could not find a usable mask inside the box.",
+    low_confidence_mask: "SAM returned a mask, but its confidence is too low for an automatic replacement.",
+    sam_mapping_error: "SAM output could not be safely matched to the requested label boxes.",
   };
   return summaries[type] || issue.message || "Review this annotation.";
 }
@@ -2589,6 +2606,9 @@ function annotationQaReviewSuggestion(issue) {
   }
   if (type === "low_mask_coverage" || type === "empty_mask") {
     return "The SAM result is uncertain. Keep the YOLO box if it is correct, otherwise send this to manual fix.";
+  }
+  if (type === "low_confidence_mask") {
+    return "SAM produced a low-confidence mask. Keep the YOLO box unless a human reviewer redraws the annotation.";
   }
   if (type === "possibly_tight_box") {
     return "Check whether the yellow YOLO box cuts off part of the plant.";
@@ -2611,11 +2631,21 @@ function annotationQaMetricSummaryText(issue) {
     }
     parts.push(`Center shift: ${label}`);
   }
+  const edgeDifferences = metrics.edge_differences;
+  if (edgeDifferences && edgeDifferences.max_percent !== undefined) {
+    parts.push(`Edge difference: ${Number(edgeDifferences.max_percent).toFixed(1)}% / ${Number(edgeDifferences.tolerance_percent ?? 0).toFixed(1)}% tolerance`);
+  }
+  if (metrics.sam_confidence !== null && metrics.sam_confidence !== undefined) {
+    parts.push(`SAM confidence: ${(Number(metrics.sam_confidence) * 100).toFixed(1)}%`);
+  }
   return parts.join(" · ");
 }
 
 function issueCanAcceptSamBox(issue) {
-  return issue?.fix_type === "replace_box" && Array.isArray(issue.recommended_bbox) && issue.recommended_bbox.length === 4;
+  return issue?.auto_fix_eligible === true
+    && issue?.fix_type === "replace_box"
+    && Array.isArray(issue.recommended_bbox)
+    && issue.recommended_bbox.length === 4;
 }
 
 function acceptedFixText(issue) {

@@ -170,7 +170,7 @@
           </label>
 
           <div id="split-controls">
-            <div class="grid three">
+            <div class="grid four">
               <label>
                 Train %
                 <input id="split-train" type="number" min="1" max="100" value="70">
@@ -241,6 +241,11 @@
                   <option value="lenient">Lenient</option>
                   <option value="strict">Strict</option>
                 </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Keep the YOLO box when every SAM box edge differs by no more than this percentage of the YOLO box size.">Box tolerance (%)</span>
+                <input id="annotation-qa-tolerance" type="number" min="0" max="50" step="0.5" value="5">
+                <small class="field-note">Keep YOLO within this edge difference.</small>
               </label>
             </div>
 

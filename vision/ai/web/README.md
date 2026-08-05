@@ -87,6 +87,15 @@ test)** with a separate test section and validation-versus-test comparison.
 Tests using standalone uploaded weights are not presented as linked training
 runs, so the combined report remains unavailable for those tests.
 
+### Annotation QA
+
+The optional SAM Annotation QA panel compares YOLO detection boxes with
+prompted SAM masks. `Box tolerance (%)` keeps the original YOLO box when every
+SAM box edge is within that percentage of the YOLO box dimensions; boxes
+outside the tolerance are sent for human review. SAM suggestions are never
+automatically applied, and reports created before safe prompt mapping was added
+must be rerun before SAM box corrections can be accepted.
+
 ## Run With CUDA Container
 
 Use this when you want the UI and training process to run inside a CUDA-enabled

@@ -292,11 +292,14 @@ class CollapsibleSectionTests(unittest.TestCase):
             "annotation-qa-model",
             "annotation-qa-scope",
             "annotation-qa-preset",
+            "annotation-qa-tolerance",
             "annotation-qa-status",
             "annotation-qa-issues",
         ):
             self.assertIn(f'id="{control_id}"', markup)
         self.assertIn("sam2.1_s.pt", markup)
+        self.assertIn("box_tolerance_percent", script)
+        self.assertIn("box_tolerance_percent", app_source)
         self.assertIn("function runAnnotationQa", script)
         self.assertIn("function syncAnnotationQaActionStates", script)
         self.assertIn("/api/annotation-qa/start", app_source)

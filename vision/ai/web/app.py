@@ -238,6 +238,7 @@ ANNOTATION_QA_REPORT_CSV_FILE = "qa_report.csv"
 ANNOTATION_QA_REVIEW_FILE = "review_state.json"
 ANNOTATION_QA_FIX_SUMMARY_FILE = "fix_summary.json"
 ANNOTATION_QA_MODEL_DEFAULT = os.getenv("SAM_QA_MODEL", "sam2.1_s.pt")
+ANNOTATION_QA_REPORT_VERSION = 2
 
 app = FastAPI(title="YOLOv8 Training UI")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -297,6 +298,7 @@ class AnnotationQaRequest(BaseModel):
     model: str = ANNOTATION_QA_MODEL_DEFAULT
     scope: str = "all"
     preset: str = "balanced"
+    box_tolerance_percent: float = Field(default=5.0, ge=0.0, le=50.0)
     max_images: Optional[int] = Field(default=None, ge=1)
     max_side: int = Field(default=1280, ge=320, le=4096)
 
@@ -3829,7 +3831,7 @@ def update_annotation_qa_job(job_id: str, **updates):
         job["updated_at"] = time.time()
 
 
-def annotation_qa_thresholds(preset: str) -> dict:
+def annotation_qa_thresholds(preset: str, box_tolerance_percent: Optional[float] = None) -> dict:
     presets = {
         "lenient": {
             "bbox_iou": 0.4,
@@ -3838,6 +3840,8 @@ def annotation_qa_thresholds(preset: str) -> dict:
             "loose_area_ratio": 0.35,
             "tight_edge_count": 3,
             "duplicate_iou": 0.9,
+            "sam_confidence_min": 0.25,
+            "box_tolerance_percent": 8.0,
         },
         "strict": {
             "bbox_iou": 0.65,
@@ -3846,16 +3850,23 @@ def annotation_qa_thresholds(preset: str) -> dict:
             "loose_area_ratio": 0.6,
             "tight_edge_count": 2,
             "duplicate_iou": 0.8,
+            "sam_confidence_min": 0.25,
+            "box_tolerance_percent": 3.0,
         },
     }
-    return presets.get(str(preset or "").lower(), {
+    thresholds = dict(presets.get(str(preset or "").lower(), {
         "bbox_iou": 0.55,
         "center_shift": 0.2,
         "mask_area_ratio_min": 0.15,
         "loose_area_ratio": 0.5,
         "tight_edge_count": 2,
         "duplicate_iou": 0.85,
-    })
+        "sam_confidence_min": 0.25,
+        "box_tolerance_percent": 5.0,
+    }))
+    if box_tolerance_percent is not None:
+        thresholds["box_tolerance_percent"] = max(0.0, min(50.0, float(box_tolerance_percent)))
+    return thresholds
 
 
 def annotation_qa_split_names(scope: str, payload: dict) -> list[str]:
@@ -3939,6 +3950,35 @@ def bbox_center_shift(box_a: tuple[int, int, int, int], box_b: tuple[int, int, i
     by = (box_b[1] + box_b[3]) / 2
     scale = max(1.0, box_a[2] - box_a[0], box_a[3] - box_a[1])
     return math.hypot(ax - bx, ay - by) / scale
+
+
+def bbox_edge_differences(
+    yolo_box: tuple[int, int, int, int],
+    sam_box: tuple[int, int, int, int],
+    tolerance_percent: float,
+) -> dict:
+    yolo_width = max(1, yolo_box[2] - yolo_box[0])
+    yolo_height = max(1, yolo_box[3] - yolo_box[1])
+    differences = {
+        "left": abs(sam_box[0] - yolo_box[0]),
+        "right": abs(sam_box[2] - yolo_box[2]),
+        "top": abs(sam_box[1] - yolo_box[1]),
+        "bottom": abs(sam_box[3] - yolo_box[3]),
+    }
+    percentages = {
+        "left": differences["left"] / yolo_width * 100,
+        "right": differences["right"] / yolo_width * 100,
+        "top": differences["top"] / yolo_height * 100,
+        "bottom": differences["bottom"] / yolo_height * 100,
+    }
+    tolerance = float(tolerance_percent)
+    return {
+        "pixels": differences,
+        "percent": {key: round(value, 4) for key, value in percentages.items()},
+        "max_percent": round(max(percentages.values()), 4),
+        "tolerance_percent": round(tolerance, 4),
+        "within_tolerance": all(value <= tolerance for value in percentages.values()),
+    }
 
 
 def mask_bbox(mask) -> Optional[tuple[int, int, int, int]]:
@@ -4036,7 +4076,16 @@ def draw_annotation_qa_preview(
     cv2.imwrite(str(output_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 84])
 
 
-def annotation_qa_summary(issues: list[dict], images_scanned: int, labels_checked: int, model: str, scope: str, preset: str) -> dict:
+def annotation_qa_summary(
+    issues: list[dict],
+    images_scanned: int,
+    labels_checked: int,
+    model: str,
+    scope: str,
+    preset: str,
+    box_tolerance_percent: float = 5.0,
+    yolo_boxes_accepted: int = 0,
+) -> dict:
     severity_counts = {"high": 0, "medium": 0, "low": 0}
     type_counts: dict[str, int] = {}
     for issue in issues:
@@ -4045,11 +4094,15 @@ def annotation_qa_summary(issues: list[dict], images_scanned: int, labels_checke
         issue_type = issue.get("issue_type", "unknown")
         type_counts[issue_type] = type_counts.get(issue_type, 0) + 1
     return {
+        "report_version": ANNOTATION_QA_REPORT_VERSION,
         "model": model,
         "scope": scope,
         "preset": preset,
+        "box_tolerance_percent": round(float(box_tolerance_percent), 4),
         "images_scanned": images_scanned,
         "labels_checked": labels_checked,
+        "boxes_checked": labels_checked,
+        "yolo_boxes_accepted": yolo_boxes_accepted,
         "issues": len(issues),
         "high": severity_counts.get("high", 0),
         "medium": severity_counts.get("medium", 0),
@@ -4071,7 +4124,8 @@ def write_annotation_qa_report(run_dir: Path, issues: list[dict], summary: dict)
     fields = [
         "issue_id", "image_name", "split", "class_id", "class_name", "issue_type",
         "severity", "score", "message", "preview", "review_status", "accepted_fix",
-        "accepted_class_id", "accepted_class_name", "applied", "corrected_label_path",
+        "accepted_class_id", "accepted_class_name", "sam_prompt_index", "sam_confidence",
+        "box_tolerance_percent", "applied", "corrected_label_path",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
@@ -4112,8 +4166,15 @@ def set_annotation_qa_issue_fix(run_dir: Path, issue_id: str, fix: str, class_id
         issue["accepted_class_id"] = None
         issue["accepted_class_name"] = ""
     elif fix_value == "sam_box":
+        if int((report.get("summary") or {}).get("report_version", 1)) < ANNOTATION_QA_REPORT_VERSION:
+            raise HTTPException(
+                status_code=409,
+                detail="This QA report was created before safe SAM prompt mapping was available. Run QA again before accepting SAM box fixes.",
+            )
         if issue.get("fix_type") != "replace_box" or not issue.get("recommended_bbox"):
             raise HTTPException(status_code=400, detail="This issue does not have a SAM box recommendation.")
+        if not issue.get("auto_fix_eligible"):
+            raise HTTPException(status_code=400, detail="This SAM result is not reliable enough for an automatic box replacement.")
         issue["accepted_fix"] = "sam_box"
         issue["review_status"] = "fix_accepted"
     elif fix_value == "class":
@@ -4216,6 +4277,15 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
     run_dir = annotation_qa_run_dir(job_id)
     report = load_annotation_qa_report(run_dir)
     summary = report.get("summary") or {}
+    has_legacy_sam_fix = any(
+        isinstance(item, dict) and item.get("accepted_fix") == "sam_box"
+        for item in report["issues"]
+    )
+    if has_legacy_sam_fix and int(summary.get("report_version", 1)) < ANNOTATION_QA_REPORT_VERSION:
+        raise HTTPException(
+            status_code=409,
+            detail="This QA report predates safe SAM prompt mapping. Run annotation QA again before creating a corrected dataset.",
+        )
     dataset_yaml = summary.get("dataset_yaml")
     if not dataset_yaml:
         raise HTTPException(status_code=400, detail="Annotation QA report is missing the source dataset YAML.")
@@ -4287,23 +4357,69 @@ def load_sam_model(model_name: str):
     return SAM(model_name)
 
 
-def sam_masks_for_image(model, image_path: Path, bboxes: list[tuple[int, int, int, int]], device: str):
+def sam_masks_for_image(
+    model,
+    image_path: Path,
+    bboxes: list[tuple[int, int, int, int]],
+    device: str,
+) -> Optional[list[Optional[dict]]]:
     if not bboxes:
         return []
-    kwargs = {"source": str(image_path), "bboxes": [list(box) for box in bboxes], "verbose": False}
+    # Keep every prompt in the result so that Ultralytics cannot compact away a
+    # low-confidence middle prompt and shift later masks onto the wrong label.
+    kwargs = {
+        "source": str(image_path),
+        "bboxes": [list(box) for box in bboxes],
+        "conf": 0.0,
+        "verbose": False,
+    }
     if device:
         kwargs["device"] = device
     results = model.predict(**kwargs)
     if not results:
-        return []
-    masks = getattr(results[0], "masks", None)
+        return [None] * len(bboxes)
+    result = results[0]
+    masks = getattr(result, "masks", None)
     data = getattr(masks, "data", None)
     if data is None:
-        return []
+        return [None] * len(bboxes)
     try:
-        return [item.detach().cpu().numpy() for item in data]
+        mask_data = [item.detach().cpu().numpy() for item in data]
     except AttributeError:
-        return list(data)
+        mask_data = list(data)
+
+    boxes = getattr(result, "boxes", None)
+    prompt_indices = getattr(boxes, "cls", None)
+    if prompt_indices is None or len(prompt_indices) < len(mask_data):
+        # A positional fallback would recreate the original corruption.
+        return None
+    confidences = getattr(boxes, "conf", None)
+    mapped: list[Optional[dict]] = [None] * len(bboxes)
+    for result_index, mask in enumerate(mask_data):
+        try:
+            prompt_index = int(prompt_indices[result_index].item())
+        except (AttributeError, TypeError, ValueError):
+            try:
+                prompt_index = int(prompt_indices[result_index])
+            except (TypeError, ValueError):
+                return None
+        if prompt_index < 0 or prompt_index >= len(bboxes) or mapped[prompt_index] is not None:
+            return None
+        confidence = None
+        if confidences is not None and result_index < len(confidences):
+            try:
+                confidence = float(confidences[result_index].item())
+            except (AttributeError, TypeError, ValueError):
+                try:
+                    confidence = float(confidences[result_index])
+                except (TypeError, ValueError):
+                    confidence = None
+        mapped[prompt_index] = {
+            "mask": mask,
+            "confidence": confidence,
+            "prompt_index": prompt_index,
+        }
+    return mapped
 
 
 def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: threading.Event):
@@ -4314,6 +4430,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
     issue_index = 0
     labels_checked = 0
     images_scanned = 0
+    yolo_boxes_accepted = 0
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
         yaml_path, dataset_root, payload = prepared_dataset_yaml(request_payload["dataset_yaml"])
@@ -4346,7 +4463,10 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
         )
         model = load_sam_model(request_payload["model"])
         device = os.getenv("SAM_QA_DEVICE") or os.getenv("TRAINING_DEVICE") or ""
-        thresholds = annotation_qa_thresholds(request_payload.get("preset", "balanced"))
+        thresholds = annotation_qa_thresholds(
+            request_payload.get("preset", "balanced"),
+            request_payload.get("box_tolerance_percent"),
+        )
         processed_limit = int(max_images) if max_images else None
 
         for split, _images_path, labels_path, images in split_contexts:
@@ -4437,12 +4557,20 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
 
                 boxes = [label["bbox"] for label in labels]
                 masks = sam_masks_for_image(model, image_path, boxes, device)
+                if masks is None:
+                    issue_index += 1
+                    issues.append(annotation_issue(
+                        job_id, issue_index, image_path, split, None, "",
+                        "sam_mapping_error", "high", 1.0,
+                        "SAM returned masks without reliable prompt indices; no box comparison was made.",
+                    ))
+                    continue
                 for label_index, label in enumerate(labels):
                     labels_checked += 1
                     box = label["bbox"]
                     box_area = max(1, bbox_area(box))
-                    mask = masks[label_index] if label_index < len(masks) else None
-                    if mask is None:
+                    result = masks[label_index] if label_index < len(masks) else None
+                    if result is None:
                         issue_index += 1
                         issue = annotation_issue(
                             job_id, issue_index, image_path, split,
@@ -4453,6 +4581,20 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             label_row=label.get("row_index"),
                         )
                         issues.append(issue)
+                        continue
+                    mask = result.get("mask")
+                    sam_confidence = result.get("confidence")
+                    sam_prompt_index = result.get("prompt_index")
+                    if mask is None:
+                        issue_index += 1
+                        issues.append(annotation_issue(
+                            job_id, issue_index, image_path, split,
+                            label["class_id"], label["class_name"],
+                            "empty_mask", "high", 1.0,
+                            "SAM returned no mask for this prompt.",
+                            box,
+                            label_row=label.get("row_index"),
+                        ))
                         continue
                     mask_array = mask_to_uint8(mask, width, height)
                     sam_box = mask_bbox(mask_array)
@@ -4481,6 +4623,47 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         "mask_area_ratio": round(mask_area_ratio, 4),
                         "sam_bbox_area_ratio": round(sam_box_area_ratio, 4),
                     }
+                    edge_differences = bbox_edge_differences(
+                        box,
+                        sam_box,
+                        thresholds["box_tolerance_percent"],
+                    )
+                    metrics["edge_differences"] = edge_differences
+                    if sam_confidence is not None:
+                        metrics["sam_confidence"] = round(sam_confidence, 4)
+                    if not edge_differences["within_tolerance"]:
+                        metrics["box_agreement"] = "outside_tolerance"
+                    else:
+                        metrics["box_agreement"] = "within_tolerance"
+
+                    if (
+                        sam_confidence is not None
+                        and sam_confidence < thresholds["sam_confidence_min"]
+                    ):
+                        issue_index += 1
+                        issue = annotation_issue(
+                            job_id, issue_index, image_path, split,
+                            label["class_id"], label["class_name"],
+                            "low_confidence_mask", "medium",
+                            1 - sam_confidence,
+                            "SAM mask confidence is below the automatic correction threshold.",
+                            box, sam_box, metrics,
+                            label_row=label.get("row_index"),
+                        )
+                        issue.update({
+                            "sam_prompt_index": sam_prompt_index,
+                            "sam_confidence": round(sam_confidence, 4),
+                            "box_tolerance_percent": thresholds["box_tolerance_percent"],
+                            "auto_fix_eligible": False,
+                        })
+                        issue["preview"] = f"previews/{issue['issue_id']}.jpg"
+                        draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask_array)
+                        issues.append(issue)
+                        continue
+
+                    if edge_differences["within_tolerance"]:
+                        yolo_boxes_accepted += 1
+                        continue
                     edge_margin_x = max(2, int((box[2] - box[0]) * 0.03))
                     edge_margin_y = max(2, int((box[3] - box[1]) * 0.03))
                     edge_hits = sum([
@@ -4514,8 +4697,19 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             label["class_id"], label["class_name"], issue_type, severity,
                             score, message, box, sam_box, metrics,
                             label_row=label.get("row_index"),
-                            recommended_bbox=sam_box,
+                            recommended_bbox=(
+                                sam_box
+                                if sam_confidence is not None
+                                and sam_confidence >= thresholds["sam_confidence_min"]
+                                else None
+                            ),
                         )
+                        issue.update({
+                            "sam_prompt_index": sam_prompt_index,
+                            "sam_confidence": round(sam_confidence, 4) if sam_confidence is not None else None,
+                            "box_tolerance_percent": thresholds["box_tolerance_percent"],
+                            "auto_fix_eligible": sam_confidence is not None and sam_confidence >= thresholds["sam_confidence_min"],
+                        })
                         issue["preview"] = f"previews/{issue['issue_id']}.jpg"
                         draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask_array)
                         issues.append(issue)
@@ -4529,6 +4723,8 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             request_payload["model"],
             request_payload.get("scope", "val"),
             request_payload.get("preset", "balanced"),
+            request_payload.get("box_tolerance_percent", 5.0),
+            yolo_boxes_accepted,
         )
         summary.update({
             "dataset_yaml": str(yaml_path),
@@ -4559,6 +4755,8 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             request_payload.get("model", ANNOTATION_QA_MODEL_DEFAULT),
             request_payload.get("scope", "val"),
             request_payload.get("preset", "balanced"),
+            request_payload.get("box_tolerance_percent", 5.0),
+            yolo_boxes_accepted,
         )
         write_annotation_qa_report(run_dir, issues, summary)
         update_annotation_qa_job(
@@ -5700,6 +5898,7 @@ def start_annotation_qa(request: AnnotationQaRequest):
         "model": model,
         "scope": request.scope,
         "preset": request.preset,
+        "box_tolerance_percent": request.box_tolerance_percent,
         "max_images": request.max_images,
         "max_side": request.max_side,
     }
@@ -5714,6 +5913,7 @@ def start_annotation_qa(request: AnnotationQaRequest):
         "model": model,
         "scope": request.scope,
         "preset": request.preset,
+        "box_tolerance_percent": request.box_tolerance_percent,
         "images_scanned": 0,
         "total_images": 0,
         "labels_checked": 0,
