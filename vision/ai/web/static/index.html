@@ -438,9 +438,14 @@
             </select>
           </label>
           <label>
-            <span class="tooltip-label" tabindex="0" data-tooltip="Keep the YOLO box when every SAM box edge differs by no more than this percentage of the YOLO box size.">Box tolerance (%)</span>
+            <span class="tooltip-label" tabindex="0" data-tooltip="Keep the YOLO box when every SAM box edge differs by no more than this percentage of the YOLO box size, with a two-pixel minimum allowance for small boxes.">Box tolerance (%)</span>
             <input id="annotation-qa-tolerance" type="number" min="0" max="50" step="0.5" value="5">
             <small class="field-note">Keep YOLO within this edge difference.</small>
+          </label>
+          <label>
+            <span class="tooltip-label" tabindex="0" data-tooltip="Block automatic SAM replacement when any box edge differs from YOLO by more than this percentage. Large disagreements remain available for manual review.">Maximum SAM difference (%)</span>
+            <input id="annotation-qa-max-difference" type="number" min="0.5" max="100" step="0.5" value="25">
+            <small class="field-note">Larger differences are manual-review only.</small>
           </label>
         </div>
 

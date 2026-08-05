@@ -293,13 +293,16 @@ class CollapsibleSectionTests(unittest.TestCase):
             "annotation-qa-scope",
             "annotation-qa-preset",
             "annotation-qa-tolerance",
+            "annotation-qa-max-difference",
             "annotation-qa-status",
             "annotation-qa-issues",
         ):
             self.assertIn(f'id="{control_id}"', markup)
         self.assertIn("sam2.1_s.pt", markup)
         self.assertIn("box_tolerance_percent", script)
+        self.assertIn("sam_max_difference_percent", script)
         self.assertIn("box_tolerance_percent", app_source)
+        self.assertIn("sam_max_difference_percent", app_source)
         self.assertIn("function runAnnotationQa", script)
         self.assertIn("function syncAnnotationQaActionStates", script)
         self.assertIn("/api/annotation-qa/start", app_source)
@@ -315,6 +318,16 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertLess(markup.index('id="dataset-panel"'), markup.index('id="annotation-qa-panel"'))
         self.assertLess(markup.index('id="training-panel"'), markup.index('id="annotation-qa-panel"'))
         self.assertLess(markup.index('id="gpu-monitor-panel"'), markup.index('id="annotation-qa-panel"'))
+
+    def test_annotation_qa_issue_column_preserves_table_layout_and_readable_labels(self):
+        script = APP_JS.read_text(encoding="utf-8")
+        styles = STYLES.read_text(encoding="utf-8")
+
+        self.assertNotIn(".qa-table td:nth-child(3) {\n  display: block", styles)
+        self.assertIn("function annotationQaIssueTypeLabel(issueType)", script)
+        self.assertIn("annotationQaIssueTypeLabel(issue.issue_type)", script)
+        self.assertIn('low_box_agreement: "Low box agreement"', script)
+        self.assertIn('low_confidence_mask: "Low-confidence SAM mask"', script)
 
     def test_task_specific_project_defaults_are_exposed(self):
         app_module = ast.parse(APP_PY.read_text(encoding="utf-8"))

@@ -73,6 +73,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+const ANNOTATION_QA_REPORT_VERSION = 3;
 
 const STATUS_LABELS = {
   idle: "Idle",
@@ -2023,6 +2024,13 @@ function annotationQaFixCounts() {
   }, { box: 0, class: 0 });
 }
 
+function annotationQaHasLegacySamFixes() {
+  const reportVersion = Number(state.annotationQaReport?.summary?.report_version || 1);
+  const issues = Array.isArray(state.annotationQaReport?.issues) ? state.annotationQaReport.issues : [];
+  return reportVersion < ANNOTATION_QA_REPORT_VERSION
+    && issues.some((issue) => issue.accepted_fix === "sam_box");
+}
+
 function renderAnnotationQaFixSummary() {
   const summary = $("annotation-qa-fix-summary");
   if (!summary) {
@@ -2033,6 +2041,10 @@ function renderAnnotationQaFixSummary() {
     return;
   }
   const counts = annotationQaFixCounts();
+  if (annotationQaHasLegacySamFixes()) {
+    summary.textContent = "Queued SAM fixes use an older QA report. Rerun SAM QA to apply the maximum-difference safety gate before creating a corrected dataset.";
+    return;
+  }
   const total = counts.box + counts.class;
   if (!total) {
     summary.textContent = state.annotationQaCorrectedDatasetYaml
@@ -2062,7 +2074,7 @@ function syncAnnotationQaActionStates() {
   $("stop-annotation-qa").disabled = !state.annotationQaRunning || state.annotationQaStopping;
   $("stop-annotation-qa").textContent = state.annotationQaStopping ? "Stopping..." : "Stop";
   $("stop-annotation-qa").setAttribute("aria-busy", String(state.annotationQaStopping));
-  ["annotation-qa-model", "annotation-qa-scope", "annotation-qa-preset", "annotation-qa-tolerance"].forEach((id) => {
+  ["annotation-qa-model", "annotation-qa-scope", "annotation-qa-preset", "annotation-qa-tolerance", "annotation-qa-max-difference"].forEach((id) => {
     $(id).disabled = !hasDataset || preparing || trainingLocked || testLocked || running;
   });
   const reportReady = Boolean(state.annotationQaJobId && state.annotationQaReport);
@@ -2070,6 +2082,7 @@ function syncAnnotationQaActionStates() {
   $("download-annotation-qa-json").disabled = !reportReady;
   $("apply-annotation-qa-fixes").disabled = !reportReady
     || annotationQaAcceptedFixCount() === 0
+    || annotationQaHasLegacySamFixes()
     || preparing
     || trainingLocked
     || testLocked
@@ -2115,6 +2128,11 @@ function renderAnnotationQaSummary(summary = {}) {
       <div><span>Labels</span><strong>${summary.labels_checked || 0}</strong></div>
       <div><span>YOLO kept</span><strong>${summary.yolo_boxes_accepted || 0}</strong></div>
       <div><span>Tolerance</span><strong>${Number(summary.box_tolerance_percent ?? 5).toFixed(1)}%</strong></div>
+      <div><span>SAM maximum</span><strong>${Number(summary.sam_max_difference_percent ?? 25).toFixed(1)}%</strong></div>
+      <div><span>Reviewable</span><strong>${summary.moderate_disagreements || 0}</strong></div>
+      <div><span>Manual only</span><strong>${summary.large_disagreements || 0}</strong></div>
+      <div><span>SAM available</span><strong>${summary.sam_replacements_available || 0}</strong></div>
+      <div><span>SAM blocked</span><strong>${summary.sam_replacements_blocked || 0}</strong></div>
       <div><span>High</span><strong>${summary.high || 0}</strong></div>
       <div><span>Medium</span><strong>${summary.medium || 0}</strong></div>
       <div><span>Low</span><strong>${summary.low || 0}</strong></div>
@@ -2141,12 +2159,37 @@ function annotationQaSeverityKey(issue) {
   return "low";
 }
 
+function annotationQaIssueTypeLabel(issueType) {
+  const labels = {
+    low_box_agreement: "Low box agreement",
+    low_confidence_mask: "Low-confidence SAM mask",
+    low_mask_coverage: "Low SAM mask coverage",
+    loose_box: "Possibly loose YOLO box",
+    shifted_box: "Shifted box",
+    possibly_tight_box: "Possibly tight YOLO box",
+    moderate_box_difference: "Moderate box difference",
+    large_box_disagreement: "Large box disagreement",
+    empty_mask: "Empty SAM mask",
+    sam_mapping_error: "SAM mapping error",
+    duplicate_box: "Possible duplicate box",
+    invalid_label: "Invalid label",
+    unsupported_annotation: "Unsupported annotation",
+    image_read_error: "Image read error",
+  };
+  const normalized = String(issueType || "");
+  if (labels[normalized]) {
+    return labels[normalized];
+  }
+  const readable = normalized.replace(/_/g, " ");
+  return readable ? `${readable.charAt(0).toUpperCase()}${readable.slice(1)}` : "Unknown issue";
+}
+
 function annotationQaIssueRows(issues) {
   return issues.map((issue) => {
     const previewUrl = annotationQaPreviewUrl(issue);
     const imageName = escapeHtml(issue.image_name || "image");
     const splitClass = escapeHtml(`${issue.split || ""} · ${issue.class_name || ""}`);
-    const issueType = escapeHtml(issue.issue_type || "");
+    const issueType = escapeHtml(annotationQaIssueTypeLabel(issue.issue_type));
     const issueId = escapeHtml(issue.issue_id);
     const severity = escapeHtml(annotationQaSeverityKey(issue));
     const thumb = previewUrl
@@ -2262,6 +2305,8 @@ function renderAnnotationQaJob(job) {
   renderAnnotationQaSummary(job.summary || {
     images_scanned: job.images_scanned,
     labels_checked: job.labels_checked,
+    box_tolerance_percent: job.box_tolerance_percent,
+    sam_max_difference_percent: job.sam_max_difference_percent,
     high: job.high,
     medium: job.medium,
     low: job.low,
@@ -2306,6 +2351,21 @@ function pollAnnotationQa(jobId) {
   poll();
 }
 
+const ANNOTATION_QA_PRESET_DIFFERENCES = {
+  lenient: { tolerance: 8, maximum: 35 },
+  balanced: { tolerance: 5, maximum: 25 },
+  strict: { tolerance: 3, maximum: 15 },
+};
+
+function applyAnnotationQaDifferencePreset() {
+  const values = ANNOTATION_QA_PRESET_DIFFERENCES[$("annotation-qa-preset").value];
+  if (!values) {
+    return;
+  }
+  $("annotation-qa-tolerance").value = String(values.tolerance);
+  $("annotation-qa-max-difference").value = String(values.maximum);
+}
+
 async function runAnnotationQa() {
   if (!state.datasetYaml || state.annotationQaRunning) {
     return;
@@ -2315,8 +2375,15 @@ async function runAnnotationQa() {
   $("annotation-qa-summary").innerHTML = "";
   try {
     const tolerance = Number($("annotation-qa-tolerance").value);
+    const maximumDifference = Number($("annotation-qa-max-difference").value);
     if (!Number.isFinite(tolerance) || tolerance < 0 || tolerance > 50) {
       throw new Error("Box tolerance must be between 0% and 50%.");
+    }
+    if (!Number.isFinite(maximumDifference) || maximumDifference < 0 || maximumDifference > 100) {
+      throw new Error("Maximum SAM difference must be between 0% and 100%.");
+    }
+    if (maximumDifference <= tolerance) {
+      throw new Error("Maximum SAM difference must be greater than the YOLO box tolerance.");
     }
     setMessage("Starting annotation QA...");
     const job = await apiJson("/api/annotation-qa/start", {
@@ -2327,6 +2394,7 @@ async function runAnnotationQa() {
         scope: $("annotation-qa-scope").value,
         preset: $("annotation-qa-preset").value,
         box_tolerance_percent: tolerance,
+        sam_max_difference_percent: maximumDifference,
       }),
     });
     renderAnnotationQaJob(job);
@@ -2591,6 +2659,8 @@ function annotationQaReviewSummary(issue) {
     possibly_tight_box: "YOLO box may be too tight around the object.",
     empty_mask: "SAM could not find a usable mask inside the box.",
     low_confidence_mask: "SAM returned a mask, but its confidence is too low for an automatic replacement.",
+    moderate_box_difference: "YOLO and SAM differ beyond the acceptance tolerance but remain inside the reviewable correction band.",
+    large_box_disagreement: "YOLO and SAM differ beyond the configured maximum for automatic correction.",
     sam_mapping_error: "SAM output could not be safely matched to the requested label boxes.",
   };
   return summaries[type] || issue.message || "Review this annotation.";
@@ -2613,6 +2683,12 @@ function annotationQaReviewSuggestion(issue) {
   if (type === "possibly_tight_box") {
     return "Check whether the yellow YOLO box cuts off part of the plant.";
   }
+  if (type === "moderate_box_difference") {
+    return "Compare both boxes. The SAM box can be queued only when it clearly fits the intended object better.";
+  }
+  if (type === "large_box_disagreement") {
+    return "Automatic SAM replacement is blocked because the disagreement is too large. Preserve YOLO or send the annotation for manual correction.";
+  }
   return "Choose the annotation to keep, or send it to manual fix when neither box is reliable.";
 }
 
@@ -2633,7 +2709,26 @@ function annotationQaMetricSummaryText(issue) {
   }
   const edgeDifferences = metrics.edge_differences;
   if (edgeDifferences && edgeDifferences.max_percent !== undefined) {
-    parts.push(`Edge difference: ${Number(edgeDifferences.max_percent).toFixed(1)}% / ${Number(edgeDifferences.tolerance_percent ?? 0).toFixed(1)}% tolerance`);
+    const maximum = Number(edgeDifferences.max_difference_percent ?? issue.sam_max_difference_percent ?? 25);
+    parts.push(`Edge difference: ${Number(edgeDifferences.max_percent).toFixed(1)}% · keep at ${Number(edgeDifferences.tolerance_percent ?? 0).toFixed(1)}% · block above ${maximum.toFixed(1)}%`);
+    if (Number(edgeDifferences.pixel_floor) > 0) {
+      parts.push(`${Number(edgeDifferences.pixel_floor)} px minimum allowance`);
+    }
+  }
+  if (issue.difference_band) {
+    const bandLabels = {
+      within_tolerance: "YOLO kept",
+      reviewable: "SAM reviewable",
+      large_disagreement: "manual only",
+    };
+    parts.push(`Decision: ${bandLabels[issue.difference_band] || issue.difference_band.replace(/_/g, " ")}`);
+  }
+  const qualityChecks = metrics.sam_quality_checks;
+  if (qualityChecks && qualityChecks.passed === false) {
+    const failed = Object.entries(qualityChecks)
+      .filter(([name, passed]) => name !== "passed" && passed === false)
+      .map(([name]) => name.replace(/_/g, " "));
+    parts.push(`SAM quality gate: blocked${failed.length ? ` (${failed.join(", ")})` : ""}`);
   }
   if (metrics.sam_confidence !== null && metrics.sam_confidence !== undefined) {
     parts.push(`SAM confidence: ${(Number(metrics.sam_confidence) * 100).toFixed(1)}%`);
@@ -2642,10 +2737,15 @@ function annotationQaMetricSummaryText(issue) {
 }
 
 function issueCanAcceptSamBox(issue) {
+  const edgeDifferences = issue?.metrics?.edge_differences || {};
   return issue?.auto_fix_eligible === true
+    && issue?.quality_gate_passed === true
+    && issue?.difference_band === "reviewable"
     && issue?.fix_type === "replace_box"
     && Array.isArray(issue.recommended_bbox)
-    && issue.recommended_bbox.length === 4;
+    && issue.recommended_bbox.length === 4
+    && edgeDifferences.within_tolerance === false
+    && edgeDifferences.within_max_difference === true;
 }
 
 function acceptedFixText(issue) {
@@ -2759,8 +2859,15 @@ function renderAnnotationQaReview(issue) {
   renderAnnotationQaPendingFix(issue);
   renderAnnotationQaClassSelector(issue);
   $("qa-review-keep-yolo").textContent = issue.review_status === "accepted" ? "YOLO box kept" : "Keep YOLO box";
-  $("qa-review-accept-sam").disabled = !issueCanAcceptSamBox(issue);
-  $("qa-review-accept-sam").textContent = issue.accepted_fix === "sam_box" ? "SAM box queued" : "Replace with SAM box";
+  const canAcceptSam = issueCanAcceptSamBox(issue);
+  $("qa-review-accept-sam").disabled = !canAcceptSam;
+  $("qa-review-accept-sam").textContent = issue.accepted_fix === "sam_box"
+    ? "SAM box queued"
+    : issue.difference_band === "large_disagreement"
+      ? "SAM replacement blocked"
+      : issue.difference_band === "reviewable" && !canAcceptSam
+        ? "SAM quality checks failed"
+        : "Replace with SAM box";
 
   const issues = annotationQaReviewIssuesList(issue);
   const index = issues.findIndex((item) => item.issue_id === issue.issue_id);
@@ -5513,6 +5620,7 @@ $("download-dataset").addEventListener("click", downloadPreparedDataset);
 $("download-annotated-dataset").addEventListener("click", downloadAnnotatedDataset);
 $("run-annotation-qa").addEventListener("click", runAnnotationQa);
 $("stop-annotation-qa").addEventListener("click", stopAnnotationQa);
+$("annotation-qa-preset").addEventListener("change", applyAnnotationQaDifferencePreset);
 $("download-annotation-qa-csv").addEventListener("click", () => downloadAnnotationQaReport("csv"));
 $("download-annotation-qa-json").addEventListener("click", () => downloadAnnotationQaReport("json"));
 $("apply-annotation-qa-fixes").addEventListener("click", applyAnnotationQaFixes);

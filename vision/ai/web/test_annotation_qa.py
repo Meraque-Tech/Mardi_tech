@@ -16,6 +16,9 @@ def load_qa_helpers():
     names = {
         "sam_masks_for_image",
         "bbox_edge_differences",
+        "annotation_qa_difference_band",
+        "issue_is_safe_sam_replacement",
+        "annotation_qa_thresholds",
         "annotation_qa_summary",
     }
     module = ast.Module(
@@ -27,7 +30,7 @@ def load_qa_helpers():
         "Path": Path,
         "datetime": datetime,
         "MYT": timezone(timedelta(hours=8)),
-        "ANNOTATION_QA_REPORT_VERSION": 2,
+        "ANNOTATION_QA_REPORT_VERSION": 3,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace
@@ -108,21 +111,121 @@ class AnnotationQaTests(unittest.TestCase):
 
     def test_box_tolerance_accepts_edge_differences_at_boundary(self):
         yolo = (10, 20, 110, 220)
-        within = QA_HELPERS["bbox_edge_differences"](yolo, (15, 24, 106, 230), 5.0)
-        outside = QA_HELPERS["bbox_edge_differences"](yolo, (16, 24, 106, 230), 5.0)
+        within = QA_HELPERS["bbox_edge_differences"](yolo, (15, 24, 106, 230), 5.0, 25.0)
+        outside = QA_HELPERS["bbox_edge_differences"](yolo, (16, 24, 106, 230), 5.0, 25.0)
 
         self.assertTrue(within["within_tolerance"])
         self.assertEqual(within["max_percent"], 5.0)
         self.assertFalse(outside["within_tolerance"])
+        self.assertTrue(outside["within_max_difference"])
+
+    def test_difference_bands_include_maximum_boundary(self):
+        yolo = (0, 0, 100, 100)
+        cases = (
+            ((5, 0, 100, 100), "within_tolerance"),
+            ((6, 0, 100, 100), "reviewable"),
+            ((25, 0, 100, 100), "reviewable"),
+            ((26, 0, 100, 100), "large_disagreement"),
+        )
+
+        for sam, expected in cases:
+            with self.subTest(sam=sam):
+                differences = QA_HELPERS["bbox_edge_differences"](yolo, sam, 5.0, 25.0)
+                self.assertEqual(QA_HELPERS["annotation_qa_difference_band"](differences), expected)
+
+    def test_small_boxes_receive_pixel_floor(self):
+        differences = QA_HELPERS["bbox_edge_differences"](
+            (0, 0, 10, 10),
+            (2, 0, 10, 10),
+            5.0,
+            25.0,
+        )
+
+        self.assertEqual(differences["max_percent"], 20.0)
+        self.assertTrue(differences["within_tolerance"])
+        self.assertEqual(differences["pixel_floor"], 2)
+
+    def test_thresholds_reject_inverted_difference_band(self):
+        with self.assertRaisesRegex(ValueError, "greater than"):
+            QA_HELPERS["annotation_qa_thresholds"]("balanced", 5.0, 5.0)
+
+    def test_only_reviewable_band_is_safe_for_sam_replacement(self):
+        issue = {
+            "auto_fix_eligible": True,
+            "quality_gate_passed": True,
+            "difference_band": "reviewable",
+            "fix_type": "replace_box",
+            "recommended_bbox": [1, 2, 3, 4],
+            "sam_max_difference_percent": 25.0,
+            "metrics": {
+                "edge_differences": {
+                    "within_tolerance": False,
+                    "within_max_difference": True,
+                },
+            },
+        }
+
+        self.assertTrue(QA_HELPERS["issue_is_safe_sam_replacement"](issue))
+        issue["quality_gate_passed"] = False
+        self.assertFalse(QA_HELPERS["issue_is_safe_sam_replacement"](issue))
+        issue["quality_gate_passed"] = True
+        issue["difference_band"] = "large_disagreement"
+        self.assertFalse(QA_HELPERS["issue_is_safe_sam_replacement"](issue))
 
     def test_summary_records_report_version_and_tolerance(self):
         summary = QA_HELPERS["annotation_qa_summary"](
-            [], 2, 3, "sam2.1_s.pt", "val", "balanced", 7.5, 2,
+            [], 2, 3, "sam2.1_s.pt", "val", "balanced", 7.5, 30.0, 2,
         )
 
-        self.assertEqual(summary["report_version"], 2)
+        self.assertEqual(summary["report_version"], 3)
         self.assertEqual(summary["box_tolerance_percent"], 7.5)
+        self.assertEqual(summary["sam_max_difference_percent"], 30.0)
         self.assertEqual(summary["yolo_boxes_accepted"], 2)
+
+    def test_summary_counts_reviewable_and_blocked_sam_results(self):
+        reviewable = {
+            "issue_type": "moderate_box_difference",
+            "severity": "low",
+            "sam_bbox": [1, 2, 3, 4],
+            "recommended_bbox": [1, 2, 3, 4],
+            "fix_type": "replace_box",
+            "auto_fix_eligible": True,
+            "quality_gate_passed": True,
+            "difference_band": "reviewable",
+            "sam_max_difference_percent": 25.0,
+            "metrics": {
+                "edge_differences": {
+                    "within_tolerance": False,
+                    "within_max_difference": True,
+                },
+            },
+        }
+        blocked = {
+            "issue_type": "large_box_disagreement",
+            "severity": "high",
+            "sam_bbox": [10, 20, 30, 40],
+            "recommended_bbox": None,
+            "fix_type": "",
+            "auto_fix_eligible": False,
+            "quality_gate_passed": False,
+            "difference_band": "large_disagreement",
+            "sam_max_difference_percent": 25.0,
+            "metrics": {
+                "edge_differences": {
+                    "within_tolerance": False,
+                    "within_max_difference": False,
+                },
+            },
+        }
+
+        summary = QA_HELPERS["annotation_qa_summary"](
+            [reviewable, blocked], 1, 2, "sam2.1_s.pt", "val", "balanced",
+        )
+
+        self.assertEqual(summary["moderate_disagreements"], 1)
+        self.assertEqual(summary["large_disagreements"], 1)
+        self.assertEqual(summary["sam_replacements_available"], 1)
+        self.assertEqual(summary["sam_replacements_blocked"], 1)
 
 
 if __name__ == "__main__":

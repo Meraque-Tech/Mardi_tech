@@ -91,10 +91,15 @@ runs, so the combined report remains unavailable for those tests.
 
 The optional SAM Annotation QA panel compares YOLO detection boxes with
 prompted SAM masks. `Box tolerance (%)` keeps the original YOLO box when every
-SAM box edge is within that percentage of the YOLO box dimensions; boxes
-outside the tolerance are sent for human review. SAM suggestions are never
-automatically applied, and reports created before safe prompt mapping was added
-must be rerun before SAM box corrections can be accepted.
+SAM box edge is within that percentage of the YOLO box dimensions, with a
+two-pixel minimum allowance for small boxes. Differences up to `Maximum SAM
+difference (%)` are reviewable SAM suggestions. Larger differences preserve
+YOLO and require manual review; they cannot be queued as SAM replacements. SAM
+replacements inside the review band must also pass confidence, overlap,
+coverage, center-shift, and area checks. Suggestions are never automatically
+applied, and reports created before the
+current prompt-mapping and difference-band safeguards must be rerun before SAM
+box corrections can be accepted.
 
 ## Run With CUDA Container
 
