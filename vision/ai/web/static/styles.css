@@ -3257,6 +3257,103 @@ button.magic-button:disabled:hover {
   color: var(--text);
 }
 
+.augmentation-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.augmentation-heading .field-note {
+  margin-top: 4px;
+}
+
+.augmentation-switch {
+  display: inline-flex;
+  grid-template-columns: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.augmentation-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.augmentation-switch-track {
+  display: inline-flex;
+  align-items: center;
+  width: 44px;
+  height: 24px;
+  padding: 2px;
+  border: 1px solid #aeb9c2;
+  border-radius: 999px;
+  background: #dfe5e8;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.augmentation-switch-track i {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(23, 32, 42, 0.28);
+  transition: transform 160ms ease;
+}
+
+.augmentation-switch input:checked + .augmentation-switch-track {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.augmentation-switch input:checked + .augmentation-switch-track i {
+  transform: translateX(20px);
+}
+
+.augmentation-switch input:focus-visible + .augmentation-switch-track {
+  outline: 3px solid rgba(22, 116, 95, 0.2);
+  outline-offset: 2px;
+}
+
+.augmentation-switch input:disabled + .augmentation-switch-track {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.augmentation-switch strong {
+  min-width: 24px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.augmentation-controls {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  transition: opacity 160ms ease;
+}
+
+.augmentation-controls:disabled {
+  opacity: 0.48;
+}
+
+.advanced-group.augmentation-is-enabled #augmentation-status,
+.advanced-group.augmentation-is-enabled .augmentation-switch strong {
+  color: var(--accent-strong);
+}
+
+@media (max-width: 520px) {
+  .augmentation-heading {
+    align-items: flex-start;
+  }
+}
+
 .weights-toolbar {
   display: flex;
   align-items: center;

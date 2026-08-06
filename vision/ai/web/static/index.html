@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>YOLO Workspace</title>
-    <link rel="stylesheet" href="/static/styles.css?v=annotation-qa-workflow-v5-20260806">
+    <link rel="stylesheet" href="/static/styles.css?v=training-augmentation-toggle-v1-20260806">
   </head>
   <body>
     <main class="app-shell">
@@ -707,8 +707,20 @@
             </div>
 
             <div class="advanced-group" data-ultralytics-only>
-              <h3>Augmentation</h3>
-            <p class="field-note">If unsure, keep the defaults.</p>
+              <div class="augmentation-heading">
+                <div>
+                  <h3>Augmentation</h3>
+                  <p class="field-note" id="augmentation-status">Off — no augmentation will be applied.</p>
+                </div>
+                <label class="augmentation-switch">
+                  <input id="augmentation-enabled" type="checkbox" role="switch" aria-label="Enable training augmentation" aria-describedby="augmentation-status">
+                  <span class="augmentation-switch-track" aria-hidden="true"><i></i></span>
+                  <strong id="augmentation-toggle-label">Off</strong>
+                </label>
+              </div>
+              <p class="field-note">Augmentations transform training samples on the fly. Original dataset images are never modified.</p>
+              <fieldset class="augmentation-controls" id="augmentation-controls" disabled>
+                <legend class="sr-only">Augmentation settings</legend>
             <div class="grid three">
               <label class="checkbox-row inline-check">
                 <input id="disable-ultralytics-albumentations" type="checkbox" checked>
@@ -799,6 +811,7 @@
                 <input id="auto-augment" type="text" placeholder="blank = null">
               </label>
             </div>
+              </fieldset>
             </div>
 
             <div class="advanced-group" data-ultralytics-only>
@@ -1507,6 +1520,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=annotation-qa-workflow-v5-20260806"></script>
+    <script src="/static/app.js?v=training-augmentation-toggle-v1-20260806"></script>
   </body>
 </html>

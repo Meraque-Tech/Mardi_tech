@@ -350,6 +350,7 @@ class TrainRequest(BaseModel):
     project: str = "runs/detect"
     name: str = "train"
     resume: bool = False
+    augmentation_enabled: bool = False
     disable_ultralytics_albumentations: bool = True
     mosaic: float = Field(default=1.0, ge=0, le=1)
     close_mosaic: int = Field(default=10, ge=0)
@@ -7883,6 +7884,7 @@ def start_training(request: TrainRequest):
             "--optimizer", request.optimizer,
             "--pretrained", "true",
             "--activation", request.activation,
+            "--augmentation-enabled", str(request.augmentation_enabled).lower(),
             "--disable-ultralytics-albumentations", str(request.disable_ultralytics_albumentations).lower(),
             "--mosaic", str(request.mosaic),
             "--close-mosaic", str(request.close_mosaic),

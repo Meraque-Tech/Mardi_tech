@@ -139,6 +139,7 @@ const CONTROL_DEFAULTS = {
   "cos-lr": false,
   "exist-ok": false,
   resume: false,
+  "augmentation-enabled": false,
   ...AUGMENTATION_DEFAULTS,
 };
 
@@ -441,6 +442,68 @@ function syncModelFamilyControls() {
     });
   });
   syncScheduleControlLabels();
+  syncAugmentationControls();
+}
+
+function augmentationConfigurationSummary() {
+  if ((selectedModelSpec()?.backend || "ultralytics") !== "ultralytics") {
+    return "Runtime augmentation: Not available for the selected model";
+  }
+  if (!$("augmentation-enabled").checked) {
+    return "Augmentation: Off";
+  }
+  const labels = {
+    mosaic: "mosaic",
+    "hsv-h": "HSV hue",
+    "hsv-s": "HSV saturation",
+    "hsv-v": "HSV value",
+    degrees: "rotation",
+    translate: "translation",
+    scale: "scale",
+    shear: "shear",
+    perspective: "perspective",
+    flipud: "vertical flip",
+    fliplr: "horizontal flip",
+    bgr: "BGR swap",
+    mixup: "MixUp",
+    cutmix: "CutMix",
+    "copy-paste": "copy-paste",
+    erasing: "erasing",
+  };
+  const active = Object.entries(labels)
+    .filter(([id]) => Number($(id).value) !== 0)
+    .map(([id, label]) => `${label} ${$(id).value}`);
+  const autoAugment = $("auto-augment").value.trim();
+  if (autoAugment) {
+    active.push(`auto augment ${autoAugment}`);
+  }
+  if (!$("disable-ultralytics-albumentations").checked) {
+    active.push("optional Albumentations enabled");
+  }
+  return active.length
+    ? `Augmentation: On — ${active.join(", ")}`
+    : "Augmentation: On — all explicit values are zero";
+}
+
+function syncAugmentationControls() {
+  const toggle = $("augmentation-enabled");
+  const controls = $("augmentation-controls");
+  if (!toggle || !controls) {
+    return;
+  }
+  const locked = state.running || state.isStarting || state.isStopping
+    || state.testRunning || state.testStarting || state.testStopping
+    || state.annotationQaRunning || state.annotationQaStopping;
+  const isUltralytics = (selectedModelSpec()?.backend || "ultralytics") === "ultralytics";
+  const enabled = toggle.checked;
+  toggle.disabled = locked || !isUltralytics;
+  toggle.setAttribute("aria-checked", String(enabled));
+  controls.disabled = locked || !isUltralytics || !enabled;
+  $("augmentation-toggle-label").textContent = enabled ? "On" : "Off";
+  $("augmentation-status").textContent = enabled
+    ? "On — the configured values will be applied during training."
+    : "Off — no augmentation will be applied. Configured values are preserved.";
+  toggle.closest(".advanced-group")?.classList.toggle("augmentation-is-enabled", enabled);
 }
 
 function selectedModelSpec() {
@@ -5346,7 +5409,7 @@ async function startTraining() {
   setActivePreset(state.activePreset);
   syncActionStates();
   renderEpochProgress({ total: numberValue("epochs") }, "starting");
-  setMessage("Starting training...");
+  setMessage(`Starting training... ${augmentationConfigurationSummary()}.`);
   try {
     const result = await apiJson("/api/train/start", {
       method: "POST",
@@ -5372,6 +5435,7 @@ async function startTraining() {
         project: $("project").value,
         name: $("run-name").value,
         resume,
+        augmentation_enabled: $("augmentation-enabled").checked,
         disable_ultralytics_albumentations: $("disable-ultralytics-albumentations").checked,
         mosaic: numberValue("mosaic"),
         close_mosaic: numberValue("close-mosaic"),
@@ -6693,6 +6757,12 @@ $("reset-advanced").addEventListener("click", () => {
   applyControlValues(CONTROL_DEFAULTS);
   setActivePreset(null);
   setMessage("Reset training controls to defaults.");
+});
+$("augmentation-enabled").addEventListener("change", () => {
+  syncAugmentationControls();
+  setMessage($("augmentation-enabled").checked
+    ? "Augmentation is On. The configured values will be applied during training."
+    : "Augmentation is Off. No training augmentation will be applied; configured values are preserved.");
 });
 const presetControlIds = new Set([
   ...Object.keys(CONTROL_DEFAULTS),

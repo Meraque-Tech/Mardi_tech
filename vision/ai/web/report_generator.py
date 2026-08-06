@@ -446,14 +446,22 @@ def _short_config_rows(context: dict, run_dir: Path) -> list[list]:
             rows.append([label, value])
     if family in {"dfine", "rfdetr"}:
         return rows
-    augmentation_keys = ("mosaic", "mixup", "copy_paste", "degrees", "translate", "scale", "fliplr", "flipud", "hsv_h", "hsv_s", "hsv_v")
+    augmentation_enabled = hyperparameters.get("augmentation_enabled", True)
+    if augmentation_enabled is False:
+        rows.append(["Runtime augmentation", "Off — all transforms disabled"])
+        return rows
+    augmentation_keys = (
+        "mosaic", "mixup", "cutmix", "copy_paste", "degrees", "translate", "scale",
+        "shear", "perspective", "fliplr", "flipud", "bgr", "hsv_h", "hsv_s", "hsv_v",
+        "auto_augment", "erasing",
+    )
     augmentation = [
         f"{key}={hyperparameters[key]}"
         for key in augmentation_keys
-        if key in hyperparameters and _nonempty(hyperparameters.get(key))
+        if key in hyperparameters and hyperparameters.get(key) not in {None, "", 0, 0.0}
     ]
-    if augmentation:
-        rows.append(["Runtime augmentation", ", ".join(augmentation)])
+    detail = ", ".join(augmentation) if augmentation else "all explicit values are zero"
+    rows.append(["Runtime augmentation", f"On — {detail}"])
     return rows
 
 

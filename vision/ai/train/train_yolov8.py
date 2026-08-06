@@ -40,6 +40,7 @@ TRAINING_CONFIG = {
     "project": "runs/detect",
     "name": "train",
     "resume": False,
+    "augmentation_enabled": False,
     "disable_ultralytics_albumentations": True,
 }
 
@@ -64,6 +65,11 @@ TRAINING_AUGMENTATIONS = {
     "copy_paste": 0.0,
     "auto_augment": None,
     "erasing": 0.0,
+}
+
+DISABLED_TRAINING_AUGMENTATIONS = {
+    key: None if key == "auto_augment" else 0
+    for key in TRAINING_AUGMENTATIONS
 }
 
 WEB_PROGRESS_PREFIX = "WEB_TRAINING_PROGRESS"
@@ -311,6 +317,12 @@ def parse_args():
         help="Resume training from the configured or given checkpoint.",
     )
     parser.add_argument(
+        "--augmentation-enabled",
+        type=str_to_bool,
+        default=None,
+        help="Apply configured training augmentations. Use true or false. Overrides TRAINING_CONFIG.",
+    )
+    parser.add_argument(
         "--disable-ultralytics-albumentations",
         type=str_to_bool,
         default=None,
@@ -348,11 +360,35 @@ def get_training_config(args):
 
 
 def get_training_augmentations(config):
+    if not config.get("augmentation_enabled", False):
+        return DISABLED_TRAINING_AUGMENTATIONS.copy()
     augmentations = TRAINING_AUGMENTATIONS.copy()
     for key in augmentations:
         if key in config and config[key] is not None:
             augmentations[key] = config[key]
     return augmentations
+
+
+def training_augmentation_summary(config):
+    """Describe the effective runtime augmentation policy for logs and reports."""
+    if not config.get("augmentation_enabled", False):
+        return "Augmentation: Off (all transforms forced to zero; optional Albumentations disabled)"
+    active = [
+        f"{key}={value}"
+        for key, value in get_training_augmentations(config).items()
+        if value not in {0, 0.0, None, ""}
+    ]
+    albumentations = "disabled" if config.get("disable_ultralytics_albumentations", True) else "enabled"
+    detail = ", ".join(active) if active else "all explicit values are zero"
+    return f"Augmentation: On ({detail}; optional Albumentations {albumentations})"
+
+
+def should_disable_ultralytics_albumentations(config):
+    """Disable optional transforms whenever the global augmentation switch is Off."""
+    return (
+        not config.get("augmentation_enabled", False)
+        or config.get("disable_ultralytics_albumentations", True)
+    )
 
 
 def get_optimizer_train_kwargs(config):
@@ -981,6 +1017,7 @@ def main():
         ) from exc
 
     set_activation(config["activation"])
+    print(training_augmentation_summary(config), flush=True)
     model = YOLO(config["model"])
     model.add_callback("on_train_epoch_start", report_epoch_start)
     train_kwargs = {
@@ -1014,7 +1051,7 @@ def main():
 
     albumentations_context = (
         use_disabled_ultralytics_albumentations()
-        if config["disable_ultralytics_albumentations"]
+        if should_disable_ultralytics_albumentations(config)
         else nullcontext()
     )
     with albumentations_context, use_actual_confusion_matrix_axis_label():

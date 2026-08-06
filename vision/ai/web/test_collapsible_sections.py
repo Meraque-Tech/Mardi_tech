@@ -628,6 +628,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         app_source = APP_PY.read_text(encoding="utf-8")
         train_source = TRAIN_YOLOV8.read_text(encoding="utf-8")
         expected_controls = {
+            "augmentation-enabled": "augmentation_enabled",
             "disable-ultralytics-albumentations": "disable_ultralytics_albumentations",
             "mosaic": "mosaic",
             "close-mosaic": "close_mosaic",
@@ -650,11 +651,21 @@ class CollapsibleSectionTests(unittest.TestCase):
         }
 
         self.assertIn("<h3>Augmentation</h3>", markup)
+        self.assertIn('id="augmentation-enabled" type="checkbox" role="switch"', markup)
+        self.assertIn('id="augmentation-controls" disabled', markup)
+        self.assertIn("Original dataset images are never modified.", markup)
         for control_id, payload_key in expected_controls.items():
             self.assertIn(f'id="{control_id}"', markup)
             self.assertIn(f"{payload_key}:", script)
             self.assertIn(payload_key, app_source)
 
+        self.assertIn('"augmentation-enabled": false', script)
+        presets_source = script.split("const TRAINING_PRESETS =", 1)[1].split("function taskForModelSize", 1)[0]
+        self.assertNotIn('"augmentation-enabled"', presets_source)
+        self.assertIn("function syncAugmentationControls", script)
+        self.assertIn("augmentation_enabled: $(\"augmentation-enabled\").checked", script)
+        self.assertIn("--augmentation-enabled", app_source)
+        self.assertIn('not config.get("augmentation_enabled", False)', train_source)
         self.assertIn("--disable-ultralytics-albumentations", app_source)
         self.assertIn("--auto-augment", app_source)
         self.assertIn("get_training_augmentations(config)", train_source)
