@@ -70,6 +70,16 @@ const state = {
   annotationQaActiveIssueId: "",
   annotationQaReviewSeverity: "",
   annotationQaCorrectedDatasetYaml: "",
+  annotationQaQueue: "needs_review",
+  annotationQaPage: 1,
+  annotationQaPageSize: 50,
+  annotationQaFilters: { search: "", severity: "", split: "", className: "", issueType: "" },
+  annotationQaUndo: null,
+  annotationQaUndoTimer: null,
+  annotationQaReviewReturnFocus: null,
+  annotationQaZoom: 1,
+  annotationQaSelected: new Set(),
+  annotationQaCanvasRevision: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -1973,17 +1983,121 @@ function resetAnnotationQaForDataset() {
   state.annotationQaStopping = false;
   state.annotationQaApplyingFixes = false;
   state.annotationQaCorrectedDatasetYaml = "";
+  state.annotationQaQueue = "needs_review";
+  state.annotationQaPage = 1;
+  state.annotationQaFilters = { search: "", severity: "", split: "", className: "", issueType: "" };
+  state.annotationQaUndo = null;
+  state.annotationQaSelected.clear();
+  window.clearTimeout(state.annotationQaUndoTimer);
   window.clearTimeout(state.annotationQaPollTimer);
   state.annotationQaPollTimer = null;
   state.annotationQaPollRevision += 1;
   $("annotation-qa-status").textContent = state.datasetYaml ? "Not run" : "Not available";
+  $("annotation-qa-status-heading").textContent = state.datasetYaml
+    ? "Ready to scan"
+    : "Ready when your dataset is prepared";
   $("annotation-qa-detail").textContent = state.datasetYaml
     ? "SAM QA is optional. Run it before training when you want an annotation quality check."
     : "Prepare a dataset to enable optional SAM QA.";
+  $("annotation-qa-dataset-ready").textContent = state.datasetYaml
+    ? "Prepared dataset selected. The scan will not modify its labels."
+    : "Prepare a dataset to enable Annotation QA.";
   $("annotation-qa-summary").innerHTML = "";
   $("annotation-qa-issues").innerHTML = "";
+  $("annotation-qa-review-stage").hidden = true;
+  $("annotation-qa-finalize-stage").hidden = true;
+  $("annotation-qa-config-stage").open = true;
+  $("annotation-qa-run-stage").open = true;
+  $("annotation-qa-tab-count").hidden = true;
+  $("annotation-qa-search").value = "";
+  ["annotation-qa-filter-severity", "annotation-qa-filter-split", "annotation-qa-filter-class", "annotation-qa-filter-type"].forEach((id) => {
+    $(id).value = "";
+  });
+  hideAnnotationQaUndo();
   setAnnotationQaProgress(false);
+  updateAnnotationQaConfigurationSummary();
+  updateAnnotationQaWorkflow();
   syncAnnotationQaActionStates();
+}
+
+function annotationQaIsResolved(issue) {
+  return ["fix_accepted", "accepted", "false_positive", "ignored"].includes(issue?.review_status)
+    && !(issue?.audit_required && issue?.audit_status === "pending");
+}
+
+function annotationQaIssueCounts(issues = annotationQaIssuesList()) {
+  const counts = {
+    all: issues.length,
+    needsReview: 0,
+    reviewed: 0,
+    highPriority: 0,
+    audits: 0,
+    safeSuggestions: 0,
+    manual: 0,
+  };
+  issues.forEach((issue) => {
+    const unresolved = !annotationQaIsResolved(issue) && issue.review_status !== "needs_fix";
+    if (unresolved) {
+      counts.needsReview += 1;
+    } else {
+      counts.reviewed += 1;
+    }
+    if (unresolved && annotationQaSeverityKey(issue) === "high") {
+      counts.highPriority += 1;
+    }
+    if (issue.audit_required && issue.audit_status === "pending") {
+      counts.audits += 1;
+    }
+    if (unresolved && issueCanAcceptSamBox(issue)) {
+      counts.safeSuggestions += 1;
+    }
+    if (issue.review_status === "needs_fix" || (!annotationQaIsResolved(issue) && issue.difference_band === "large_disagreement")) {
+      counts.manual += 1;
+    }
+  });
+  return counts;
+}
+
+function updateAnnotationQaConfigurationSummary() {
+  if (!$("annotation-qa-scope")) {
+    return;
+  }
+  const scopeLabels = { all: "all splits", val: "validation", train: "training", test: "test" };
+  const presetLabels = { balanced: "Balanced review", lenient: "Quick check", strict: "Thorough review" };
+  const modeLabels = { shadow: "suggestions only", automatic: "safe corrections + audit", manual: "human decisions only" };
+  const scope = $("annotation-qa-scope").value;
+  const preset = $("annotation-qa-preset").value;
+  const mode = $("annotation-qa-auto-mode").value;
+  $("annotation-qa-config-summary").textContent = `${presetLabels[preset]} · ${scopeLabels[scope]} · ${modeLabels[mode]}`;
+  const modeText = mode === "automatic"
+    ? "Policy-approved SAM replacements may be queued automatically; sampled decisions must be audited before finalization."
+    : mode === "manual"
+      ? "Every flagged annotation requires a human decision; no automatic corrections will be queued."
+      : "SAM may suggest safer boxes, but nothing will be queued without a reviewer.";
+  $("annotation-qa-configuration-explainer").textContent = `Scan ${scopeLabels[scope]} with ${presetLabels[preset].toLowerCase()} sensitivity. ${modeText}`;
+}
+
+function updateAnnotationQaWorkflow() {
+  const hasReport = Boolean(state.annotationQaReport);
+  const running = state.annotationQaRunning || state.annotationQaStopping;
+  const counts = annotationQaIssueCounts();
+  const current = running ? "run" : hasReport ? (counts.needsReview || counts.audits ? "review" : "finalize") : "config";
+  const order = ["config", "run", "review", "finalize"];
+  order.forEach((stage, index) => {
+    const indicator = $(`qa-stage-indicator-${stage}`);
+    if (!indicator) {
+      return;
+    }
+    const currentIndex = order.indexOf(current);
+    indicator.classList.toggle("is-active", stage === current);
+    indicator.classList.toggle("is-complete", index < currentIndex || (stage === "review" && hasReport && !counts.needsReview && !counts.audits));
+  });
+  $("annotation-qa-review-stage").hidden = !hasReport;
+  $("annotation-qa-finalize-stage").hidden = !hasReport;
+  $("annotation-qa-review-progress-label").textContent = `${counts.reviewed} of ${counts.all} reviewed`;
+  const tabCount = $("annotation-qa-tab-count");
+  tabCount.textContent = String(counts.needsReview);
+  tabCount.hidden = !hasReport || counts.needsReview === 0;
 }
 
 function setAnnotationQaProgress(visible, job = {}) {
@@ -2072,6 +2186,54 @@ function renderAnnotationQaFixSummary() {
   summary.textContent = `Queued corrections: ${parts.join(", ")}.`;
 }
 
+function renderAnnotationQaCompletionChecklist() {
+  const container = $("annotation-qa-completion-checklist");
+  if (!container || !state.annotationQaReport) {
+    if (container) {
+      container.innerHTML = "";
+    }
+    return;
+  }
+  const counts = annotationQaIssueCounts();
+  const corrections = annotationQaAcceptedFixCount();
+  const audits = annotationQaPendingAuditCount();
+  const reviewComplete = counts.needsReview === 0;
+  const auditComplete = audits === 0;
+  const hasCorrections = corrections > 0;
+  const item = (complete, text, blockedText = text, queue = "") => {
+    const tag = !complete && queue ? "button" : "div";
+    const attributes = !complete && queue ? ` type="button" data-qa-open-queue="${queue}"` : "";
+    return `
+    <${tag} class="qa-checklist-item ${complete ? "is-complete" : "is-blocked"}"${attributes}>
+      <span>${complete ? "✓" : "!"}</span>
+      <strong>${escapeHtml(complete ? text : blockedText)}</strong>
+    </${tag}>
+  `;
+  };
+  container.innerHTML = [
+    item(reviewComplete, "All review decisions complete", `${counts.needsReview} annotation${counts.needsReview === 1 ? "" : "s"} still need review`, "needs_review"),
+    item(auditComplete, "Required audits complete", `${audits} required audit${audits === 1 ? "" : "s"} pending`, "audits"),
+    item(hasCorrections || Boolean(state.annotationQaCorrectedDatasetYaml), `${corrections} correction${corrections === 1 ? "" : "s"} ready`, "No corrections have been queued"),
+  ].join("");
+  container.onclick = (event) => {
+    const trigger = event.target.closest("[data-qa-open-queue]");
+    if (!trigger) {
+      return;
+    }
+    state.annotationQaQueue = trigger.dataset.qaOpenQueue;
+    state.annotationQaPage = 1;
+    renderAnnotationQaIssues();
+    $("annotation-qa-review-stage").scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  $("annotation-qa-finalize-state").textContent = state.annotationQaCorrectedDatasetYaml
+    ? "Corrected dataset ready"
+    : audits
+      ? `${audits} audit${audits === 1 ? "" : "s"} blocking finalization`
+      : hasCorrections
+        ? `${corrections} correction${corrections === 1 ? "" : "s"} ready`
+        : "No corrections queued";
+}
+
 function syncAnnotationQaActionStates() {
   const hasDataset = Boolean(state.datasetYaml);
   const trainingLocked = state.running || state.isStarting || state.isStopping;
@@ -2079,9 +2241,10 @@ function syncAnnotationQaActionStates() {
   const preparing = state.isPreparing || state.isDetecting;
   const running = state.annotationQaRunning || state.annotationQaStopping || state.annotationQaApplyingFixes;
   $("run-annotation-qa").disabled = !hasDataset || preparing || trainingLocked || testLocked || running;
-  $("run-annotation-qa").textContent = state.annotationQaRunning ? "Running..." : "Run SAM QA";
+  $("run-annotation-qa").textContent = state.annotationQaRunning ? "Running scan..." : "Run Annotation QA";
   $("run-annotation-qa").setAttribute("aria-busy", String(state.annotationQaRunning));
   $("stop-annotation-qa").disabled = !state.annotationQaRunning || state.annotationQaStopping;
+  $("stop-annotation-qa").hidden = !state.annotationQaRunning && !state.annotationQaStopping;
   $("stop-annotation-qa").textContent = state.annotationQaStopping ? "Stopping..." : "Stop";
   $("stop-annotation-qa").setAttribute("aria-busy", String(state.annotationQaStopping));
   [
@@ -2107,6 +2270,8 @@ function syncAnnotationQaActionStates() {
   $("apply-annotation-qa-fixes").textContent = state.annotationQaApplyingFixes ? "Creating..." : "Create Corrected Dataset";
   $("download-corrected-dataset").disabled = !state.annotationQaCorrectedDatasetYaml || state.downloads.has("corrected_dataset");
   renderAnnotationQaFixSummary();
+  renderAnnotationQaCompletionChecklist();
+  updateAnnotationQaWorkflow();
 }
 
 function annotationQaStatusLabel(status) {
@@ -2127,7 +2292,7 @@ function annotationQaReviewStatusLabel(status) {
     fix_accepted: "correction queued",
     needs_fix: "manual fix",
     accepted: "YOLO kept",
-    false_positive: "false positive",
+    false_positive: "suspected false positive",
     ignored: "ignored",
   };
   return labels[status] || String(status || "").replace(/_/g, " ");
@@ -2139,27 +2304,36 @@ function renderAnnotationQaSummary(summary = {}) {
     container.innerHTML = "";
     return;
   }
+  const issues = annotationQaIssuesList();
+  const counts = annotationQaIssueCounts(issues);
+  const percent = counts.all ? Math.round((counts.reviewed / counts.all) * 100) : 100;
   container.innerHTML = `
     <div class="qa-summary-grid">
-      <div><span>Images</span><strong>${summary.images_scanned || 0}</strong></div>
-      <div><span>Labels</span><strong>${summary.labels_checked || 0}</strong></div>
-      <div><span>YOLO kept</span><strong>${summary.yolo_boxes_accepted || 0}</strong></div>
-      <div><span>Tolerance</span><strong>${Number(summary.box_tolerance_percent ?? 5).toFixed(1)}%</strong></div>
-      <div><span>SAM maximum</span><strong>${Number(summary.sam_max_difference_percent ?? 25).toFixed(1)}%</strong></div>
-      <div><span>Reviewable</span><strong>${summary.moderate_disagreements || 0}</strong></div>
-      <div><span>Manual only</span><strong>${summary.large_disagreements || 0}</strong></div>
-      <div><span>SAM available</span><strong>${summary.sam_replacements_available || 0}</strong></div>
-      <div><span>SAM blocked</span><strong>${summary.sam_replacements_blocked || 0}</strong></div>
-      <div><span>Auto kept</span><strong>${summary.qa_decisions?.auto_keep_yolo || summary.yolo_boxes_accepted || 0}</strong></div>
-      <div><span>Auto replace</span><strong>${summary.qa_decisions?.auto_replace_sam || 0}</strong></div>
-      <div><span>Human review</span><strong>${summary.qa_decisions?.human_review || 0}</strong></div>
-      <div><span>Manual only</span><strong>${summary.qa_decisions?.manual_only || 0}</strong></div>
-      <div><span>Audits pending</span><strong>${summary.audits_pending || 0}</strong></div>
-      <div><span>High</span><strong>${summary.high || 0}</strong></div>
-      <div><span>Medium</span><strong>${summary.medium || 0}</strong></div>
-      <div><span>Low</span><strong>${summary.low || 0}</strong></div>
+      <div class="is-actionable"><span>Needs review</span><strong>${counts.needsReview}</strong></div>
+      <div class="is-priority"><span>High priority</span><strong>${counts.highPriority}</strong></div>
+      <div><span>Safe SAM suggestions</span><strong>${counts.safeSuggestions}</strong></div>
+      <div><span>Audits pending</span><strong>${counts.audits}</strong></div>
+      <div><span>Reviewed</span><strong>${counts.reviewed}/${counts.all}</strong></div>
+      <div class="qa-review-progress">
+        <span>Review progress</span>
+        <strong>${percent}%</strong>
+        <div class="qa-review-progress-track" role="progressbar" aria-label="Annotation review progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>
+      </div>
     </div>
   `;
+  const runDetails = $("annotation-qa-run-detail-content");
+  if (runDetails) {
+    runDetails.innerHTML = `
+      <div><span>Images scanned</span><strong>${summary.images_scanned || 0}</strong></div>
+      <div><span>Labels checked</span><strong>${summary.labels_checked || 0}</strong></div>
+      <div><span>Model</span><strong>${escapeHtml(summary.model || summary.sam_model || $("annotation-qa-model").value)}</strong></div>
+      <div><span>Scope</span><strong>${escapeHtml(summary.scope || $("annotation-qa-scope").value)}</strong></div>
+      <div><span>Box tolerance</span><strong>${Number(summary.box_tolerance_percent ?? 5).toFixed(1)}%</strong></div>
+      <div><span>SAM difference limit</span><strong>${Number(summary.sam_max_difference_percent ?? 25).toFixed(1)}%</strong></div>
+      <div><span>YOLO kept automatically</span><strong>${summary.qa_decisions?.auto_keep_yolo || summary.yolo_boxes_accepted || 0}</strong></div>
+      <div><span>SAM replacements blocked</span><strong>${summary.sam_replacements_blocked || 0}</strong></div>
+    `;
+  }
 }
 
 function annotationQaDecisionLabel(decision) {
@@ -2172,13 +2346,17 @@ function annotationQaDecisionLabel(decision) {
   return labels[String(decision || "")] || "Human review";
 }
 
-function annotationQaPreviewUrl(issue) {
-  const preview = String(issue.preview || "");
+function annotationQaPreviewAssetUrl(issue, field = "preview") {
+  const preview = String(issue?.[field] || "");
   if (!preview || !state.annotationQaJobId) {
     return "";
   }
   const name = preview.split("/").pop();
   return `/api/annotation-qa/preview/${encodeURIComponent(state.annotationQaJobId)}/${encodeURIComponent(name)}`;
+}
+
+function annotationQaPreviewUrl(issue) {
+  return annotationQaPreviewAssetUrl(issue, "preview");
 }
 
 function annotationQaSeverityKey(issue) {
@@ -2218,11 +2396,16 @@ function annotationQaIssueTypeLabel(issueType) {
   return readable ? `${readable.charAt(0).toUpperCase()}${readable.slice(1)}` : "Unknown issue";
 }
 
+function issueCanBulkAcceptSamBox(issue) {
+  return issueCanAcceptSamBox(issue) && !(issue.audit_required && issue.audit_status === "pending");
+}
+
 function annotationQaIssueRows(issues) {
   return issues.map((issue) => {
     const previewUrl = annotationQaPreviewUrl(issue);
     const imageName = escapeHtml(issue.image_name || "image");
-    const splitClass = escapeHtml(`${issue.split || ""} · ${issue.class_name || ""}`);
+    const imageIssueCount = annotationQaIssuesList().filter((item) => item.image === issue.image).length;
+    const splitClass = escapeHtml(`${issue.split || ""} · ${issue.class_name || ""}${imageIssueCount > 1 ? ` · ${imageIssueCount} issues on image` : ""}`);
     const issueType = escapeHtml(annotationQaIssueTypeLabel(issue.issue_type));
     const decision = escapeHtml(annotationQaDecisionLabel(issue.qa_decision));
     const issueId = escapeHtml(issue.issue_id);
@@ -2230,26 +2413,26 @@ function annotationQaIssueRows(issues) {
     const thumb = previewUrl
       ? `<img src="${previewUrl}" alt="">`
       : '<span class="qa-no-preview">No preview</span>';
+    const selector = state.annotationQaQueue === "safe_suggestions" && issueCanBulkAcceptSamBox(issue)
+      ? `<label class="qa-select-issue"><input type="checkbox" data-qa-select="${issueId}"${state.annotationQaSelected.has(issue.issue_id) ? " checked" : ""}> Select</label>`
+      : "";
     return `
       <tr class="qa-issue-row" data-qa-open="${issueId}" data-qa-severity="${severity}">
         <td class="qa-preview-cell">
           <button class="qa-preview-button" type="button" data-qa-open="${issueId}" data-qa-severity="${severity}" aria-label="Review ${imageName}">
             ${thumb}
           </button>
+          ${selector}
         </td>
         <td>
           <strong title="${imageName}">${imageName}</strong>
           <small title="${splitClass}">${splitClass}</small>
         </td>
-        <td title="${issueType}">${issueType}</td>
+        <td title="${issueType}"><span class="qa-severity ${severity}">${severity}</span><strong>${issueType}</strong></td>
         <td>${metricText(issue.score)}</td>
         <td title="${decision}">${decision}</td>
         <td>
-          <select data-qa-issue="${issueId}">
-            ${["unreviewed", "fix_accepted", "needs_fix", "accepted", "false_positive", "ignored"].map((status) => (
-              `<option value="${status}"${status === issue.review_status ? " selected" : ""}>${annotationQaReviewStatusLabel(status)}</option>`
-            )).join("")}
-          </select>
+          <span class="qa-status-label ${escapeHtml(issue.review_status || "unreviewed")}">${escapeHtml(annotationQaReviewStatusLabel(issue.review_status))}</span>
           <button class="secondary compact qa-review-inline-button" type="button" data-qa-open="${issueId}" data-qa-severity="${severity}">Review</button>
         </td>
       </tr>
@@ -2257,13 +2440,9 @@ function annotationQaIssueRows(issues) {
   }).join("");
 }
 
-function annotationQaIssueTable(issues, severity, limit = 30) {
-  const visibleIssues = issues.slice(0, limit);
-  const rows = annotationQaIssueRows(visibleIssues);
+function annotationQaIssueTable(issues, severity) {
+  const rows = annotationQaIssueRows(issues);
   const title = `${severity.charAt(0).toUpperCase()}${severity.slice(1)} Severity`;
-  const truncated = issues.length > visibleIssues.length
-    ? `<p class="field-note">Showing first ${visibleIssues.length} of ${issues.length} ${severity} issues. Download CSV for the full report.</p>`
-    : "";
   return `
     <section class="qa-severity-section ${severity}" data-qa-severity="${severity}">
       <div class="qa-severity-header">
@@ -2285,29 +2464,188 @@ function annotationQaIssueTable(issues, severity, limit = 30) {
           <tbody>${rows}</tbody>
         </table>
       </div>
-      ${truncated}
     </section>
   `;
 }
 
-function renderAnnotationQaIssues(issues = []) {
-  const container = $("annotation-qa-issues");
-  if (!issues.length) {
-    container.innerHTML = '<p class="qa-empty">No annotation QA issues were flagged.</p>';
+function annotationQaQueueMatches(issue, queue) {
+  const unresolved = !annotationQaIsResolved(issue) && issue.review_status !== "needs_fix";
+  if (queue === "needs_review") {
+    return unresolved;
+  }
+  if (queue === "audits") {
+    return issue.audit_required && issue.audit_status === "pending";
+  }
+  if (queue === "safe_suggestions") {
+    return unresolved && issueCanAcceptSamBox(issue);
+  }
+  if (queue === "manual") {
+    return issue.review_status === "needs_fix" || (!annotationQaIsResolved(issue) && issue.difference_band === "large_disagreement");
+  }
+  if (queue === "resolved") {
+    return annotationQaIsResolved(issue);
+  }
+  return true;
+}
+
+function annotationQaFilteredIssues() {
+  const filters = state.annotationQaFilters;
+  const severityRank = { high: 0, medium: 1, low: 2 };
+  return annotationQaIssuesList()
+    .filter((issue) => annotationQaQueueMatches(issue, state.annotationQaQueue))
+    .filter((issue) => !filters.search || String(issue.image_name || "").toLowerCase().includes(filters.search))
+    .filter((issue) => !filters.severity || annotationQaSeverityKey(issue) === filters.severity)
+    .filter((issue) => !filters.split || String(issue.split || "") === filters.split)
+    .filter((issue) => !filters.className || String(issue.class_name || "") === filters.className)
+    .filter((issue) => !filters.issueType || String(issue.issue_type || "") === filters.issueType)
+    .sort((left, right) => (
+      (severityRank[annotationQaSeverityKey(left)] - severityRank[annotationQaSeverityKey(right)])
+      || (Number(right.score || 0) - Number(left.score || 0))
+      || String(left.image_name || "").localeCompare(String(right.image_name || ""))
+    ));
+}
+
+function setAnnotationQaFilterOptions(id, emptyLabel, values, labeler = (value) => value) {
+  const select = $(id);
+  const selected = select.value;
+  select.innerHTML = "";
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = emptyLabel;
+  select.appendChild(empty);
+  values.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = labeler(value);
+    select.appendChild(option);
+  });
+  select.value = values.includes(selected) ? selected : "";
+}
+
+function renderAnnotationQaFilterOptions() {
+  const issues = annotationQaIssuesList();
+  const values = (key) => [...new Set(issues.map((issue) => String(issue[key] || "")).filter(Boolean))].sort();
+  setAnnotationQaFilterOptions("annotation-qa-filter-severity", "All severities", ["high", "medium", "low"]);
+  setAnnotationQaFilterOptions("annotation-qa-filter-split", "All splits", values("split"));
+  setAnnotationQaFilterOptions("annotation-qa-filter-class", "All classes", values("class_name"));
+  setAnnotationQaFilterOptions("annotation-qa-filter-type", "All issue types", values("issue_type"), annotationQaIssueTypeLabel);
+}
+
+function renderAnnotationQaQueueCounts() {
+  const issues = annotationQaIssuesList();
+  document.querySelectorAll("[data-qa-queue]").forEach((button) => {
+    const queue = button.dataset.qaQueue;
+    const count = issues.filter((issue) => annotationQaQueueMatches(issue, queue)).length;
+    button.querySelector("span").textContent = String(count);
+    const active = queue === state.annotationQaQueue;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+}
+
+function renderAnnotationQaBulkToolbar(pageIssues = []) {
+  const toolbar = $("annotation-qa-bulk-toolbar");
+  const available = state.annotationQaQueue === "safe_suggestions";
+  toolbar.hidden = !available;
+  if (!available) {
     return;
   }
+  const pageIds = pageIssues.filter(issueCanBulkAcceptSamBox).map((issue) => issue.issue_id);
+  const selectedOnPage = pageIds.filter((id) => state.annotationQaSelected.has(id)).length;
+  $("annotation-qa-select-page").checked = pageIds.length > 0 && selectedOnPage === pageIds.length;
+  $("annotation-qa-select-page").indeterminate = selectedOnPage > 0 && selectedOnPage < pageIds.length;
+  $("annotation-qa-select-page").disabled = pageIds.length === 0;
+  const selectedCount = state.annotationQaSelected.size;
+  $("annotation-qa-selected-count").textContent = `${selectedCount} selected`;
+  $("annotation-qa-bulk-accept-sam").disabled = selectedCount === 0;
+}
+
+async function bulkAcceptAnnotationQaSamBoxes() {
+  const issueIds = [...state.annotationQaSelected].filter((issueId) => {
+    const issue = annotationQaIssueById(issueId);
+    return issue && issueCanBulkAcceptSamBox(issue);
+  });
+  if (!issueIds.length || !window.confirm(`Queue ${issueIds.length} policy-approved SAM suggestion${issueIds.length === 1 ? "" : "s"}?`)) {
+    return;
+  }
+  const button = $("annotation-qa-bulk-accept-sam");
+  button.disabled = true;
+  button.textContent = `Queueing 0/${issueIds.length}...`;
+  try {
+    for (let index = 0; index < issueIds.length; index += 1) {
+      await apiJson(`/api/annotation-qa/fix/${encodeURIComponent(state.annotationQaJobId)}`, {
+        method: "POST",
+        body: JSON.stringify({ issue_id: issueIds[index], fix: "sam_box" }),
+      });
+      button.textContent = `Queueing ${index + 1}/${issueIds.length}...`;
+    }
+    state.annotationQaSelected.clear();
+    await loadAnnotationQaResults(state.annotationQaJobId);
+    setMessage(`${issueIds.length} safety-gated SAM suggestion${issueIds.length === 1 ? " was" : "s were"} queued.`);
+  } catch (error) {
+    await loadAnnotationQaResults(state.annotationQaJobId);
+    setMessage(`Bulk SAM review stopped: ${error.message}`, true);
+  } finally {
+    button.textContent = "Queue selected SAM suggestions";
+    renderAnnotationQaBulkToolbar();
+  }
+}
+
+function renderAnnotationQaIssues() {
+  const container = $("annotation-qa-issues");
+  const allIssues = annotationQaIssuesList();
+  renderAnnotationQaQueueCounts();
+  if (!allIssues.length) {
+    container.innerHTML = '<p class="qa-empty">No annotation QA issues were flagged.</p>';
+    $("annotation-qa-queue-summary").textContent = "The scan did not find any annotations requiring review.";
+    $("annotation-qa-pagination").hidden = true;
+    renderAnnotationQaBulkToolbar();
+    return;
+  }
+  const issues = annotationQaFilteredIssues();
+  if (!issues.length) {
+    container.innerHTML = '<p class="qa-empty">No issues match this queue and filter combination.</p>';
+    $("annotation-qa-queue-summary").textContent = "0 matching issues";
+    $("annotation-qa-pagination").hidden = true;
+    renderAnnotationQaBulkToolbar();
+    return;
+  }
+  const totalPages = Math.max(1, Math.ceil(issues.length / state.annotationQaPageSize));
+  state.annotationQaPage = Math.min(Math.max(1, state.annotationQaPage), totalPages);
+  const start = (state.annotationQaPage - 1) * state.annotationQaPageSize;
+  const pageIssues = issues.slice(start, start + state.annotationQaPageSize);
+  const validSelected = new Set(issues.filter(issueCanBulkAcceptSamBox).map((issue) => issue.issue_id));
+  [...state.annotationQaSelected].forEach((issueId) => {
+    if (!validSelected.has(issueId)) {
+      state.annotationQaSelected.delete(issueId);
+    }
+  });
   const groups = {
-    high: issues.filter((issue) => issue.severity === "high"),
-    medium: issues.filter((issue) => issue.severity === "medium"),
-    low: issues.filter((issue) => issue.severity !== "high" && issue.severity !== "medium"),
+    high: pageIssues.filter((issue) => issue.severity === "high"),
+    medium: pageIssues.filter((issue) => issue.severity === "medium"),
+    low: pageIssues.filter((issue) => issue.severity !== "high" && issue.severity !== "medium"),
   };
   container.innerHTML = ["high", "medium", "low"]
     .filter((severity) => groups[severity].length)
     .map((severity) => annotationQaIssueTable(groups[severity], severity))
     .join("");
-  container.querySelectorAll("[data-qa-issue]").forEach((select) => {
-    select.addEventListener("click", (event) => event.stopPropagation());
-    select.addEventListener("change", () => markAnnotationQaIssue(select.dataset.qaIssue, select.value));
+  $("annotation-qa-queue-summary").textContent = `Showing ${start + 1}–${Math.min(start + state.annotationQaPageSize, issues.length)} of ${issues.length} matching issues.`;
+  const pagination = $("annotation-qa-pagination");
+  pagination.hidden = totalPages <= 1;
+  $("annotation-qa-page-label").textContent = `Page ${state.annotationQaPage} of ${totalPages}`;
+  $("annotation-qa-page-prev").disabled = state.annotationQaPage <= 1;
+  $("annotation-qa-page-next").disabled = state.annotationQaPage >= totalPages;
+  renderAnnotationQaBulkToolbar(pageIssues);
+  container.querySelectorAll("[data-qa-select]").forEach((checkbox) => {
+    checkbox.addEventListener("click", (event) => event.stopPropagation());
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        state.annotationQaSelected.add(checkbox.dataset.qaSelect);
+      } else {
+        state.annotationQaSelected.delete(checkbox.dataset.qaSelect);
+      }
+      renderAnnotationQaBulkToolbar(pageIssues);
+    });
   });
   container.onclick = (event) => {
     const trigger = event.target.closest("[data-qa-open]");
@@ -2317,6 +2655,7 @@ function renderAnnotationQaIssues(issues = []) {
     event.preventDefault();
     event.stopPropagation();
     const severity = trigger.dataset.qaSeverity || trigger.closest("[data-qa-severity]")?.dataset.qaSeverity || "";
+    state.annotationQaReviewReturnFocus = trigger;
     openAnnotationQaReview(trigger.dataset.qaOpen, severity);
   };
 }
@@ -2325,8 +2664,11 @@ async function loadAnnotationQaResults(jobId) {
   const report = await apiJson(`/api/annotation-qa/results/${encodeURIComponent(jobId)}`);
   state.annotationQaReport = report;
   state.annotationQaCorrectedDatasetYaml = report.summary?.corrected_dataset_yaml || state.annotationQaCorrectedDatasetYaml || "";
+  renderAnnotationQaFilterOptions();
   renderAnnotationQaSummary(report.summary || {});
-  renderAnnotationQaIssues(Array.isArray(report.issues) ? report.issues : []);
+  renderAnnotationQaIssues();
+  $("annotation-qa-config-stage").open = false;
+  $("annotation-qa-run-stage").open = false;
   syncAnnotationQaActionStates();
 }
 
@@ -2336,6 +2678,17 @@ function renderAnnotationQaJob(job) {
   state.annotationQaRunning = status === "queued" || status === "running";
   state.annotationQaStopping = status === "stopping";
   $("annotation-qa-status").textContent = annotationQaStatusLabel(status);
+  $("annotation-qa-status-heading").textContent = status === "completed"
+    ? "Scan complete"
+    : status === "failed"
+      ? "Scan failed"
+      : status === "stopped"
+        ? "Scan stopped"
+        : state.annotationQaStopping
+          ? "Stopping scan"
+          : state.annotationQaRunning
+            ? "Scanning annotations"
+            : "Ready to scan";
   $("annotation-qa-detail").textContent = job.detail || "";
   $("annotation-qa-detail").title = job.detail || "";
   setAnnotationQaProgress(state.annotationQaRunning || state.annotationQaStopping, job);
@@ -2350,6 +2703,10 @@ function renderAnnotationQaJob(job) {
     medium: job.medium,
     low: job.low,
   });
+  if (state.annotationQaRunning || state.annotationQaStopping) {
+    $("annotation-qa-config-stage").open = false;
+    $("annotation-qa-run-stage").open = true;
+  }
   syncActionStates();
 }
 
@@ -2383,6 +2740,7 @@ function pollAnnotationQa(jobId) {
       state.annotationQaStopping = false;
       setAnnotationQaProgress(false);
       $("annotation-qa-status").textContent = "Failed";
+      $("annotation-qa-status-heading").textContent = "Scan failed";
       $("annotation-qa-detail").textContent = error.message;
       syncActionStates();
     }
@@ -2410,8 +2768,12 @@ async function runAnnotationQa() {
     return;
   }
   state.annotationQaReport = null;
+  state.annotationQaQueue = "needs_review";
+  state.annotationQaPage = 1;
   $("annotation-qa-issues").innerHTML = "";
   $("annotation-qa-summary").innerHTML = "";
+  $("annotation-qa-review-stage").hidden = true;
+  $("annotation-qa-finalize-stage").hidden = true;
   try {
     const tolerance = Number($("annotation-qa-tolerance").value);
     const maximumDifference = Number($("annotation-qa-max-difference").value);
@@ -2475,6 +2837,7 @@ async function runAnnotationQa() {
   } catch (error) {
     setMessage(error.message, true);
     $("annotation-qa-status").textContent = "Failed";
+    $("annotation-qa-status-heading").textContent = "Scan could not start";
     $("annotation-qa-detail").textContent = error.message;
     syncActionStates();
   }
@@ -2499,7 +2862,7 @@ async function stopAnnotationQa() {
 
 async function markAnnotationQaIssue(issueId, status) {
   if (!state.annotationQaJobId || !issueId) {
-    return;
+    return false;
   }
   try {
     await apiJson(`/api/annotation-qa/mark/${encodeURIComponent(state.annotationQaJobId)}`, {
@@ -2521,9 +2884,6 @@ async function markAnnotationQaIssue(issueId, status) {
         }
       }
     }
-    document.querySelectorAll(`[data-qa-issue="${CSS.escape(issueId)}"]`).forEach((select) => {
-      select.value = status;
-    });
     if (state.annotationQaActiveIssueId === issueId && $("qa-review-status")) {
       $("qa-review-status").value = status;
     }
@@ -2533,14 +2893,19 @@ async function markAnnotationQaIssue(issueId, status) {
         renderAnnotationQaReview(issue);
       }
     }
+    renderAnnotationQaSummary(state.annotationQaReport?.summary || {});
+    renderAnnotationQaIssues();
+    syncAnnotationQaActionStates();
+    return true;
   } catch (error) {
     setMessage(error.message, true);
+    return false;
   }
 }
 
 async function acceptAnnotationQaSamBox(issueId) {
   if (!state.annotationQaJobId || !issueId) {
-    return;
+    return false;
   }
   try {
     const result = await apiJson(`/api/annotation-qa/fix/${encodeURIComponent(state.annotationQaJobId)}`, {
@@ -2559,24 +2924,25 @@ async function acceptAnnotationQaSamBox(issueId) {
         }
       }
     }
-    document.querySelectorAll(`[data-qa-issue="${CSS.escape(issueId)}"]`).forEach((select) => {
-      select.value = result.review_status || "fix_accepted";
-    });
     setMessage("SAM box queued for this issue. Create the corrected dataset when you are ready.");
+    renderAnnotationQaSummary(state.annotationQaReport?.summary || {});
+    renderAnnotationQaIssues();
     syncAnnotationQaActionStates();
+    return true;
   } catch (error) {
     setMessage(error.message, true);
+    return false;
   }
 }
 
 async function acceptAnnotationQaClassChange(issueId) {
   if (!state.annotationQaJobId || !issueId || !$("qa-review-class-fix")) {
-    return;
+    return false;
   }
   const classId = Number($("qa-review-class-fix").value);
   if (!Number.isInteger(classId) || classId < 0) {
     setMessage("Choose a valid corrected class first.", true);
-    return;
+    return false;
   }
   try {
     const result = await apiJson(`/api/annotation-qa/fix/${encodeURIComponent(state.annotationQaJobId)}`, {
@@ -2594,13 +2960,14 @@ async function acceptAnnotationQaClassChange(issueId) {
         }
       }
     }
-    document.querySelectorAll(`[data-qa-issue="${CSS.escape(issueId)}"]`).forEach((select) => {
-      select.value = result.review_status || "fix_accepted";
-    });
     setMessage("Class change queued for this issue. Create the corrected dataset when you are ready.");
+    renderAnnotationQaSummary(state.annotationQaReport?.summary || {});
+    renderAnnotationQaIssues();
     syncAnnotationQaActionStates();
+    return true;
   } catch (error) {
     setMessage(error.message, true);
+    return false;
   }
 }
 
@@ -2656,20 +3023,138 @@ function annotationQaIssuesList() {
   return Array.isArray(state.annotationQaReport?.issues) ? state.annotationQaReport.issues : [];
 }
 
-function annotationQaReviewIssuesList(currentIssue = null) {
-  const allIssues = annotationQaIssuesList();
-  if (currentIssue?.image) {
-    const sameImage = allIssues
-      .filter((issue) => issue.image === currentIssue.image)
-      .sort((left, right) => Number(left.label_row || 0) - Number(right.label_row || 0));
-    if (sameImage.length > 1) {
-      return sameImage;
-    }
+function annotationQaDecisionSnapshot(issue) {
+  return {
+    issueId: issue.issue_id,
+    reviewStatus: issue.review_status || "unreviewed",
+    acceptedFix: issue.accepted_fix || "",
+    acceptedClassId: issue.accepted_class_id,
+    acceptedClassName: issue.accepted_class_name || "",
+  };
+}
+
+function hideAnnotationQaUndo() {
+  window.clearTimeout(state.annotationQaUndoTimer);
+  state.annotationQaUndoTimer = null;
+  state.annotationQaUndo = null;
+  if ($("qa-undo-toast")) {
+    $("qa-undo-toast").hidden = true;
   }
-  const severity = state.annotationQaReviewSeverity || (currentIssue ? annotationQaSeverityKey(currentIssue) : "");
-  return severity
-    ? allIssues.filter((issue) => annotationQaSeverityKey(issue) === severity)
-    : allIssues;
+}
+
+function showAnnotationQaUndo(snapshot, message) {
+  state.annotationQaUndo = snapshot;
+  $("qa-undo-message").textContent = message;
+  $("qa-undo-toast").hidden = false;
+  window.clearTimeout(state.annotationQaUndoTimer);
+  state.annotationQaUndoTimer = window.setTimeout(hideAnnotationQaUndo, 8000);
+}
+
+async function undoAnnotationQaDecision() {
+  const snapshot = state.annotationQaUndo;
+  if (!snapshot) {
+    return;
+  }
+  hideAnnotationQaUndo();
+  try {
+    await apiJson(`/api/annotation-qa/mark/${encodeURIComponent(state.annotationQaJobId)}`, {
+      method: "POST",
+      body: JSON.stringify({ issue_id: snapshot.issueId, status: snapshot.reviewStatus }),
+    });
+    if (snapshot.acceptedFix === "sam_box") {
+      await apiJson(`/api/annotation-qa/fix/${encodeURIComponent(state.annotationQaJobId)}`, {
+        method: "POST",
+        body: JSON.stringify({ issue_id: snapshot.issueId, fix: "sam_box" }),
+      });
+    }
+    if (snapshot.acceptedClassId !== null && snapshot.acceptedClassId !== undefined) {
+      await apiJson(`/api/annotation-qa/fix/${encodeURIComponent(state.annotationQaJobId)}`, {
+        method: "POST",
+        body: JSON.stringify({ issue_id: snapshot.issueId, fix: "class", class_id: snapshot.acceptedClassId }),
+      });
+    }
+    await loadAnnotationQaResults(state.annotationQaJobId);
+    openAnnotationQaReview(snapshot.issueId);
+    setMessage("Annotation QA decision restored.");
+  } catch (error) {
+    setMessage(`Could not undo the QA decision: ${error.message}`, true);
+  }
+}
+
+function annotationQaNextIssueId(issueId) {
+  const issues = annotationQaReviewIssuesList();
+  const index = issues.findIndex((issue) => issue.issue_id === issueId);
+  const after = index >= 0 ? issues.slice(index + 1) : issues;
+  const before = index > 0 ? issues.slice(0, index) : [];
+  return [...after, ...before].find((issue) => !annotationQaIsResolved(issue) && issue.review_status !== "needs_fix")?.issue_id
+    || after[0]?.issue_id
+    || before[0]?.issue_id
+    || "";
+}
+
+function advanceAnnotationQaReview(nextIssueId) {
+  if (!$("qa-review-auto-advance").checked) {
+    return;
+  }
+  if (nextIssueId && annotationQaIssueById(nextIssueId)) {
+    openAnnotationQaReview(nextIssueId);
+  } else {
+    closeAnnotationQaReview();
+    setMessage("This review queue is complete.");
+  }
+}
+
+async function decideAnnotationQaStatus(status, message) {
+  const issue = annotationQaIssueById(state.annotationQaActiveIssueId);
+  if (!issue) {
+    return;
+  }
+  const snapshot = annotationQaDecisionSnapshot(issue);
+  const nextIssueId = annotationQaNextIssueId(issue.issue_id);
+  const saved = await markAnnotationQaIssue(issue.issue_id, status);
+  if (saved) {
+    showAnnotationQaUndo(snapshot, `${message} Saved.`);
+    advanceAnnotationQaReview(nextIssueId);
+  }
+}
+
+async function decideAnnotationQaSamBox() {
+  const issue = annotationQaIssueById(state.annotationQaActiveIssueId);
+  if (!issue || !issueCanAcceptSamBox(issue)) {
+    return;
+  }
+  const snapshot = annotationQaDecisionSnapshot(issue);
+  const nextIssueId = annotationQaNextIssueId(issue.issue_id);
+  const saved = await acceptAnnotationQaSamBox(issue.issue_id);
+  if (saved) {
+    showAnnotationQaUndo(snapshot, "SAM suggestion queued. Saved.");
+    advanceAnnotationQaReview(nextIssueId);
+  }
+}
+
+async function decideAnnotationQaClassChange() {
+  const issue = annotationQaIssueById(state.annotationQaActiveIssueId);
+  if (!issue) {
+    return;
+  }
+  const snapshot = annotationQaDecisionSnapshot(issue);
+  const nextIssueId = annotationQaNextIssueId(issue.issue_id);
+  const saved = await acceptAnnotationQaClassChange(issue.issue_id);
+  if (saved) {
+    showAnnotationQaUndo(snapshot, "Class correction queued. Saved.");
+    advanceAnnotationQaReview(nextIssueId);
+  }
+}
+
+function annotationQaReviewIssuesList(currentIssue = null) {
+  const filtered = annotationQaFilteredIssues();
+  if (currentIssue && !filtered.some((issue) => issue.issue_id === currentIssue.issue_id)) {
+    return [currentIssue, ...filtered];
+  }
+  if (filtered.length || !currentIssue) {
+    return filtered;
+  }
+  return annotationQaIssuesList();
 }
 
 function annotationQaIssueById(issueId) {
@@ -2926,6 +3411,96 @@ function renderAnnotationQaClassSelector(issue) {
     : "Use Selected Class";
 }
 
+function loadAnnotationQaImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Could not load preview asset: ${url}`));
+    image.src = url;
+  });
+}
+
+function drawAnnotationQaBox(context, bbox, color, label) {
+  if (!Array.isArray(bbox) || bbox.length !== 4) {
+    return;
+  }
+  const [x1, y1, x2, y2] = bbox.map((value) => Number(value) || 0);
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = Math.max(2, context.canvas.width / 600);
+  context.strokeRect(x1, y1, Math.max(0, x2 - x1), Math.max(0, y2 - y1));
+  context.font = `700 ${Math.max(12, context.canvas.width / 80)}px sans-serif`;
+  const labelWidth = context.measureText(label).width + 10;
+  const labelHeight = Math.max(19, context.canvas.width / 45);
+  context.fillStyle = color;
+  context.fillRect(x1, Math.max(0, y1 - labelHeight), labelWidth, labelHeight);
+  context.fillStyle = "#101820";
+  context.fillText(label, x1 + 5, Math.max(14, y1 - 5));
+  context.restore();
+}
+
+async function renderAnnotationQaCanvas(issue) {
+  const rawUrl = annotationQaPreviewAssetUrl(issue, "raw_preview");
+  const maskUrl = annotationQaPreviewAssetUrl(issue, "mask_preview");
+  const canvas = $("qa-review-canvas");
+  const fallback = $("qa-review-image");
+  const controls = $("qa-overlay-controls");
+  state.annotationQaCanvasRevision += 1;
+  const revision = state.annotationQaCanvasRevision;
+  if (!rawUrl) {
+    canvas.hidden = true;
+    controls.hidden = true;
+    fallback.hidden = !annotationQaPreviewUrl(issue);
+    return;
+  }
+  try {
+    const [rawImage, maskImage] = await Promise.all([
+      loadAnnotationQaImage(rawUrl),
+      maskUrl ? loadAnnotationQaImage(maskUrl).catch(() => null) : Promise.resolve(null),
+    ]);
+    if (revision !== state.annotationQaCanvasRevision || state.annotationQaActiveIssueId !== issue.issue_id) {
+      return;
+    }
+    canvas.width = rawImage.naturalWidth;
+    canvas.height = rawImage.naturalHeight;
+    const context = canvas.getContext("2d");
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(rawImage, 0, 0, canvas.width, canvas.height);
+    $("qa-overlay-mask").disabled = !maskImage;
+    if (maskImage && $("qa-overlay-mask").checked) {
+      const maskCanvas = document.createElement("canvas");
+      maskCanvas.width = canvas.width;
+      maskCanvas.height = canvas.height;
+      const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true });
+      maskContext.drawImage(maskImage, 0, 0, canvas.width, canvas.height);
+      const pixels = maskContext.getImageData(0, 0, canvas.width, canvas.height);
+      for (let index = 0; index < pixels.data.length; index += 4) {
+        const visible = pixels.data[index] > 127;
+        pixels.data[index] = 255;
+        pixels.data[index + 1] = 220;
+        pixels.data[index + 2] = 70;
+        pixels.data[index + 3] = visible ? 105 : 0;
+      }
+      maskContext.putImageData(pixels, 0, 0);
+      context.drawImage(maskCanvas, 0, 0);
+    }
+    if ($("qa-overlay-yolo").checked) {
+      drawAnnotationQaBox(context, issue.original_bbox, "rgb(255, 210, 0)", "YOLO");
+    }
+    if ($("qa-overlay-sam").checked) {
+      drawAnnotationQaBox(context, issue.sam_bbox, "rgb(0, 150, 255)", "SAM");
+    }
+    fallback.hidden = true;
+    canvas.hidden = false;
+    controls.hidden = false;
+    setAnnotationQaZoom(state.annotationQaZoom);
+  } catch (_error) {
+    canvas.hidden = true;
+    controls.hidden = true;
+    fallback.hidden = !annotationQaPreviewUrl(issue);
+  }
+}
+
 function renderAnnotationQaReview(issue) {
   const previewUrl = annotationQaPreviewUrl(issue);
   const severity = String(issue.severity || "low");
@@ -2943,6 +3518,12 @@ function renderAnnotationQaReview(issue) {
   $("qa-review-issue-summary").textContent = annotationQaReviewSummary(issue);
   $("qa-review-suggestion").textContent = annotationQaReviewSuggestion(issue);
 
+  const reviewIssues = annotationQaReviewIssuesList(issue);
+  const reviewIndex = reviewIssues.findIndex((item) => item.issue_id === issue.issue_id);
+  $("qa-review-position").textContent = reviewIndex >= 0
+    ? `Issue ${reviewIndex + 1} of ${reviewIssues.length}`
+    : `Issue review`;
+
   const image = $("qa-review-image");
   const empty = $("qa-review-empty");
   if (previewUrl) {
@@ -2954,6 +3535,7 @@ function renderAnnotationQaReview(issue) {
     image.hidden = true;
     empty.hidden = false;
   }
+  renderAnnotationQaCanvas(issue);
 
   $("qa-review-details").innerHTML = `
     <div><dt>Message</dt><dd>${escapeHtml(issue.message || issue.issue_type || "")}</dd></div>
@@ -2968,10 +3550,12 @@ function renderAnnotationQaReview(issue) {
   `;
   renderAnnotationQaPendingFix(issue);
   renderAnnotationQaClassSelector(issue);
-  $("qa-review-keep-yolo").textContent = issue.review_status === "accepted" ? "YOLO box kept" : "Keep YOLO box";
+  $("qa-review-keep-yolo").innerHTML = issue.review_status === "accepted"
+    ? "<span>1</span> Original box kept"
+    : "<span>1</span> Keep original box";
   const canAcceptSam = issueCanAcceptSamBox(issue);
   $("qa-review-accept-sam").disabled = !canAcceptSam;
-  $("qa-review-accept-sam").textContent = issue.accepted_fix === "sam_box"
+  const samActionText = issue.accepted_fix === "sam_box"
     ? issue.audit_required && issue.audit_status !== "passed"
       ? "Confirm audited SAM box"
       : "SAM box queued"
@@ -2979,12 +3563,11 @@ function renderAnnotationQaReview(issue) {
       ? "SAM replacement blocked"
       : issue.difference_band === "reviewable" && !canAcceptSam
         ? "SAM quality checks failed"
-        : "Replace with SAM box";
+        : "Use SAM suggestion";
+  $("qa-review-accept-sam").innerHTML = `<span>2</span> ${escapeHtml(samActionText)}`;
 
-  const issues = annotationQaReviewIssuesList(issue);
-  const index = issues.findIndex((item) => item.issue_id === issue.issue_id);
-  $("qa-review-prev").disabled = index <= 0;
-  $("qa-review-next").disabled = index < 0 || index >= issues.length - 1;
+  $("qa-review-prev").disabled = reviewIndex <= 0;
+  $("qa-review-next").disabled = reviewIssues.length <= 1;
 }
 
 function openAnnotationQaReview(issueId, severity = "") {
@@ -3001,6 +3584,7 @@ function openAnnotationQaReview(issueId, severity = "") {
     ? severity
     : state.annotationQaReviewSeverity || annotationQaSeverityKey(issue);
   renderAnnotationQaReview(issue);
+  setAnnotationQaZoom(1);
   $("qa-review-modal").hidden = false;
   $("qa-review-modal").querySelector(".qa-review-dialog")?.focus();
 }
@@ -3010,15 +3594,43 @@ function closeAnnotationQaReview() {
   state.annotationQaReviewSeverity = "";
   $("qa-review-modal").hidden = true;
   $("qa-review-image").removeAttribute("src");
+  $("qa-review-canvas").hidden = true;
+  $("qa-overlay-controls").hidden = true;
+  state.annotationQaCanvasRevision += 1;
+  if (state.annotationQaReviewReturnFocus?.isConnected) {
+    state.annotationQaReviewReturnFocus.focus();
+  } else {
+    document.querySelector(`[data-qa-queue="${CSS.escape(state.annotationQaQueue)}"]`)?.focus();
+  }
+  state.annotationQaReviewReturnFocus = null;
 }
 
 function stepAnnotationQaReview(direction) {
   const currentIssue = annotationQaIssueById(state.annotationQaActiveIssueId);
   const issues = annotationQaReviewIssuesList(currentIssue);
   const index = issues.findIndex((issue) => issue.issue_id === state.annotationQaActiveIssueId);
-  const next = issues[index + direction];
+  let next = null;
+  if (direction > 0) {
+    const ordered = [...issues.slice(index + 1), ...issues.slice(0, Math.max(0, index))];
+    next = ordered.find((issue) => !annotationQaIsResolved(issue) && issue.review_status !== "needs_fix") || ordered[0];
+  } else {
+    next = issues[index - 1];
+  }
   if (next) {
     openAnnotationQaReview(next.issue_id, state.annotationQaReviewSeverity || annotationQaSeverityKey(next));
+  }
+}
+
+function setAnnotationQaZoom(value) {
+  state.annotationQaZoom = Math.max(0.5, Math.min(3, Number(value) || 1));
+  if ($("qa-review-image")) {
+    $("qa-review-image").style.transform = `scale(${state.annotationQaZoom})`;
+  }
+  if ($("qa-review-canvas")) {
+    $("qa-review-canvas").style.transform = `scale(${state.annotationQaZoom})`;
+  }
+  if ($("qa-review-zoom-reset")) {
+    $("qa-review-zoom-reset").textContent = state.annotationQaZoom === 1 ? "Fit" : `${Math.round(state.annotationQaZoom * 100)}%`;
   }
 }
 
@@ -3026,12 +3638,40 @@ function handleAnnotationQaReviewKeydown(event) {
   if (!$("qa-review-modal") || $("qa-review-modal").hidden || !state.annotationQaActiveIssueId) {
     return;
   }
+  if (event.key === "Tab") {
+    const dialog = $("qa-review-modal").querySelector(".qa-review-dialog");
+    const focusable = [...dialog.querySelectorAll("button:not([disabled]), select:not([disabled]), input:not([disabled]), summary, [tabindex='0']")]
+      .filter((element) => element.offsetParent !== null);
+    if (focusable.length) {
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    return;
+  }
   const key = event.key.toLowerCase();
   const target = event.target;
   if (target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable)) {
     return;
   }
-  if (key === "a" || event.key === "ArrowLeft") {
+  if (key === "1") {
+    event.preventDefault();
+    decideAnnotationQaStatus("accepted", "Original YOLO box kept.");
+  } else if (key === "2") {
+    if (!$("qa-review-accept-sam").disabled) {
+      event.preventDefault();
+      decideAnnotationQaSamBox();
+    }
+  } else if (key === "3") {
+    event.preventDefault();
+    decideAnnotationQaStatus("needs_fix", "Annotation flagged for manual correction.");
+  } else if (key === "a" || event.key === "ArrowLeft") {
     if (!$("qa-review-prev").disabled) {
       event.preventDefault();
       stepAnnotationQaReview(-1);
@@ -3048,7 +3688,7 @@ function setActiveAnnotationQaReviewStatus(status) {
   if (!state.annotationQaActiveIssueId) {
     return;
   }
-  markAnnotationQaIssue(state.annotationQaActiveIssueId, status);
+  decideAnnotationQaStatus(status, `${annotationQaReviewStatusLabel(status)} selected.`);
 }
 
 function downloadAnnotationQaReport(kind) {
@@ -3684,12 +4324,19 @@ function setAppTab(tab) {
     button.setAttribute("aria-selected", String(active));
   });
   document.querySelectorAll(".app-view").forEach((view) => {
-    const active = view.id === `${tab}-view`;
+    const active = tab === "annotation-qa"
+      ? view.id === "training-view"
+      : view.id === `${tab}-view`;
     view.classList.toggle("active", active);
     view.hidden = !active;
   });
+  const trainingView = $("training-view");
+  trainingView.classList.toggle("qa-mode", tab === "annotation-qa");
+  trainingView.setAttribute("aria-labelledby", tab === "annotation-qa" ? "app-tab-annotation-qa" : "app-tab-training");
   if (tab === "inference") {
     loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true));
+  } else if (tab === "annotation-qa") {
+    setPanelExpanded("annotation-qa", true);
   } else {
     redrawChartsSoon();
   }
@@ -5732,11 +6379,72 @@ $("download-dataset").addEventListener("click", downloadPreparedDataset);
 $("download-annotated-dataset").addEventListener("click", downloadAnnotatedDataset);
 $("run-annotation-qa").addEventListener("click", runAnnotationQa);
 $("stop-annotation-qa").addEventListener("click", stopAnnotationQa);
-$("annotation-qa-preset").addEventListener("change", applyAnnotationQaDifferencePreset);
+$("annotation-qa-preset").addEventListener("change", () => {
+  applyAnnotationQaDifferencePreset();
+  updateAnnotationQaConfigurationSummary();
+});
+$("annotation-qa-scope").addEventListener("change", updateAnnotationQaConfigurationSummary);
+$("annotation-qa-auto-mode").addEventListener("change", updateAnnotationQaConfigurationSummary);
 $("download-annotation-qa-csv").addEventListener("click", () => downloadAnnotationQaReport("csv"));
 $("download-annotation-qa-json").addEventListener("click", () => downloadAnnotationQaReport("json"));
 $("apply-annotation-qa-fixes").addEventListener("click", applyAnnotationQaFixes);
 $("download-corrected-dataset").addEventListener("click", downloadCorrectedDataset);
+document.querySelectorAll("[data-qa-queue]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.annotationQaQueue = button.dataset.qaQueue;
+    state.annotationQaPage = 1;
+    renderAnnotationQaIssues();
+  });
+});
+[
+  ["annotation-qa-filter-severity", "severity"],
+  ["annotation-qa-filter-split", "split"],
+  ["annotation-qa-filter-class", "className"],
+  ["annotation-qa-filter-type", "issueType"],
+].forEach(([id, key]) => {
+  $(id).addEventListener("change", () => {
+    state.annotationQaFilters[key] = $(id).value;
+    state.annotationQaPage = 1;
+    renderAnnotationQaIssues();
+  });
+});
+$("annotation-qa-search").addEventListener("input", () => {
+  state.annotationQaFilters.search = $("annotation-qa-search").value.trim().toLowerCase();
+  state.annotationQaPage = 1;
+  renderAnnotationQaIssues();
+});
+$("annotation-qa-clear-filters").addEventListener("click", () => {
+  state.annotationQaFilters = { search: "", severity: "", split: "", className: "", issueType: "" };
+  $("annotation-qa-search").value = "";
+  ["annotation-qa-filter-severity", "annotation-qa-filter-split", "annotation-qa-filter-class", "annotation-qa-filter-type"].forEach((id) => {
+    $(id).value = "";
+  });
+  state.annotationQaPage = 1;
+  renderAnnotationQaIssues();
+});
+$("annotation-qa-page-prev").addEventListener("click", () => {
+  state.annotationQaPage -= 1;
+  renderAnnotationQaIssues();
+});
+$("annotation-qa-page-next").addEventListener("click", () => {
+  state.annotationQaPage += 1;
+  renderAnnotationQaIssues();
+});
+$("annotation-qa-select-page").addEventListener("change", () => {
+  document.querySelectorAll("#annotation-qa-issues [data-qa-select]").forEach((checkbox) => {
+    checkbox.checked = $("annotation-qa-select-page").checked;
+    if (checkbox.checked) {
+      state.annotationQaSelected.add(checkbox.dataset.qaSelect);
+    } else {
+      state.annotationQaSelected.delete(checkbox.dataset.qaSelect);
+    }
+  });
+  renderAnnotationQaBulkToolbar(annotationQaFilteredIssues().slice(
+    (state.annotationQaPage - 1) * state.annotationQaPageSize,
+    state.annotationQaPage * state.annotationQaPageSize,
+  ));
+});
+$("annotation-qa-bulk-accept-sam").addEventListener("click", bulkAcceptAnnotationQaSamBoxes);
 $("dataset-cleanup-toggle").addEventListener("click", toggleDatasetCleanupMenu);
 $("clear-dataset-uploads").addEventListener("click", () => {
   closeDatasetCleanupMenu();
@@ -5950,24 +6658,36 @@ if ($("qa-review-modal")) {
   });
   $("qa-review-accept-sam").addEventListener("click", () => {
     if (state.annotationQaActiveIssueId) {
-      acceptAnnotationQaSamBox(state.annotationQaActiveIssueId);
+      decideAnnotationQaSamBox();
     }
   });
-  $("qa-review-keep-yolo").addEventListener("click", () => setActiveAnnotationQaReviewStatus("accepted"));
+  $("qa-review-keep-yolo").addEventListener("click", () => decideAnnotationQaStatus("accepted", "Original YOLO box kept."));
   $("qa-review-accept-class").addEventListener("click", () => {
     if (state.annotationQaActiveIssueId) {
-      acceptAnnotationQaClassChange(state.annotationQaActiveIssueId);
+      decideAnnotationQaClassChange();
     }
   });
   $("qa-review-class-fix").addEventListener("change", () => {
     $("qa-review-accept-class").disabled = !Number.isInteger(Number($("qa-review-class-fix").value));
     $("qa-review-accept-class").textContent = "Use Selected Class";
   });
-  $("qa-review-needs-fix").addEventListener("click", () => setActiveAnnotationQaReviewStatus("needs_fix"));
-  $("qa-review-false-positive").addEventListener("click", () => setActiveAnnotationQaReviewStatus("false_positive"));
-  $("qa-review-ignore").addEventListener("click", () => setActiveAnnotationQaReviewStatus("ignored"));
+  $("qa-review-needs-fix").addEventListener("click", () => decideAnnotationQaStatus("needs_fix", "Annotation flagged for manual correction."));
+  $("qa-review-false-positive").addEventListener("click", () => decideAnnotationQaStatus("false_positive", "Annotation marked as a suspected false positive."));
+  $("qa-review-ignore").addEventListener("click", () => decideAnnotationQaStatus("ignored", "Issue ignored."));
   $("qa-review-prev").addEventListener("click", () => stepAnnotationQaReview(-1));
   $("qa-review-next").addEventListener("click", () => stepAnnotationQaReview(1));
+  $("qa-review-zoom-out").addEventListener("click", () => setAnnotationQaZoom(state.annotationQaZoom - 0.25));
+  $("qa-review-zoom-reset").addEventListener("click", () => setAnnotationQaZoom(1));
+  $("qa-review-zoom-in").addEventListener("click", () => setAnnotationQaZoom(state.annotationQaZoom + 0.25));
+  ["qa-overlay-yolo", "qa-overlay-mask", "qa-overlay-sam"].forEach((id) => {
+    $(id).addEventListener("change", () => {
+      const issue = annotationQaIssueById(state.annotationQaActiveIssueId);
+      if (issue) {
+        renderAnnotationQaCanvas(issue);
+      }
+    });
+  });
+  $("qa-undo-button").addEventListener("click", undoAnnotationQaDecision);
 }
 $("reset-advanced").addEventListener("click", () => {
   applyControlValues(CONTROL_DEFAULTS);

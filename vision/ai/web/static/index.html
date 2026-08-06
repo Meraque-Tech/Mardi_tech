@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>YOLO Workspace</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=annotation-qa-workflow-v5-20260806">
   </head>
   <body>
     <main class="app-shell">
@@ -18,6 +18,7 @@
 
       <nav class="app-tabs" role="tablist" aria-label="YOLO workspace">
         <button id="app-tab-training" class="app-tab active" type="button" role="tab" aria-selected="true" aria-controls="training-view" data-app-tab="training">Training</button>
+        <button id="app-tab-annotation-qa" class="app-tab" type="button" role="tab" aria-selected="false" aria-controls="annotation-qa-panel" data-app-tab="annotation-qa">Annotation QA <span class="app-tab-count" id="annotation-qa-tab-count" hidden>0</span></button>
         <button id="app-tab-inference" class="app-tab" type="button" role="tab" aria-selected="false" aria-controls="inference-view" data-app-tab="inference">Inference</button>
       </nav>
 
@@ -402,69 +403,82 @@
             <button class="secondary compact section-toggle" type="button" data-panel-toggle="annotation-qa" aria-expanded="true" aria-label="Collapse Annotation QA section">
               <span aria-hidden="true">▾</span>
             </button>
-            <h2 id="annotation-qa-title">Annotation QA</h2>
+            <div>
+              <h2 id="annotation-qa-title">Annotation QA</h2>
+              <p class="qa-panel-intro">Scan, review, and prepare safer annotations before training.</p>
+            </div>
           </div>
           <div class="button-row">
-            <button id="run-annotation-qa" class="secondary" type="button" disabled>Run SAM QA</button>
-            <button id="stop-annotation-qa" class="danger" type="button" disabled>Stop</button>
+            <button id="stop-annotation-qa" class="danger" type="button" disabled hidden>Stop</button>
           </div>
         </div>
 
-        <div class="grid four annotation-qa-controls">
-          <label>
-            <span class="tooltip-label" tabindex="0" data-tooltip="SAM model used for optional annotation quality checks. SAM2.1 Small is the default for fast bbox review on local GPUs.">SAM model</span>
-            <select id="annotation-qa-model">
-              <option value="sam2.1_s.pt">SAM2.1 Hiera Small - Recommended</option>
-              <option value="sam2.1_t.pt">SAM2.1 Hiera Tiny - Fastest</option>
-              <option value="sam2.1_b.pt">SAM2.1 Hiera Base+ - More accurate</option>
-              <option value="sam2.1_l.pt">SAM2.1 Hiera Large - Heavy</option>
-            </select>
-          </label>
-          <label>
-            <span class="tooltip-label" tabindex="0" data-tooltip="Dataset split to scan. All splits scans train, validation, and test when present; validation is a faster pre-training check.">Scope</span>
-            <select id="annotation-qa-scope">
-              <option value="all">All splits</option>
-              <option value="val">Validation</option>
-              <option value="train">Train</option>
-              <option value="test">Test</option>
-            </select>
-          </label>
-          <label>
-            <span class="tooltip-label" tabindex="0" data-tooltip="Sensitivity preset for bbox-vs-SAM-mask disagreement. Balanced is the default.">Preset</span>
-            <select id="annotation-qa-preset">
-              <option value="balanced">Balanced</option>
-              <option value="lenient">Lenient</option>
-              <option value="strict">Strict</option>
-            </select>
-          </label>
-          <label>
-            <span class="tooltip-label" tabindex="0" data-tooltip="Keep the YOLO box when every SAM box edge differs by no more than this percentage of the YOLO box size, with a two-pixel minimum allowance for small boxes.">Box tolerance (%)</span>
-            <input id="annotation-qa-tolerance" type="number" min="0" max="50" step="0.5" value="5">
-            <small class="field-note">Keep YOLO within this edge difference.</small>
-          </label>
-          <label>
-            <span class="tooltip-label" tabindex="0" data-tooltip="Block automatic SAM replacement when any box edge differs from YOLO by more than this percentage. Large disagreements remain available for manual review.">Maximum SAM difference (%)</span>
-            <input id="annotation-qa-max-difference" type="number" min="0.5" max="100" step="0.5" value="25">
-            <small class="field-note">Larger differences are manual-review only.</small>
-          </label>
-          <label>
-            <span class="tooltip-label" tabindex="0" data-tooltip="Shadow calculates automatic decisions without queueing corrections. Automatic queues only strict high-confidence SAM replacements. Manual disables automatic queueing.">Auto-correction mode</span>
-            <select id="annotation-qa-auto-mode">
-              <option value="shadow" selected>Shadow (recommended)</option>
-              <option value="automatic">Automatic with audit</option>
-              <option value="manual">Manual review only</option>
-            </select>
-          </label>
-          <label>
-            <span class="tooltip-label" tabindex="0" data-tooltip="Sampled automatic decisions must be checked before a corrected dataset can be created.">Audit sample (%)</span>
-            <input id="annotation-qa-audit" type="number" min="0" max="100" step="0.5" value="5">
-            <small class="field-note">Audit automatic keep/replace decisions.</small>
-          </label>
-        </div>
+        <ol class="qa-stage-strip" aria-label="Annotation QA workflow">
+          <li class="is-active" id="qa-stage-indicator-config"><span>1</span><strong>Configure</strong></li>
+          <li id="qa-stage-indicator-run"><span>2</span><strong>Run scan</strong></li>
+          <li id="qa-stage-indicator-review"><span>3</span><strong>Review</strong></li>
+          <li id="qa-stage-indicator-finalize"><span>4</span><strong>Finalize</strong></li>
+        </ol>
 
-        <details class="qa-policy-details">
-          <summary>Advanced stability and automatic-correction policy</summary>
-          <div class="grid four qa-policy-grid">
+        <details class="qa-workflow-card" id="annotation-qa-config-stage" open>
+          <summary>
+            <span><b>1</b><strong>Configure scan</strong></span>
+            <small id="annotation-qa-config-summary">Balanced review · all splits · suggestions only</small>
+          </summary>
+          <div class="qa-workflow-content">
+            <div class="grid three annotation-qa-controls qa-essential-controls">
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Dataset split to scan. All splits scans train, validation, and test when present; validation is a faster pre-training check.">Scan scope</span>
+                <select id="annotation-qa-scope">
+                  <option value="all">All available splits</option>
+                  <option value="val">Validation only — faster</option>
+                  <option value="train">Training only</option>
+                  <option value="test">Test only</option>
+                </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Balanced is recommended. Quick check tolerates larger differences; Thorough review flags smaller differences.">Review preset</span>
+                <select id="annotation-qa-preset">
+                  <option value="balanced">Balanced review — recommended</option>
+                  <option value="lenient">Quick check — fewer flags</option>
+                  <option value="strict">Thorough review — more flags</option>
+                </select>
+              </label>
+              <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Suggestions only never queues automatic corrections. Automatic mode queues only policy-approved SAM replacements and requires sampled audits.">Correction policy</span>
+                <select id="annotation-qa-auto-mode">
+                  <option value="shadow" selected>Suggestions only — recommended</option>
+                  <option value="automatic">Queue safe corrections + audit</option>
+                  <option value="manual">Human decisions only</option>
+                </select>
+              </label>
+            </div>
+            <p class="qa-configuration-explainer" id="annotation-qa-configuration-explainer">Scan all available splits with balanced sensitivity. SAM may suggest safer boxes, but nothing will be queued without a reviewer.</p>
+
+            <details class="qa-policy-details">
+              <summary>Advanced model and safety settings</summary>
+              <div class="grid four qa-policy-grid">
+                <label>
+                  <span class="tooltip-label" tabindex="0" data-tooltip="SAM model used for optional annotation quality checks. SAM2.1 Small is the default for fast bbox review on local GPUs.">SAM model</span>
+                  <select id="annotation-qa-model">
+                    <option value="sam2.1_s.pt">SAM2.1 Hiera Small — recommended</option>
+                    <option value="sam2.1_t.pt">SAM2.1 Hiera Tiny — fastest</option>
+                    <option value="sam2.1_b.pt">SAM2.1 Hiera Base+ — more accurate</option>
+                    <option value="sam2.1_l.pt">SAM2.1 Hiera Large — heavy</option>
+                  </select>
+                </label>
+                <label>
+                  <span class="tooltip-label" tabindex="0" data-tooltip="Keep the YOLO box when every SAM box edge differs by no more than this percentage of the YOLO box size, with a two-pixel minimum allowance for small boxes.">Box tolerance (%)</span>
+                  <input id="annotation-qa-tolerance" type="number" min="0" max="50" step="0.5" value="5">
+                </label>
+                <label>
+                  <span class="tooltip-label" tabindex="0" data-tooltip="Block automatic SAM replacement when any box edge differs from YOLO by more than this percentage. Large disagreements remain available for manual review.">Maximum SAM difference (%)</span>
+                  <input id="annotation-qa-max-difference" type="number" min="0.5" max="100" step="0.5" value="25">
+                </label>
+                <label>
+                  <span class="tooltip-label" tabindex="0" data-tooltip="Sampled automatic decisions must be checked before a corrected dataset can be created.">Audit sample (%)</span>
+                  <input id="annotation-qa-audit" type="number" min="0" max="100" step="0.5" value="5">
+                </label>
             <label>
               <span class="tooltip-label" tabindex="0" data-tooltip="Expand each YOLO box by this percentage for the second SAM prompt.">Prompt expansion (%)</span>
               <input id="annotation-qa-prompt-expansion" type="number" min="0" max="50" step="0.5" value="8">
@@ -497,36 +511,111 @@
               <span class="tooltip-label" tabindex="0" data-tooltip="Maximum overlap with a neighboring YOLO box allowed for unattended replacement.">Neighbor IoU max</span>
               <input id="annotation-qa-auto-neighbor" type="number" min="0" max="1" step="0.01" value="0.15">
             </label>
+              </div>
+            </details>
+            <div class="qa-config-actions">
+              <span id="annotation-qa-dataset-ready">Prepare a dataset to enable Annotation QA.</span>
+              <button id="run-annotation-qa" type="button" disabled>Run Annotation QA</button>
+            </div>
           </div>
         </details>
 
-        <div class="annotation-qa-status-card" id="annotation-qa-status-card">
-          <div>
-            <span>Status</span>
-            <strong id="annotation-qa-status">Not run</strong>
+        <details class="qa-workflow-card" id="annotation-qa-run-stage" open>
+          <summary>
+            <span><b>2</b><strong>Run scan</strong></span>
+            <small id="annotation-qa-status">Not run</small>
+          </summary>
+          <div class="qa-workflow-content">
+            <div class="annotation-qa-status-card" id="annotation-qa-status-card">
+              <div>
+                <span>Current status</span>
+                <strong id="annotation-qa-status-heading">Ready when your dataset is prepared</strong>
+              </div>
+              <p id="annotation-qa-detail">Prepare a dataset to enable optional SAM QA.</p>
+            </div>
+            <div class="dataset-preparation-progress annotation-qa-progress" id="annotation-qa-progress" role="status" aria-live="polite" aria-busy="false" hidden>
+              <div class="dataset-preparation-header">
+                <strong id="annotation-qa-stage">Queued</strong>
+                <span id="annotation-qa-percent">0%</span>
+              </div>
+              <div id="annotation-qa-track" class="dataset-preparation-track" role="progressbar" aria-label="Annotation QA" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Queued: 0%">
+                <span></span>
+              </div>
+            </div>
           </div>
-          <p id="annotation-qa-detail">Prepare a dataset to enable optional SAM QA.</p>
-        </div>
+        </details>
 
-        <div class="dataset-preparation-progress annotation-qa-progress" id="annotation-qa-progress" role="status" aria-live="polite" aria-busy="false" hidden>
-          <div class="dataset-preparation-header">
-            <strong id="annotation-qa-stage">Queued</strong>
-            <span id="annotation-qa-percent">0%</span>
+        <section class="qa-workflow-card qa-results-stage" id="annotation-qa-review-stage" aria-labelledby="annotation-qa-review-heading" hidden>
+          <div class="qa-workflow-heading">
+            <span><b>3</b><strong id="annotation-qa-review-heading">Review issues</strong></span>
+            <small id="annotation-qa-review-progress-label">0 of 0 reviewed</small>
           </div>
-          <div id="annotation-qa-track" class="dataset-preparation-track" role="progressbar" aria-label="Annotation QA" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Queued: 0%">
-            <span></span>
-          </div>
-        </div>
+          <div class="qa-workflow-content">
+            <div class="annotation-qa-summary" id="annotation-qa-summary"></div>
+            <details class="qa-run-details" id="annotation-qa-run-details">
+              <summary>Run details</summary>
+              <div id="annotation-qa-run-detail-content"></div>
+            </details>
 
-        <div class="annotation-qa-summary" id="annotation-qa-summary"></div>
-        <div class="button-row annotation-qa-downloads">
-          <button id="download-annotation-qa-csv" class="secondary compact" type="button" disabled>Download CSV</button>
-          <button id="download-annotation-qa-json" class="secondary compact" type="button" disabled>Download JSON</button>
-          <button id="apply-annotation-qa-fixes" class="secondary compact" type="button" disabled>Create Corrected Dataset</button>
-          <button id="download-corrected-dataset" class="secondary compact" type="button" disabled>Download Corrected Dataset</button>
-        </div>
-        <p class="field-note" id="annotation-qa-fix-summary"></p>
-        <div class="annotation-qa-issues" id="annotation-qa-issues"></div>
+            <div class="qa-queue-tabs" id="annotation-qa-queue-tabs" role="tablist" aria-label="Annotation issue queues">
+              <button class="qa-queue-tab active" type="button" role="tab" aria-selected="true" data-qa-queue="needs_review">Needs review <span>0</span></button>
+              <button class="qa-queue-tab" type="button" role="tab" aria-selected="false" data-qa-queue="audits">Audits <span>0</span></button>
+              <button class="qa-queue-tab" type="button" role="tab" aria-selected="false" data-qa-queue="safe_suggestions">Safe suggestions <span>0</span></button>
+              <button class="qa-queue-tab" type="button" role="tab" aria-selected="false" data-qa-queue="manual">Manual correction <span>0</span></button>
+              <button class="qa-queue-tab" type="button" role="tab" aria-selected="false" data-qa-queue="resolved">Resolved <span>0</span></button>
+              <button class="qa-queue-tab" type="button" role="tab" aria-selected="false" data-qa-queue="all">All <span>0</span></button>
+            </div>
+
+            <div class="qa-filter-toolbar" aria-label="Filter annotation issues">
+              <label class="qa-search-field">
+                <span class="sr-only">Search filename</span>
+                <input id="annotation-qa-search" type="search" placeholder="Search filename">
+              </label>
+              <label><span class="sr-only">Severity</span><select id="annotation-qa-filter-severity"><option value="">All severities</option></select></label>
+              <label><span class="sr-only">Split</span><select id="annotation-qa-filter-split"><option value="">All splits</option></select></label>
+              <label><span class="sr-only">Class</span><select id="annotation-qa-filter-class"><option value="">All classes</option></select></label>
+              <label><span class="sr-only">Issue type</span><select id="annotation-qa-filter-type"><option value="">All issue types</option></select></label>
+              <button id="annotation-qa-clear-filters" class="secondary compact" type="button">Clear filters</button>
+            </div>
+            <p class="qa-queue-summary" id="annotation-qa-queue-summary" role="status" aria-live="polite"></p>
+            <div class="qa-bulk-toolbar" id="annotation-qa-bulk-toolbar" hidden>
+              <label class="checkbox-row">
+                <input id="annotation-qa-select-page" type="checkbox">
+                Select safe suggestions on this page
+              </label>
+              <span id="annotation-qa-selected-count">0 selected</span>
+              <button id="annotation-qa-bulk-accept-sam" class="secondary compact" type="button" disabled>Queue selected SAM suggestions</button>
+            </div>
+            <div class="annotation-qa-issues" id="annotation-qa-issues"></div>
+            <div class="qa-pagination" id="annotation-qa-pagination" hidden>
+              <button id="annotation-qa-page-prev" class="secondary compact" type="button">Previous page</button>
+              <span id="annotation-qa-page-label">Page 1 of 1</span>
+              <button id="annotation-qa-page-next" class="secondary compact" type="button">Next page</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="qa-workflow-card qa-finalize-stage" id="annotation-qa-finalize-stage" aria-labelledby="annotation-qa-finalize-heading" hidden>
+          <div class="qa-workflow-heading">
+            <span><b>4</b><strong id="annotation-qa-finalize-heading">Finalize corrected dataset</strong></span>
+            <small id="annotation-qa-finalize-state">Waiting for review</small>
+          </div>
+          <div class="qa-workflow-content">
+            <div class="qa-completion-checklist" id="annotation-qa-completion-checklist"></div>
+            <p class="field-note" id="annotation-qa-fix-summary"></p>
+            <div class="button-row annotation-qa-downloads">
+              <button id="apply-annotation-qa-fixes" type="button" disabled>Create Corrected Dataset</button>
+              <button id="download-corrected-dataset" class="secondary" type="button" disabled>Download Corrected Dataset</button>
+              <details class="qa-export-menu">
+                <summary class="secondary compact">Export report</summary>
+                <div>
+                  <button id="download-annotation-qa-csv" class="secondary compact" type="button" disabled>Download CSV</button>
+                  <button id="download-annotation-qa-json" class="secondary compact" type="button" disabled>Download JSON</button>
+                </div>
+              </details>
+            </div>
+          </div>
+        </section>
       </section>
 
       <div class="message status-message" id="message" role="status" aria-live="polite">Ready. Prepare a dataset to begin.</div>
@@ -1330,7 +1419,10 @@
       <section class="qa-review-dialog" role="dialog" aria-modal="true" aria-labelledby="qa-review-title" tabindex="-1">
         <div class="qa-review-header">
           <div>
-            <span id="qa-review-severity" class="qa-severity low">Low</span>
+            <div class="qa-review-header-meta">
+              <span id="qa-review-severity" class="qa-severity low">Low</span>
+              <span id="qa-review-position">Issue 1 of 1</span>
+            </div>
             <h2 id="qa-review-title">Annotation QA Review</h2>
             <p id="qa-review-subtitle"></p>
           </div>
@@ -1339,7 +1431,18 @@
         <div class="qa-review-body">
           <div class="qa-review-image-frame">
             <img id="qa-review-image" alt="Annotation QA overlay preview">
+            <canvas id="qa-review-canvas" aria-label="Interactive Annotation QA comparison" hidden></canvas>
             <div id="qa-review-empty" class="qa-review-empty" hidden>No preview available for this issue.</div>
+            <div class="qa-overlay-controls" id="qa-overlay-controls" role="group" aria-label="Preview overlays" hidden>
+              <label><input id="qa-overlay-yolo" type="checkbox" checked> YOLO box</label>
+              <label><input id="qa-overlay-mask" type="checkbox" checked> SAM mask</label>
+              <label><input id="qa-overlay-sam" type="checkbox" checked> SAM box</label>
+            </div>
+            <div class="qa-image-controls" role="group" aria-label="Preview zoom controls">
+              <button id="qa-review-zoom-out" class="secondary compact" type="button" aria-label="Zoom out">−</button>
+              <button id="qa-review-zoom-reset" class="secondary compact" type="button">Fit</button>
+              <button id="qa-review-zoom-in" class="secondary compact" type="button" aria-label="Zoom in">+</button>
+            </div>
           </div>
           <aside class="qa-review-side">
             <div class="qa-review-decision">
@@ -1354,14 +1457,12 @@
             </div>
             <div class="qa-review-pending-fix" id="qa-review-pending-fix"></div>
             <div class="qa-review-actions">
-              <button id="qa-review-keep-yolo" class="primary" type="button">Keep YOLO box</button>
-              <button id="qa-review-accept-sam" class="primary" type="button">Replace with SAM box</button>
-              <button id="qa-review-needs-fix" class="primary" type="button">Send to manual fix</button>
-              <button id="qa-review-false-positive" class="secondary" type="button">False Positive</button>
-              <button id="qa-review-ignore" class="secondary" type="button">Ignore</button>
+              <button id="qa-review-keep-yolo" type="button"><span>1</span> Keep original box</button>
+              <button id="qa-review-accept-sam" class="secondary" type="button"><span>2</span> Use SAM suggestion</button>
+              <button id="qa-review-needs-fix" class="secondary" type="button"><span>3</span> Needs manual correction</button>
             </div>
             <details class="qa-review-corrections">
-              <summary>Class and status</summary>
+              <summary>More actions</summary>
               <label>
                 Corrected class
                 <select id="qa-review-class-fix"></select>
@@ -1373,11 +1474,16 @@
                   <option value="unreviewed">unreviewed</option>
                   <option value="fix_accepted">correction queued</option>
                   <option value="needs_fix">manual fix</option>
-                  <option value="false_positive">false positive</option>
+                  <option value="false_positive">suspected false positive</option>
                   <option value="accepted">YOLO kept</option>
                   <option value="ignored">ignored</option>
                 </select>
               </label>
+              <div class="qa-review-secondary-actions">
+                <button id="qa-review-false-positive" class="secondary compact" type="button">Mark suspected false positive</button>
+                <button id="qa-review-ignore" class="secondary compact" type="button">Ignore this issue</button>
+              </div>
+              <p class="field-note">Suspected false positive is a triage label only; it does not delete the annotation from the corrected dataset.</p>
             </details>
             <details class="qa-review-raw-details">
               <summary>Details</summary>
@@ -1385,13 +1491,22 @@
             </details>
             <div class="qa-review-nav">
               <button id="qa-review-prev" class="secondary compact" type="button">Previous</button>
-              <button id="qa-review-next" class="secondary compact" type="button">Next</button>
+              <button id="qa-review-next" class="secondary compact" type="button">Next unreviewed</button>
             </div>
+            <label class="checkbox-row qa-auto-advance">
+              <input id="qa-review-auto-advance" type="checkbox" checked>
+              Move to the next unreviewed issue after each decision
+            </label>
+            <p class="qa-shortcut-hint">Shortcuts: <kbd>1</kbd> keep · <kbd>2</kbd> use SAM · <kbd>3</kbd> manual · <kbd>←</kbd><kbd>→</kbd> navigate</p>
           </aside>
         </div>
       </section>
+      <div class="qa-undo-toast" id="qa-undo-toast" role="status" aria-live="polite" hidden>
+        <span id="qa-undo-message">Decision saved.</span>
+        <button id="qa-undo-button" class="secondary compact" type="button">Undo</button>
+      </div>
     </div>
 
-    <script src="/static/app.js?v=annotation-qa-policy-v4-20260805"></script>
+    <script src="/static/app.js?v=annotation-qa-workflow-v5-20260806"></script>
   </body>
 </html>

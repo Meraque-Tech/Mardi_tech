@@ -4,6 +4,7 @@ import ast
 import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Optional
 import unittest
 
@@ -31,6 +32,8 @@ def load_qa_helpers():
         "annotation_qa_max_neighbor_iou",
         "annotation_qa_auto_gate",
         "annotation_qa_audit_required",
+        "mask_to_uint8",
+        "draw_annotation_qa_preview",
     }
     module = ast.Module(
         body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names],
@@ -87,6 +90,32 @@ class FakeModel:
 
 
 class AnnotationQaTests(unittest.TestCase):
+    def test_preview_writer_creates_interactive_overlay_assets(self):
+        import cv2
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            image_path = root / "image.jpg"
+            preview_path = root / "previews" / "issue.jpg"
+            cv2.imwrite(str(image_path), np.full((60, 80, 3), 100, dtype=np.uint8))
+            mask = np.zeros((60, 80), dtype=np.uint8)
+            mask[15:45, 20:60] = 1
+            issue = {
+                "severity": "low",
+                "issue_type": "moderate_box_difference",
+                "score": 0.5,
+                "original_bbox": [15, 10, 65, 50],
+                "sam_bbox": [20, 15, 60, 45],
+            }
+
+            QA_HELPERS["draw_annotation_qa_preview"](image_path, preview_path, issue, mask)
+
+            self.assertTrue(preview_path.is_file())
+            self.assertTrue((preview_path.parent / "issue.raw.jpg").is_file())
+            self.assertTrue((preview_path.parent / "issue.mask.jpg").is_file())
+            self.assertEqual(issue["raw_preview"], "previews/issue.raw.jpg")
+            self.assertEqual(issue["mask_preview"], "previews/issue.mask.jpg")
+
     def test_masks_are_restored_to_original_prompt_indices(self):
         mask_zero = np.zeros((4, 4), dtype=np.uint8)
         mask_two = np.ones((4, 4), dtype=np.uint8)

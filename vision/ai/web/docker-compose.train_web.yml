@@ -26,11 +26,7 @@ services:
       - ./logs:/app/vision/ai/web/logs
       - ../../../runs:/app/runs
     healthcheck:
-      test:
-        - CMD
-        - python3
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/openapi.json', timeout=2)"
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/openapi.json', timeout=2)"]
       interval: 10s
       timeout: 5s
       retries: 12

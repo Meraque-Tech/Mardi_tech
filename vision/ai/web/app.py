@@ -4359,8 +4359,15 @@ def draw_annotation_qa_preview(
     if image is None:
         return
     height, width = image.shape[:2]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path = output_path.with_name(f"{output_path.stem}.raw.jpg")
+    cv2.imwrite(str(raw_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+    issue["raw_preview"] = f"previews/{raw_path.name}"
     if mask is not None:
         mask_array = mask_to_uint8(mask, width, height)
+        mask_path = output_path.with_name(f"{output_path.stem}.mask.jpg")
+        cv2.imwrite(str(mask_path), mask_array * 255, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        issue["mask_preview"] = f"previews/{mask_path.name}"
         overlay = image.copy()
         overlay[mask_array > 0] = (255, 220, 70)
         image = cv2.addWeighted(overlay, 0.35, image, 0.65, 0)
@@ -4375,7 +4382,6 @@ def draw_annotation_qa_preview(
     caption = f"{issue['severity'].upper()} {issue['issue_type']} {issue['score']:.2f}"
     cv2.rectangle(image, (8, 8), (min(width - 8, 16 + len(caption) * 9), 38), (20, 32, 40), -1)
     cv2.putText(image, caption, (14, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 84])
 
 
