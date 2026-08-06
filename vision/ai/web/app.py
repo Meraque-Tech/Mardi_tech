@@ -31,6 +31,21 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .dataset_provenance import roboflow_pre_augmentation_summary
+from .roboflow_sync import (
+    ROBOFLOW_SYNC_LOG_FILE,
+    ROBOFLOW_SYNC_PREVIEW_FILE,
+    annotation_digest,
+    build_roboflow_provenance,
+    canonical_local_annotation,
+    canonical_remote_annotation,
+    load_roboflow_provenance,
+    redact_secret,
+    roboflow_image_details,
+    roboflow_search_images,
+    roboflow_upload_annotation,
+    sync_preview_digest,
+    write_roboflow_provenance,
+)
 from .infer_yolo import InferenceStopped, run_yolo_inference
 from .infer_rfdetr import run_rfdetr_inference
 from .infer_dfine import run_dfine_inference
@@ -325,6 +340,12 @@ class AnnotationQaFixRequest(BaseModel):
     issue_id: str
     fix: str = "sam_box"
     class_id: Optional[int] = Field(default=None, ge=0)
+
+
+class AnnotationQaRoboflowRequest(BaseModel):
+    api_key: Optional[str] = None
+    preview_id: str = ""
+    confirmed: bool = False
 
 
 class TrainRequest(BaseModel):
@@ -4734,6 +4755,14 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
     report["summary"]["corrected_dataset_yaml"] = str(corrected_yaml)
     report["summary"]["corrected_dataset_root"] = str(corrected_root)
     report["summary"]["applied_fixes"] = applied
+    corrected_provenance = load_roboflow_provenance(corrected_root)
+    if corrected_provenance.get("provider") == "roboflow":
+        report["summary"]["roboflow_sync"] = {
+            "workspace": corrected_provenance.get("workspace", ""),
+            "project": corrected_provenance.get("project", ""),
+            "source_version": corrected_provenance.get("source_version", ""),
+            **(corrected_provenance.get("mapping") or {}),
+        }
     write_annotation_qa_report(run_dir, report["issues"], report["summary"])
 
     response = dataset_response(
@@ -4741,8 +4770,203 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
         f"Applied {applied} accepted SAM fix{'es' if applied != 1 else ''}. Training will use the corrected dataset copy.",
     )
     response.update(fix_summary)
+    if report["summary"].get("roboflow_sync"):
+        response["roboflow_sync"] = report["summary"]["roboflow_sync"]
     response["download_available"] = True
     return response
+
+
+def annotation_qa_roboflow_context(job_id: str) -> tuple[Path, dict, Path, dict, list[str]]:
+    run_dir = annotation_qa_run_dir(job_id)
+    report = load_annotation_qa_report(run_dir)
+    fix_summary = read_json_object(run_dir / ANNOTATION_QA_FIX_SUMMARY_FILE)
+    corrected_root_value = fix_summary.get("corrected_dataset_root")
+    if not corrected_root_value:
+        raise HTTPException(
+            status_code=409,
+            detail="Create the corrected dataset before publishing annotations to Roboflow.",
+        )
+    corrected_root = Path(str(corrected_root_value)).expanduser().resolve()
+    try:
+        corrected_root.relative_to(DATA_ROOT.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Corrected dataset is outside the web dataset workspace.") from exc
+    if not corrected_root.is_dir():
+        raise HTTPException(status_code=404, detail="The corrected dataset is no longer available.")
+
+    provenance = load_roboflow_provenance(corrected_root)
+    if not provenance:
+        source_root_value = fix_summary.get("source_dataset_root")
+        source_root = Path(str(source_root_value)).expanduser().resolve() if source_root_value else Path()
+        provenance = load_roboflow_provenance(source_root) if source_root_value else {}
+    if provenance.get("provider") != "roboflow":
+        raise HTTPException(
+            status_code=409,
+            detail="This QA dataset has no Roboflow source binding. Fetch it from Roboflow again before publishing.",
+        )
+    if not provenance.get("workspace") or not provenance.get("project"):
+        raise HTTPException(status_code=409, detail="Roboflow source workspace or project metadata is missing.")
+    class_names = [str(name) for name in provenance.get("class_names") or []]
+    if not class_names:
+        corrected_yaml = Path(str(fix_summary.get("corrected_dataset_yaml") or corrected_root / "data.yaml"))
+        class_names = read_yaml_class_names(corrected_yaml)
+    return run_dir, report, corrected_root, provenance, class_names
+
+
+def build_annotation_qa_roboflow_preview(job_id: str, api_key: str) -> dict:
+    run_dir, report, corrected_root, provenance, class_names = annotation_qa_roboflow_context(job_id)
+    workspace = str(provenance["workspace"])
+    project = str(provenance["project"])
+    target = {
+        "workspace": workspace,
+        "project": project,
+        "source_version": str(provenance.get("source_version") or ""),
+    }
+    changed_images: dict[str, list[str]] = {}
+    source_root_value = (report.get("summary") or {}).get("dataset_root")
+    source_root = Path(str(source_root_value)).expanduser().resolve() if source_root_value else None
+    for issue in report.get("issues") or []:
+        if not isinstance(issue, dict) or not issue.get("applied"):
+            continue
+        image_value = issue.get("image")
+        if not image_value or source_root is None:
+            continue
+        try:
+            relative = Path(str(image_value)).expanduser().resolve().relative_to(source_root).as_posix()
+        except ValueError:
+            continue
+        changed_images.setdefault(relative, []).append(str(issue.get("issue_id") or ""))
+
+    manifest_images = provenance.get("images") if isinstance(provenance.get("images"), dict) else {}
+    items: list[dict] = []
+    for relative, issue_ids in sorted(changed_images.items()):
+        entry = manifest_images.get(relative) if isinstance(manifest_images.get(relative), dict) else {}
+        item = {
+            "local_image": relative,
+            "issue_ids": issue_ids,
+            "roboflow_image_id": str(entry.get("roboflow_image_id") or ""),
+            "roboflow_image_name": str(entry.get("roboflow_image_name") or ""),
+            "baseline_digest": str(entry.get("baseline_digest") or ""),
+            "status": "ineligible",
+            "reason": str(entry.get("reason") or "Image is not bound to a unique Roboflow image ID."),
+        }
+        if not entry.get("eligible") or not item["roboflow_image_id"]:
+            items.append(item)
+            continue
+        label_relative = Path(str(entry.get("local_label") or ""))
+        label_path = (corrected_root / label_relative).resolve()
+        try:
+            label_path.relative_to(corrected_root)
+        except ValueError:
+            item["reason"] = "Corrected label path escaped the dataset root."
+            items.append(item)
+            continue
+        corrected = canonical_local_annotation(label_path, class_names)
+        item["corrected_digest"] = annotation_digest(corrected)
+        item["annotation_name"] = f"{Path(relative).stem}.txt"
+        if item["corrected_digest"] == item["baseline_digest"]:
+            item.update(status="unchanged", reason="The corrected annotation is identical to the imported annotation.")
+            items.append(item)
+            continue
+        try:
+            remote_payload = roboflow_image_details(
+                api_key, workspace, project, item["roboflow_image_id"]
+            )
+            remote = canonical_remote_annotation(remote_payload, class_names)
+            item["remote_digest"] = annotation_digest(remote)
+        except Exception as exc:
+            item.update(status="error", reason=redact_secret(exc, api_key))
+            items.append(item)
+            continue
+        if item["remote_digest"] == item["corrected_digest"]:
+            item.update(status="already_synced", reason="Roboflow already contains this corrected annotation.")
+        elif item["remote_digest"] != item["baseline_digest"]:
+            item.update(status="conflict", reason="The Roboflow annotation changed after this dataset was imported.")
+        else:
+            item.update(status="ready", reason="Ready to replace the source annotation in the bound Roboflow project.")
+        items.append(item)
+
+    counts = {
+        status: sum(1 for item in items if item.get("status") == status)
+        for status in ("ready", "already_synced", "conflict", "ineligible", "unchanged", "error")
+    }
+    preview = {
+        "job_id": job_id,
+        "target": target,
+        "items": items,
+        "counts": counts,
+        "created_at": datetime.now(MYT).isoformat(),
+    }
+    preview["preview_id"] = sync_preview_digest(target, items)
+    write_json_object(run_dir / ROBOFLOW_SYNC_PREVIEW_FILE, preview)
+    return preview
+
+
+def publish_annotation_qa_to_roboflow(job_id: str, api_key: str, preview_id: str) -> dict:
+    run_dir, _report, corrected_root, provenance, class_names = annotation_qa_roboflow_context(job_id)
+    preview = build_annotation_qa_roboflow_preview(job_id, api_key)
+    if not preview_id or preview_id != preview.get("preview_id"):
+        raise HTTPException(
+            status_code=409,
+            detail="The Roboflow preview changed. Review the latest conflicts before publishing.",
+        )
+    workspace = str(provenance["workspace"])
+    project = str(provenance["project"])
+    results = []
+    manifest_images = provenance.get("images") if isinstance(provenance.get("images"), dict) else {}
+    for item in preview["items"]:
+        status = item.get("status")
+        result = {
+            "local_image": item.get("local_image"),
+            "roboflow_image_id": item.get("roboflow_image_id"),
+            "status": status,
+            "reason": item.get("reason", ""),
+        }
+        if status != "ready":
+            results.append(result)
+            continue
+        entry = manifest_images.get(str(item["local_image"])) or {}
+        label_path = (corrected_root / str(entry.get("local_label") or "")).resolve()
+        try:
+            label_path.relative_to(corrected_root)
+            annotation_text = label_path.read_text(encoding="utf-8") if label_path.is_file() else ""
+            roboflow_upload_annotation(
+                api_key=api_key,
+                project=project,
+                image_id=str(item["roboflow_image_id"]),
+                annotation_text=annotation_text,
+                class_names=class_names,
+                annotation_name=str(item.get("annotation_name") or f"{label_path.stem}.txt"),
+            )
+            result.update(status="published", reason="Roboflow accepted the corrected annotation.")
+            entry["baseline_annotation"] = canonical_local_annotation(label_path, class_names)
+            entry["baseline_digest"] = item.get("corrected_digest")
+            entry["last_published_at"] = datetime.now(MYT).isoformat()
+        except Exception as exc:
+            result.update(status="failed", reason=redact_secret(exc, api_key))
+        results.append(result)
+
+    provenance["images"] = manifest_images
+    provenance["last_published_at"] = datetime.now(MYT).isoformat()
+    write_roboflow_provenance(corrected_root, provenance)
+    counts = {
+        status: sum(1 for result in results if result.get("status") == status)
+        for status in ("published", "already_synced", "conflict", "ineligible", "unchanged", "error", "failed")
+    }
+    audit = {
+        "job_id": job_id,
+        "target": {
+            "workspace": workspace,
+            "project": project,
+            "source_version": str(provenance.get("source_version") or ""),
+        },
+        "preview_id": preview_id,
+        "published_at": datetime.now(MYT).isoformat(),
+        "counts": counts,
+        "results": results,
+    }
+    write_json_object(run_dir / ROBOFLOW_SYNC_LOG_FILE, audit)
+    return audit
 
 
 def load_sam_model(model_name: str):
@@ -6763,6 +6987,46 @@ def apply_annotation_qa_corrections(job_id: str):
     return apply_annotation_qa_fixes(job_id)
 
 
+@app.post("/api/annotation-qa/roboflow/preview/{job_id}")
+def preview_annotation_qa_roboflow_sync(job_id: str, request: AnnotationQaRoboflowRequest):
+    api_key = request.api_key or os.getenv("ROBOFLOW_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="A Roboflow private API key is required to preview synchronization.")
+    try:
+        return build_annotation_qa_roboflow_preview(job_id, str(api_key))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Roboflow synchronization preview failed: {redact_secret(exc, str(api_key))}") from exc
+
+
+@app.post("/api/annotation-qa/roboflow/publish/{job_id}")
+def publish_annotation_qa_roboflow_sync(job_id: str, request: AnnotationQaRoboflowRequest):
+    if not request.confirmed:
+        raise HTTPException(status_code=400, detail="Confirm the bound Roboflow project before publishing.")
+    api_key = request.api_key or os.getenv("ROBOFLOW_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="A Roboflow private API key is required to publish corrections.")
+    try:
+        return publish_annotation_qa_to_roboflow(job_id, str(api_key), request.preview_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Roboflow annotation publishing failed: {redact_secret(exc, str(api_key))}") from exc
+
+
+@app.get("/api/annotation-qa/roboflow/status/{job_id}")
+def annotation_qa_roboflow_sync_status(job_id: str):
+    run_dir = annotation_qa_run_dir(job_id)
+    audit = read_json_object(run_dir / ROBOFLOW_SYNC_LOG_FILE)
+    if audit:
+        return audit
+    preview = read_json_object(run_dir / ROBOFLOW_SYNC_PREVIEW_FILE)
+    if preview:
+        return preview
+    raise HTTPException(status_code=404, detail="No Roboflow synchronization preview is available.")
+
+
 @app.get("/api/dataset/preparation/status")
 def dataset_preparation_status(job_id: str):
     with dataset_preparation_lock:
@@ -7391,6 +7655,51 @@ def roboflow_dataset(request: RoboflowRequest):
                 else None
             ),
         )
+        try:
+            _prepared_yaml, prepared_root, prepared_payload = prepared_dataset_yaml(str(yaml_path))
+            progress_callback(
+                "binding_roboflow_images",
+                0,
+                0,
+                "Binding local files to their source Roboflow image IDs.",
+            )
+            mapping_error = ""
+            try:
+                remote_records = roboflow_search_images(
+                    str(api_key), str(workspace), str(project_name)
+                )
+            except Exception as exc:
+                remote_records = []
+                mapping_error = redact_secret(exc, str(api_key))
+            provenance = build_roboflow_provenance(
+                dataset_root=prepared_root,
+                yaml_payload=prepared_payload,
+                class_names=response.get("classes") or [],
+                workspace=str(workspace),
+                project=str(project_name),
+                version=str(version),
+                remote_records=remote_records,
+            )
+            if mapping_error:
+                provenance["mapping_error"] = mapping_error
+            write_roboflow_provenance(prepared_root, provenance)
+            response["summary"]["roboflow_sync"] = {
+                "workspace": provenance["workspace"],
+                "project": provenance["project"],
+                "source_version": provenance["source_version"],
+                **provenance["mapping"],
+                "available": provenance["mapping"]["eligible"] > 0,
+                "error": mapping_error,
+            }
+            write_json_object(prepared_root / DATASET_SUMMARY_FILE, response["summary"])
+        except Exception as exc:
+            response["summary"]["roboflow_sync"] = {
+                "workspace": str(workspace),
+                "project": str(project_name),
+                "source_version": str(version),
+                "available": False,
+                "error": f"Roboflow image binding failed: {exc}",
+            }
         update_dataset_preparation(
             request.job_id,
             "complete",

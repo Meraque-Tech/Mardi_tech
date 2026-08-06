@@ -84,6 +84,26 @@ def test_preview_assets_and_safe_bulk_review_are_supported():
     assert 'issue["mask_preview"]' in app_source
 
 
+def test_roboflow_publish_is_bound_previewed_and_confirmed():
+    markup = INDEX_HTML.read_text(encoding="utf-8")
+    script = APP_JS.read_text(encoding="utf-8")
+    app_source = APP_PY.read_text(encoding="utf-8")
+
+    for control in (
+        "annotation-qa-roboflow-target",
+        "preview-annotation-qa-roboflow",
+        "publish-annotation-qa-roboflow",
+        "annotation-qa-roboflow-results",
+    ):
+        assert f'id="{control}"' in markup
+    assert "The destination is locked" in markup
+    assert "function previewAnnotationQaRoboflow" in script
+    assert "function publishAnnotationQaRoboflow" in script
+    assert "window.confirm" in script
+    assert 'request.preview_id' in app_source
+    assert 'request.confirmed' in app_source
+
+
 def test_annotation_qa_markup_has_unique_ids():
     parser = IdParser()
     parser.feed(INDEX_HTML.read_text(encoding="utf-8"))

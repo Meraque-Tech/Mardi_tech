@@ -105,6 +105,16 @@ datasets are copy-on-write, and reports created before the current
 prompt-mapping, difference-band, and stability safeguards must be rerun before
 SAM box corrections can be accepted.
 
+Datasets fetched from Roboflow also store a strict workspace/project/version
+manifest with unique source image IDs. After creating a corrected dataset, use
+`Preview Roboflow Changes` to check for upstream annotation conflicts and then
+`Publish to Bound Project` to replace only conflict-free annotations in that
+same source project. The API key is used for the request but is not stored in
+the manifest or audit log. Generated Roboflow versions remain immutable, so a
+new version must be generated after publishing before training on Roboflow.
+Older downloads without the source manifest must be fetched again before they
+can be published.
+
 ## Run With CUDA Container
 
 Use this when you want the UI and training process to run inside a CUDA-enabled

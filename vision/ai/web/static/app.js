@@ -80,6 +80,9 @@ const state = {
   annotationQaZoom: 1,
   annotationQaSelected: new Set(),
   annotationQaCanvasRevision: 0,
+  annotationQaRoboflowPreview: null,
+  annotationQaRoboflowPreviewing: false,
+  annotationQaRoboflowPublishing: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -2046,6 +2049,9 @@ function resetAnnotationQaForDataset() {
   state.annotationQaStopping = false;
   state.annotationQaApplyingFixes = false;
   state.annotationQaCorrectedDatasetYaml = "";
+  state.annotationQaRoboflowPreview = null;
+  state.annotationQaRoboflowPreviewing = false;
+  state.annotationQaRoboflowPublishing = false;
   state.annotationQaQueue = "needs_review";
   state.annotationQaPage = 1;
   state.annotationQaFilters = { search: "", severity: "", split: "", className: "", issueType: "" };
@@ -2297,6 +2303,71 @@ function renderAnnotationQaCompletionChecklist() {
         : "No corrections queued";
 }
 
+function renderAnnotationQaRoboflowSync() {
+  const panel = $("annotation-qa-roboflow-sync");
+  if (!panel) {
+    return;
+  }
+  const binding = state.annotationQaReport?.summary?.roboflow_sync;
+  panel.hidden = !binding;
+  if (!binding) {
+    return;
+  }
+  const target = `${binding.workspace || "unknown workspace"}/${binding.project || "unknown project"}`;
+  $("annotation-qa-roboflow-target").textContent = `${target} · imported version ${binding.source_version || "unknown"}`;
+  const preview = state.annotationQaRoboflowPreview;
+  const counts = preview?.counts || {};
+  const busy = state.annotationQaRoboflowPreviewing || state.annotationQaRoboflowPublishing;
+  const hasCorrectedDataset = Boolean(state.annotationQaCorrectedDatasetYaml);
+  const ready = Number(counts.ready || 0);
+  const results = $("annotation-qa-roboflow-results");
+  if (preview) {
+    const labels = preview.results ? [
+      ["Published", counts.published || 0],
+      ["Failed", counts.failed || 0],
+      ["Conflicts", counts.conflict || 0],
+      ["Skipped", (counts.ineligible || 0) + (counts.unchanged || 0)],
+    ] : [
+      ["Ready", ready],
+      ["Already synced", counts.already_synced || 0],
+      ["Conflicts", counts.conflict || 0],
+      ["Ineligible", counts.ineligible || 0],
+      ["Errors", counts.error || 0],
+    ];
+    const blockedItems = (preview.items || preview.results || [])
+      .filter((item) => ["conflict", "ineligible", "error", "failed"].includes(item.status))
+      .slice(0, 5);
+    const blockedMarkup = blockedItems.length
+      ? `<ul>${blockedItems.map((item) => `<li><strong>${escapeHtml(item.local_image || "Unknown image")}</strong>: ${escapeHtml(item.reason || item.status)}</li>`).join("")}</ul>`
+      : "";
+    results.innerHTML = labels.map(([label, value]) => `<span><strong>${Number(value)}</strong> ${escapeHtml(label)}</span>`).join("") + blockedMarkup;
+  } else {
+    results.innerHTML = `<span><strong>${Number(binding.eligible || 0)}</strong> source image bindings available</span>`;
+  }
+  const stateLabel = state.annotationQaRoboflowPublishing
+    ? "Publishing"
+    : state.annotationQaRoboflowPreviewing
+      ? "Checking"
+      : preview?.results
+        ? `${Number(counts.published || 0)} published`
+        : preview
+          ? `${ready} ready`
+          : hasCorrectedDataset
+            ? "Not previewed"
+            : "Create dataset first";
+  $("annotation-qa-roboflow-state").textContent = stateLabel;
+  $("preview-annotation-qa-roboflow").disabled = !hasCorrectedDataset || busy;
+  $("preview-annotation-qa-roboflow").textContent = state.annotationQaRoboflowPreviewing
+    ? "Checking Roboflow..."
+    : preview && !preview.results
+      ? "Refresh Preview"
+      : "Preview Roboflow Changes";
+  $("publish-annotation-qa-roboflow").disabled = !hasCorrectedDataset || busy || !preview?.preview_id || ready <= 0 || Boolean(preview.results);
+  $("publish-annotation-qa-roboflow").textContent = state.annotationQaRoboflowPublishing
+    ? "Publishing..."
+    : `Publish ${ready || ""} Correction${ready === 1 ? "" : "s"}`.replace("  ", " ");
+}
+
 function syncAnnotationQaActionStates() {
   const hasDataset = Boolean(state.datasetYaml);
   const trainingLocked = state.running || state.isStarting || state.isStopping;
@@ -2334,6 +2405,7 @@ function syncAnnotationQaActionStates() {
   $("download-corrected-dataset").disabled = !state.annotationQaCorrectedDatasetYaml || state.downloads.has("corrected_dataset");
   renderAnnotationQaFixSummary();
   renderAnnotationQaCompletionChecklist();
+  renderAnnotationQaRoboflowSync();
   updateAnnotationQaWorkflow();
 }
 
@@ -3048,6 +3120,7 @@ async function applyAnnotationQaFixes() {
     });
     state.datasetYaml = result.dataset_yaml;
     state.annotationQaCorrectedDatasetYaml = result.dataset_yaml;
+    state.annotationQaRoboflowPreview = null;
     setClassNames(result.classes || []);
     renderDatasetSummary(result.summary);
     if (state.annotationQaReport?.summary) {
@@ -3078,6 +3151,73 @@ async function downloadCorrectedDataset() {
   } finally {
     state.datasetYaml = previousDatasetYaml || state.annotationQaCorrectedDatasetYaml;
     state.downloads.delete("corrected_dataset");
+    syncAnnotationQaActionStates();
+  }
+}
+
+function annotationQaRoboflowApiKey() {
+  return $("rf-key")?.value?.trim() || null;
+}
+
+async function previewAnnotationQaRoboflow() {
+  if (!state.annotationQaJobId || !state.annotationQaCorrectedDatasetYaml || state.annotationQaRoboflowPreviewing) {
+    return;
+  }
+  state.annotationQaRoboflowPreviewing = true;
+  state.annotationQaRoboflowPreview = null;
+  syncAnnotationQaActionStates();
+  setMessage("Checking the bound Roboflow project for conflicts...");
+  try {
+    const preview = await apiJson(`/api/annotation-qa/roboflow/preview/${encodeURIComponent(state.annotationQaJobId)}`, {
+      method: "POST",
+      body: JSON.stringify({ api_key: annotationQaRoboflowApiKey() }),
+    });
+    state.annotationQaRoboflowPreview = preview;
+    const ready = Number(preview.counts?.ready || 0);
+    const conflicts = Number(preview.counts?.conflict || 0);
+    setMessage(`${ready} image${ready === 1 ? " is" : "s are"} ready to publish${conflicts ? `; ${conflicts} conflict${conflicts === 1 ? " was" : "s were"} blocked` : ""}.`);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.annotationQaRoboflowPreviewing = false;
+    syncAnnotationQaActionStates();
+  }
+}
+
+async function publishAnnotationQaRoboflow() {
+  const preview = state.annotationQaRoboflowPreview;
+  const binding = state.annotationQaReport?.summary?.roboflow_sync;
+  const ready = Number(preview?.counts?.ready || 0);
+  if (!preview?.preview_id || !binding || ready <= 0 || state.annotationQaRoboflowPublishing) {
+    return;
+  }
+  const target = `${binding.workspace}/${binding.project}`;
+  const confirmed = window.confirm(
+    `Publish ${ready} corrected image annotation${ready === 1 ? "" : "s"} to ${target}?\n\nThe destination is locked to this imported project. Version ${binding.source_version || "unknown"} will remain unchanged.`,
+  );
+  if (!confirmed) {
+    return;
+  }
+  state.annotationQaRoboflowPublishing = true;
+  syncAnnotationQaActionStates();
+  setMessage(`Publishing approved corrections to ${target}...`);
+  try {
+    const result = await apiJson(`/api/annotation-qa/roboflow/publish/${encodeURIComponent(state.annotationQaJobId)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        api_key: annotationQaRoboflowApiKey(),
+        preview_id: preview.preview_id,
+        confirmed: true,
+      }),
+    });
+    state.annotationQaRoboflowPreview = result;
+    const published = Number(result.counts?.published || 0);
+    const failed = Number(result.counts?.failed || 0);
+    setMessage(`${published} annotation${published === 1 ? " was" : "s were"} published to ${target}${failed ? `; ${failed} failed` : ""}. Generate a new Roboflow version to use these corrections for training.`);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    state.annotationQaRoboflowPublishing = false;
     syncAnnotationQaActionStates();
   }
 }
@@ -6453,6 +6593,8 @@ $("download-annotation-qa-csv").addEventListener("click", () => downloadAnnotati
 $("download-annotation-qa-json").addEventListener("click", () => downloadAnnotationQaReport("json"));
 $("apply-annotation-qa-fixes").addEventListener("click", applyAnnotationQaFixes);
 $("download-corrected-dataset").addEventListener("click", downloadCorrectedDataset);
+$("preview-annotation-qa-roboflow").addEventListener("click", previewAnnotationQaRoboflow);
+$("publish-annotation-qa-roboflow").addEventListener("click", publishAnnotationQaRoboflow);
 document.querySelectorAll("[data-qa-queue]").forEach((button) => {
   button.addEventListener("click", () => {
     state.annotationQaQueue = button.dataset.qaQueue;
