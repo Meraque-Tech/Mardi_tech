@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -33,7 +34,9 @@ def load_qa_helpers():
         "annotation_qa_auto_gate",
         "annotation_qa_audit_required",
         "mask_to_uint8",
+        "mask_bbox",
         "draw_annotation_qa_preview",
+        "annotation_qa_candidates_for_image",
     }
     module = ast.Module(
         body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names],
@@ -46,6 +49,9 @@ def load_qa_helpers():
         "MYT": timezone(timedelta(hours=8)),
         "ANNOTATION_QA_REPORT_VERSION": 4,
         "hashlib": hashlib,
+        "threading": threading,
+        "SamQaRuntime": object,
+        "InferenceStopped": RuntimeError,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace
@@ -90,6 +96,55 @@ class FakeModel:
 
 
 class AnnotationQaTests(unittest.TestCase):
+    def test_staged_prompts_skip_stability_work_for_boxes_within_tolerance(self):
+        class Runtime:
+            def __init__(self):
+                self.calls = []
+                self.reset = False
+
+            def set_image(self, _image):
+                pass
+
+            def predict_prompts(self, boxes, _stop_event):
+                self.calls.append(list(boxes))
+                masks = []
+                for box in boxes:
+                    mask = np.zeros((100, 100), dtype=np.uint8)
+                    x1, y1, x2, y2 = box
+                    if x1 == 50:
+                        x1 = 53
+                    mask[y1:y2, x1:x2] = 1
+                    masks.append({"mask": mask, "confidence": 0.9})
+                return masks
+
+            def reset_image(self):
+                self.reset = True
+
+        runtime = Runtime()
+        labels = [
+            {"bbox": (10, 10, 30, 30), "row_index": 1},
+            {"bbox": (50, 50, 80, 80), "row_index": 2},
+        ]
+        candidates = QA_HELPERS["annotation_qa_candidates_for_image"](
+            runtime,
+            np.zeros((100, 100, 3), dtype=np.uint8),
+            labels,
+            100,
+            100,
+            {
+                "box_tolerance_percent": 5.0,
+                "sam_max_difference_percent": 25.0,
+                "sam_prompt_expansion_percent": 8.0,
+                "sam_prompt_jitter_percent": 2.0,
+            },
+            threading.Event(),
+        )
+
+        self.assertEqual([len(call) for call in runtime.calls], [2, 2])
+        self.assertEqual(len(candidates[0]), 1)
+        self.assertEqual(len(candidates[1]), 3)
+        self.assertTrue(runtime.reset)
+
     def test_preview_writer_creates_interactive_overlay_assets(self):
         import cv2
 

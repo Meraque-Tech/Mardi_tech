@@ -80,6 +80,7 @@ const state = {
   annotationQaZoom: 1,
   annotationQaSelected: new Set(),
   annotationQaCanvasRevision: 0,
+  annotationQaModels: [],
   annotationQaRoboflowPreview: null,
   annotationQaRoboflowPreviewing: false,
   annotationQaRoboflowPublishing: false,
@@ -2146,6 +2147,44 @@ function updateAnnotationQaConfigurationSummary() {
   $("annotation-qa-configuration-explainer").textContent = `Scan ${scopeLabels[scope]} with ${presetLabels[preset].toLowerCase()} sensitivity. ${modeText}`;
 }
 
+function selectedAnnotationQaModelStatus() {
+  const selected = $("annotation-qa-model")?.value;
+  return state.annotationQaModels.find((model) => model.id === selected) || null;
+}
+
+function updateAnnotationQaModelStatus() {
+  const select = $("annotation-qa-model");
+  const note = $("annotation-qa-model-status");
+  if (!select || !note) {
+    return;
+  }
+  state.annotationQaModels.forEach((model) => {
+    const option = [...select.options].find((item) => item.value === model.id);
+    if (option) {
+      option.disabled = !model.available;
+      option.title = model.reason || "";
+    }
+  });
+  const model = selectedAnnotationQaModelStatus();
+  const automaticOption = [...$("annotation-qa-auto-mode").options].find((option) => option.value === "automatic");
+  if (automaticOption) {
+    automaticOption.disabled = Boolean(model && !model.automatic_allowed);
+  }
+  if (model && !model.automatic_allowed && $("annotation-qa-auto-mode").value === "automatic") {
+    $("annotation-qa-auto-mode").value = "shadow";
+  }
+  if (!model) {
+    note.textContent = "Model capability information is unavailable.";
+  } else if (!model.available) {
+    note.textContent = model.reason || "This model is unavailable.";
+  } else if (model.backend === "sam3") {
+    note.textContent = `Uses ${model.max_side}px maximum input, ${model.prompt_chunk}-prompt adaptive chunks, BF16/FP16, and suggestions-only safety on the 16 GB GPU.`;
+  } else {
+    note.textContent = `${model.label} uses the established QA thresholds.`;
+  }
+  updateAnnotationQaConfigurationSummary();
+}
+
 function updateAnnotationQaWorkflow() {
   const hasReport = Boolean(state.annotationQaReport);
   const running = state.annotationQaRunning || state.annotationQaStopping;
@@ -2467,6 +2506,12 @@ function renderAnnotationQaSummary(summary = {}) {
       <div><span>SAM difference limit</span><strong>${Number(summary.sam_max_difference_percent ?? 25).toFixed(1)}%</strong></div>
       <div><span>YOLO kept automatically</span><strong>${summary.qa_decisions?.auto_keep_yolo || summary.yolo_boxes_accepted || 0}</strong></div>
       <div><span>SAM replacements blocked</span><strong>${summary.sam_replacements_blocked || 0}</strong></div>
+      ${summary.auto_correction_policy?.runtime ? `
+        <div><span>Precision</span><strong>${escapeHtml(summary.auto_correction_policy.runtime.precision || "fp32")}</strong></div>
+        <div><span>Peak VRAM</span><strong>${Number(summary.auto_correction_policy.runtime.peak_vram_mb || 0).toFixed(0)} MB</strong></div>
+        <div><span>Prompt chunk</span><strong>${summary.auto_correction_policy.runtime.final_prompt_chunk || "—"}</strong></div>
+        <div><span>Inference limit</span><strong>${summary.auto_correction_policy.runtime.max_side || "—"} px</strong></div>
+      ` : ""}
     `;
   }
 }
@@ -2922,6 +2967,13 @@ async function runAnnotationQa() {
       throw new Error("Maximum SAM difference must be greater than the YOLO box tolerance.");
     }
     const mode = $("annotation-qa-auto-mode").value;
+    const modelStatus = selectedAnnotationQaModelStatus();
+    if (modelStatus && !modelStatus.available) {
+      throw new Error(modelStatus.reason || "The selected SAM model is unavailable.");
+    }
+    if (modelStatus && !modelStatus.automatic_allowed && mode === "automatic") {
+      throw new Error("SAM 3 automatic correction is disabled until its QA thresholds are calibrated.");
+    }
     if (!["manual", "shadow", "automatic"].includes(mode)) {
       throw new Error("Choose a valid automatic-correction mode.");
     }
@@ -5305,12 +5357,14 @@ async function clearStorageTarget(key, options = {}) {
 
 async function loadConfig() {
   const config = await apiJson("/api/config");
+  state.annotationQaModels = Array.isArray(config.annotation_qa_models) ? config.annotation_qa_models : [];
   $("data-root").textContent = `Dataset workspace: ${config.data_root}`;
   $("device").value = config.default_device || "";
   $("test-device").value = config.default_device || "";
   $("rf-workspace").value = config.roboflow.workspace || "";
   $("rf-project").value = config.roboflow.project || "";
   $("rf-version").value = config.roboflow.version || "";
+  updateAnnotationQaModelStatus();
   updateDatasetNameSuggestion();
   syncTrainingGuide();
 }
@@ -6589,6 +6643,7 @@ $("annotation-qa-preset").addEventListener("change", () => {
 });
 $("annotation-qa-scope").addEventListener("change", updateAnnotationQaConfigurationSummary);
 $("annotation-qa-auto-mode").addEventListener("change", updateAnnotationQaConfigurationSummary);
+$("annotation-qa-model").addEventListener("change", updateAnnotationQaModelStatus);
 $("download-annotation-qa-csv").addEventListener("click", () => downloadAnnotationQaReport("csv"));
 $("download-annotation-qa-json").addEventListener("click", () => downloadAnnotationQaReport("json"));
 $("apply-annotation-qa-fixes").addEventListener("click", applyAnnotationQaFixes);

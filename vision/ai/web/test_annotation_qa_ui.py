@@ -104,6 +104,20 @@ def test_roboflow_publish_is_bound_previewed_and_confirmed():
     assert 'request.confirmed' in app_source
 
 
+def test_sam3_is_exposed_with_memory_and_safety_controls():
+    markup = INDEX_HTML.read_text(encoding="utf-8")
+    script = APP_JS.read_text(encoding="utf-8")
+    app_source = APP_PY.read_text(encoding="utf-8")
+
+    assert '<option value="sam3">SAM 3' in markup
+    assert 'id="annotation-qa-model-status"' in markup
+    assert "function updateAnnotationQaModelStatus" in script
+    assert "model.automatic_allowed" in script
+    assert '"prompt_chunk": 8' in app_source
+    assert '"max_side": 1008' in app_source
+    assert "SAM 3 automatic correction is disabled" in app_source
+
+
 def test_annotation_qa_markup_has_unique_ids():
     parser = IdParser()
     parser.feed(INDEX_HTML.read_text(encoding="utf-8"))

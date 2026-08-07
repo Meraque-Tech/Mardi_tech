@@ -46,6 +46,7 @@ from .roboflow_sync import (
     sync_preview_digest,
     write_roboflow_provenance,
 )
+from .sam_qa_runtime import SamQaRuntime
 from .infer_yolo import InferenceStopped, run_yolo_inference
 from .infer_rfdetr import run_rfdetr_inference
 from .infer_dfine import run_dfine_inference
@@ -256,6 +257,51 @@ ANNOTATION_QA_FIX_SUMMARY_FILE = "fix_summary.json"
 ANNOTATION_QA_MODEL_DEFAULT = os.getenv("SAM_QA_MODEL", "sam2.1_s.pt")
 ANNOTATION_QA_REPORT_VERSION = 4
 ANNOTATION_QA_SAFE_MAPPING_VERSION = 2
+SAM3_QA_MODEL_PATH = Path(os.getenv("SAM3_QA_MODEL_PATH") or REPO_ROOT / "sam3.pt").expanduser().resolve()
+SAM3_MIN_ULTRALYTICS_VERSION = (8, 3, 237)
+SAM_QA_MODEL_REGISTRY = {
+    "sam2.1_s.pt": {
+        "label": "SAM2.1 Hiera Small",
+        "path": "sam2.1_s.pt",
+        "backend": "sam2",
+        "max_side": 1280,
+        "prompt_chunk": 1024,
+        "automatic_allowed": True,
+    },
+    "sam2.1_t.pt": {
+        "label": "SAM2.1 Hiera Tiny",
+        "path": "sam2.1_t.pt",
+        "backend": "sam2",
+        "max_side": 1280,
+        "prompt_chunk": 1024,
+        "automatic_allowed": True,
+    },
+    "sam2.1_b.pt": {
+        "label": "SAM2.1 Hiera Base+",
+        "path": "sam2.1_b.pt",
+        "backend": "sam2",
+        "max_side": 1280,
+        "prompt_chunk": 1024,
+        "automatic_allowed": True,
+    },
+    "sam2.1_l.pt": {
+        "label": "SAM2.1 Hiera Large",
+        "path": "sam2.1_l.pt",
+        "backend": "sam2",
+        "max_side": 1280,
+        "prompt_chunk": 1024,
+        "automatic_allowed": True,
+    },
+    "sam3": {
+        "label": "SAM 3",
+        "path": str(SAM3_QA_MODEL_PATH),
+        "backend": "sam3",
+        "max_side": 1008,
+        "prompt_chunk": 8,
+        "automatic_allowed": False,
+        "recommended_vram_gb": 16,
+    },
+}
 
 app = FastAPI(title="YOLOv8 Training UI")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -3837,8 +3883,63 @@ def normalize_annotation_qa_model_name(model: str) -> str:
         "sam2.1_hiera_base_plus.pt": "sam2.1_b.pt",
         "sam2.1_hiera_large": "sam2.1_l.pt",
         "sam2.1_hiera_large.pt": "sam2.1_l.pt",
+        "sam3.pt": "sam3",
+        str(SAM3_QA_MODEL_PATH): "sam3",
     }
-    return aliases.get(value, value)
+    normalized = aliases.get(value, value)
+    if normalized not in SAM_QA_MODEL_REGISTRY:
+        raise ValueError(f"Unsupported Annotation QA model: {value}")
+    return normalized
+
+
+def annotation_qa_version_tuple(value: str) -> tuple[int, int, int]:
+    numbers = [int(part) for part in re.findall(r"\d+", str(value))[:3]]
+    return tuple((numbers + [0, 0, 0])[:3])
+
+
+def annotation_qa_model_status(model_name: str) -> dict:
+    normalized = normalize_annotation_qa_model_name(model_name)
+    config = dict(SAM_QA_MODEL_REGISTRY[normalized])
+    available = True
+    reason = ""
+    installed_version = ""
+    if config["backend"] == "sam3":
+        path = Path(str(config["path"]))
+        if not path.is_file():
+            available = False
+            reason = f"Checkpoint not found at {path}."
+        elif path.stat().st_size < 1_000_000_000:
+            available = False
+            reason = f"Checkpoint at {path} is unexpectedly small and may not be an Ultralytics SAM 3 checkpoint."
+        try:
+            installed_version = package_version("ultralytics")
+        except PackageNotFoundError:
+            available = False
+            reason = "Ultralytics is not installed."
+        else:
+            if annotation_qa_version_tuple(installed_version) < SAM3_MIN_ULTRALYTICS_VERSION:
+                available = False
+                reason = "SAM 3 requires Ultralytics 8.3.237 or newer."
+    return {
+        "id": normalized,
+        "label": config["label"],
+        "backend": config["backend"],
+        "available": available,
+        "reason": reason,
+        "automatic_allowed": bool(config.get("automatic_allowed", True)),
+        "max_side": int(config["max_side"]),
+        "prompt_chunk": int(config["prompt_chunk"]),
+        "recommended_vram_gb": config.get("recommended_vram_gb"),
+        "checkpoint": str(config["path"]) if config["backend"] == "sam3" else str(config["path"]),
+        "ultralytics_version": installed_version,
+    }
+
+
+def annotation_qa_model_config(model_name: str) -> dict:
+    status = annotation_qa_model_status(model_name)
+    if not status["available"]:
+        raise RuntimeError(status["reason"])
+    return {**SAM_QA_MODEL_REGISTRY[status["id"]], **status}
 
 
 def ensure_annotation_qa_path(path: Path):
@@ -5042,6 +5143,102 @@ def sam_masks_for_image(
     return mapped
 
 
+def annotation_qa_candidates_for_image(
+    runtime: SamQaRuntime,
+    image,
+    labels: list[dict],
+    width: int,
+    height: int,
+    thresholds: dict,
+    stop_event: threading.Event,
+) -> Optional[list[list[dict]]]:
+    """Run original prompts first and stability prompts only for reviewable boxes."""
+    candidates_by_label: list[list[dict]] = [[] for _ in labels]
+    if not labels:
+        return candidates_by_label
+
+    def add_candidates(results, references, prompt_offset=0):
+        if results is None:
+            return False
+        for index, reference in enumerate(references):
+            result = results[index] if index < len(results) else None
+            if result is None or result.get("mask") is None:
+                continue
+            candidate_mask = mask_to_uint8(result["mask"], width, height)
+            candidate_box = mask_bbox(candidate_mask)
+            if candidate_box is None:
+                continue
+            candidates_by_label[reference["label_index"]].append({
+                "variant": reference["variant"],
+                "prompt_bbox": reference["prompt_bbox"],
+                "bbox": candidate_box,
+                "mask": candidate_mask,
+                "confidence": result.get("confidence"),
+                "prompt_index": prompt_offset + index,
+            })
+        return True
+
+    try:
+        runtime.set_image(image)
+        original_boxes = [tuple(label["bbox"]) for label in labels]
+        original_refs = [
+            {
+                "label_index": index,
+                "label_row": label.get("row_index"),
+                "variant": "original",
+                "prompt_bbox": tuple(label["bbox"]),
+            }
+            for index, label in enumerate(labels)
+        ]
+        original_results = runtime.predict_prompts(original_boxes, stop_event)
+        if not add_candidates(original_results, original_refs):
+            return None
+
+        stability_boxes = []
+        stability_refs = []
+        for label_index, label in enumerate(labels):
+            original_candidate = annotation_qa_select_candidate(candidates_by_label[label_index])
+            if original_candidate is None:
+                continue
+            differences = bbox_edge_differences(
+                tuple(label["bbox"]),
+                tuple(original_candidate["bbox"]),
+                thresholds["box_tolerance_percent"],
+                thresholds["sam_max_difference_percent"],
+            )
+            if annotation_qa_difference_band(differences) != "reviewable":
+                continue
+            direction = -1.0 if label_index % 2 else 1.0
+            variants = (
+                ("expanded", annotation_qa_prompt_box(
+                    tuple(label["bbox"]), width, height,
+                    thresholds["sam_prompt_expansion_percent"],
+                )),
+                ("jittered", annotation_qa_prompt_box(
+                    tuple(label["bbox"]), width, height,
+                    thresholds["sam_prompt_expansion_percent"],
+                    direction * thresholds["sam_prompt_jitter_percent"],
+                    -direction * thresholds["sam_prompt_jitter_percent"],
+                )),
+            )
+            for variant, prompt_box in variants:
+                stability_boxes.append(prompt_box)
+                stability_refs.append({
+                    "label_index": label_index,
+                    "label_row": label.get("row_index"),
+                    "variant": variant,
+                    "prompt_bbox": prompt_box,
+                })
+        stability_results = runtime.predict_prompts(stability_boxes, stop_event)
+        if not add_candidates(stability_results, stability_refs, len(original_boxes)):
+            return None
+        return candidates_by_label
+    except InterruptedError as exc:
+        raise InferenceStopped("Annotation QA was stopped.") from exc
+    finally:
+        runtime.reset_image()
+
+
 def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: threading.Event):
     run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
     ensure_annotation_qa_path(run_dir)
@@ -5052,6 +5249,8 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
     images_scanned = 0
     yolo_boxes_accepted = 0
     class_label_counts: dict[str, int] = {}
+    sam_runtime: Optional[SamQaRuntime] = None
+    policy: dict = {}
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
         yaml_path, dataset_root, payload = prepared_dataset_yaml(request_payload["dataset_yaml"])
@@ -5082,8 +5281,13 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             run_dir=str(run_dir),
             report_available=False,
         )
-        model = load_sam_model(request_payload["model"])
         device = os.getenv("SAM_QA_DEVICE") or os.getenv("TRAINING_DEVICE") or ""
+        model_config = annotation_qa_model_config(request_payload["model"])
+        sam_runtime = SamQaRuntime(
+            model_config,
+            device=device,
+            requested_max_side=int(request_payload.get("max_side") or 1280),
+        ).load()
         thresholds = annotation_qa_thresholds(
             request_payload.get("preset", "balanced"),
             request_payload.get("box_tolerance_percent"),
@@ -5103,6 +5307,9 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
         auto_correction_mode = str(request_payload.get("auto_correction_mode", "shadow")).lower()
         policy = {
             "mode": auto_correction_mode,
+            "model": model_config["label"],
+            "model_id": model_config["id"],
+            "automatic_allowed": model_config["automatic_allowed"],
             **{
                 key: thresholds[key]
                 for key in (
@@ -5266,15 +5473,16 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             )
                             issues.append(issue)
 
-                prompt_boxes, prompt_refs = annotation_qa_prompt_plan(
+                candidates_by_label = annotation_qa_candidates_for_image(
+                    sam_runtime,
+                    image,
                     labels,
                     width,
                     height,
-                    thresholds["sam_prompt_expansion_percent"],
-                    thresholds["sam_prompt_jitter_percent"],
+                    thresholds,
+                    stop_event,
                 )
-                masks = sam_masks_for_image(model, image_path, prompt_boxes, device)
-                if masks is None:
+                if candidates_by_label is None:
                     issue_index += 1
                     issues.append(annotation_issue(
                         job_id, issue_index, image_path, split, None, "",
@@ -5282,23 +5490,6 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         "SAM returned masks without reliable prompt indices; no box comparison was made.",
                     ))
                     continue
-                candidates_by_label: list[list[dict]] = [[] for _ in labels]
-                for prompt_index, reference in enumerate(prompt_refs):
-                    result = masks[prompt_index] if prompt_index < len(masks) else None
-                    if result is None or result.get("mask") is None:
-                        continue
-                    candidate_mask = mask_to_uint8(result["mask"], width, height)
-                    candidate_box = mask_bbox(candidate_mask)
-                    if candidate_box is None:
-                        continue
-                    candidates_by_label[reference["label_index"]].append({
-                        "variant": reference["variant"],
-                        "prompt_bbox": reference["prompt_bbox"],
-                        "bbox": candidate_box,
-                        "mask": candidate_mask,
-                        "confidence": result.get("confidence"),
-                        "prompt_index": result.get("prompt_index", prompt_index),
-                    })
                 for label_index, label in enumerate(labels):
                     labels_checked += 1
                     class_key = str(label["class_id"])
@@ -5588,11 +5779,12 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             if processed_limit is not None and images_scanned >= processed_limit:
                 break
 
+        policy["runtime"] = sam_runtime.stats()
         summary = annotation_qa_summary(
             issues,
             images_scanned,
             labels_checked,
-            request_payload["model"],
+            request_payload.get("model_label", request_payload["model"]),
             request_payload.get("scope", "val"),
             request_payload.get("preset", "balanced"),
             request_payload.get("box_tolerance_percent", 5.0),
@@ -5623,11 +5815,13 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             report_available=True,
         )
     except InferenceStopped:
+        if sam_runtime is not None:
+            policy["runtime"] = sam_runtime.stats()
         summary = annotation_qa_summary(
             issues,
             images_scanned,
             labels_checked,
-            request_payload.get("model", ANNOTATION_QA_MODEL_DEFAULT),
+            request_payload.get("model_label", request_payload.get("model", ANNOTATION_QA_MODEL_DEFAULT)),
             request_payload.get("scope", "val"),
             request_payload.get("preset", "balanced"),
             request_payload.get("box_tolerance_percent", 5.0),
@@ -5663,6 +5857,8 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             report_available=False,
         )
     finally:
+        if sam_runtime is not None:
+            sam_runtime.close()
         try:
             import torch
             if torch.cuda.is_available():
@@ -6427,6 +6623,10 @@ def config():
             "project": os.getenv("ROBOFLOW_PROJECT", ""),
             "version": os.getenv("ROBOFLOW_VERSION", ""),
         },
+        "annotation_qa_models": [
+            annotation_qa_model_status(model_name)
+            for model_name in SAM_QA_MODEL_REGISTRY
+        ],
         "default_device": os.getenv("TRAINING_DEVICE", ""),
     }
 
@@ -6777,7 +6977,18 @@ def start_annotation_qa(request: AnnotationQaRequest):
         raise HTTPException(status_code=409, detail="Annotation QA is already running.")
 
     yaml_path, _dataset_root, _payload = prepared_dataset_yaml(request.dataset_yaml)
-    model = normalize_annotation_qa_model_name(request.model)
+    try:
+        model = normalize_annotation_qa_model_name(request.model)
+        model_status = annotation_qa_model_status(model)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not model_status["available"]:
+        raise HTTPException(status_code=409, detail=model_status["reason"])
+    if auto_correction_mode == "automatic" and not model_status["automatic_allowed"]:
+        raise HTTPException(
+            status_code=422,
+            detail="SAM 3 automatic correction is disabled until its QA thresholds are calibrated. Use Suggestions only or Human decisions only.",
+        )
     job_id = annotation_qa_job_id()
     run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
     ensure_annotation_qa_path(run_dir)
@@ -6785,6 +6996,7 @@ def start_annotation_qa(request: AnnotationQaRequest):
     request_payload = {
         "dataset_yaml": str(yaml_path),
         "model": model,
+        "model_label": model_status["label"],
         "scope": request.scope,
         "preset": request.preset,
         "box_tolerance_percent": request.box_tolerance_percent,
@@ -6811,6 +7023,7 @@ def start_annotation_qa(request: AnnotationQaRequest):
         "run_dir": str(run_dir),
         "dataset_yaml": str(yaml_path),
         "model": model,
+        "model_label": model_status["label"],
         "scope": request.scope,
         "preset": request.preset,
         "box_tolerance_percent": request.box_tolerance_percent,

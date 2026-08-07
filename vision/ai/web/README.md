@@ -36,6 +36,8 @@ ROBOFLOW_VERSION=
 WEB_DATA_ROOT=
 TRAINING_PYTHON=python3
 TRAINING_DEVICE=
+SAM_QA_DEVICE=
+SAM3_QA_MODEL_PATH=
 HOST_UID=1000
 HOST_GID=1000
 ```
@@ -104,6 +106,18 @@ audit decisions to be reviewed before a corrected dataset can be created.
 datasets are copy-on-write, and reports created before the current
 prompt-mapping, difference-band, and stability safeguards must be rerun before
 SAM box corrections can be accepted.
+
+SAM 3 is available as a separate local QA backend when `sam3.pt` exists at
+the repository root or at `SAM3_QA_MODEL_PATH`. It requires Ultralytics
+8.3.237 or newer. The 16 GB profile caps inference at SAM 3's stride-aligned
+1008 pixels, starts with eight prompts per chunk, uses BF16 when supported
+(otherwise FP16), reuses the encoded image, and halves the chunk after a CUDA
+out-of-memory error. Original
+box prompts run first; expanded and jittered stability prompts run only for
+reviewable correction candidates. SAM 3 is limited to suggestions or manual
+review until its automatic-correction thresholds are calibrated. Runtime
+precision, final chunk size, resize count, and peak allocated VRAM are stored
+in the QA report.
 
 Datasets fetched from Roboflow also store a strict workspace/project/version
 manifest with unique source image IDs. After creating a corrected dataset, use
