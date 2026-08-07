@@ -714,7 +714,7 @@ def evaluate_rfdetr_split(
             predictions=predictions_by_class.get(class_id, []),
             ground_truths=gts_by_class.get(class_id, {}),
             image_count_with_class=len(images_by_class.get(class_id, set())),
-            confidence_threshold=float(args.conf),
+            confidence_threshold=float(conf),
         )
         for class_id in sorted(observed_class_ids)
     ]
