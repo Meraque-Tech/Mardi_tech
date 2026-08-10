@@ -221,7 +221,7 @@
         <div class="toggle-row">
           <div class="toggle-label">
             <strong>Auto-save</strong>
-            <div class="sub" id="auto-save-desc">Off — enable to arm forward-only saving</div>
+            <div class="sub" id="auto-save-desc">Off — turn on to save while moving forward</div>
           </div>
           <label class="switch"><input id="auto-save-toggle" type="checkbox" onchange="setAutoSave(this.checked)"><span class="slider"></span></label>
         </div>
@@ -337,11 +337,11 @@
   function applyAutoSaveStatus(data,running) {
     const enabled=Boolean(data.auto_save), desc=document.getElementById('auto-save-desc');
     document.getElementById('auto-save-toggle').checked=enabled;
-    if(!enabled)desc.textContent='Off — enable to arm forward-only saving';
-    else if(!running)desc.textContent='Armed — waiting for detection to run';
-    else if(!data.direction_valid)desc.textContent='Armed — waiting for fresh direction data';
-    else if(!data.auto_save_direction_eligible)desc.textContent='Armed — paused until Forward=YES and Backward=NO';
-    else desc.textContent='Active — saving frame + count every 0.5 s';
+    if(!enabled)desc.textContent='Off — turn on to save while moving forward';
+    else if(!running)desc.textContent='On — waiting for detection to start';
+    else if(!data.direction_valid)desc.textContent='On — waiting for direction data';
+    else if(!data.auto_save_direction_eligible)desc.textContent='On — waiting for forward movement';
+    else desc.textContent='Saving frame and count every 0.5 seconds';
   }
 
   function applySnapshot(data) {

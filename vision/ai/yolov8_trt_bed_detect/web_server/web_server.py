@@ -529,7 +529,7 @@ def set_auto_save():
     broadcast_state("status")
     return jsonify({
         "success": True,
-        "message": "automatic saving armed" if enabled else "automatic saving disarmed",
+        "message": "automatic saving enabled" if enabled else "automatic saving disabled",
         "auto_save": enabled,
         "interval_seconds": AUTO_SAVE_INTERVAL,
     })
