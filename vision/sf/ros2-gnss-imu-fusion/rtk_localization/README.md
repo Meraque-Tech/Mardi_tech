@@ -3,6 +3,10 @@
 Converts the standard GNSS topics published by `base_receiver` into local ENU
 odometry suitable for RViz and downstream localization.
 
+The ROS node name is `/rtk_localization`. The retained executable names are
+implementation and backward-compatibility details; they do not change the node
+or topic names.
+
 ## Interfaces
 
 Subscribed topics:
@@ -63,6 +67,10 @@ Start localization in another sourced terminal:
 ```bash
 ros2 launch rtk_localization gnss_odom.launch.py
 ```
+
+The repository-root IMU Compose deployment starts this node automatically as
+part of `bwt901ble_imu/launch/imu_gps_raw.launch.py`, alongside
+`base_receiver`, `gnss_enu`, the IMU publisher, and the complementary filter.
 
 Start it with the supplied RViz configuration:
 

@@ -98,6 +98,36 @@ using the data for localization.
 
 ## Docker
 
+The repository-root `docker-compose.yml` starts the combined launch:
+
+```bash
+ros2 launch bwt901ble_imu imu_gps_raw.launch.py
+```
+
+That launch runs the BLE IMU publisher, complementary filter, `base_receiver`,
+`gnss_enu`, and the required `/rtk_localization` node in one container.
+Localization consumes `/receiver/fix` and `/gnss/rtk_status` and publishes:
+
+- `/gnss/odom`
+- `/gnss/path`
+- `/gnss/is_forward`
+- `/gnss/is_backward`
+
+The root Compose deployment selects Cyclone DDS and mounts the repository-root
+`cyclone_dds_profile.xml` file read-only. Do not run another localization node
+or replay recorded direction topics at the same time, because each direction
+topic must have exactly one publisher.
+
+Verify the combined deployment with:
+
+```bash
+ros2 node list
+ros2 topic info --verbose /gnss/is_forward
+ros2 topic info --verbose /gnss/is_backward
+```
+
+The expected localization node name is `/rtk_localization`.
+
 Build the standalone ROS 2 Humble image using the package directory as the
 Docker build context:
 

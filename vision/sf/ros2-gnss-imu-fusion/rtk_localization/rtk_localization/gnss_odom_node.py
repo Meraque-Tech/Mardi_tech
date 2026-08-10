@@ -26,7 +26,7 @@ class GnssFixEnuOdomNode(Node):
     """Convert validated GNSS fixes into odometry in a local ENU frame."""
 
     def __init__(self) -> None:
-        super().__init__("gnss_fix_enu_odom")
+        super().__init__("rtk_localization")
 
         self.declare_parameter("fix_topic", "/receiver/fix")
         self.declare_parameter("rtk_status_topic", "/gnss/rtk_status")

@@ -21,7 +21,7 @@ def generate_launch_description():
     odometry_node = Node(
         package="rtk_localization",
         executable="gnss_fix_enu_odom",
-        name="gnss_fix_enu_odom",
+        name="rtk_localization",
         output="screen",
         parameters=[config_file],
     )

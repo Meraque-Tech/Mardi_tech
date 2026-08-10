@@ -1,5 +1,12 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    EmitEvent,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+)
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -67,6 +74,33 @@ def generate_launch_description():
                 'launch',
                 'receiver.launch.py'
             )
+        )
+    )
+
+    # ---------------- RTK Localization ---------------- #
+
+    localization_node = Node(
+        package='rtk_localization',
+        executable='gnss_fix_enu_odom',
+        name='rtk_localization',
+        output='screen',
+        parameters=[
+            os.path.join(
+                get_package_share_directory('rtk_localization'),
+                'config',
+                'gnss_odom.yaml'
+            )
+        ],
+    )
+
+    shutdown_on_localization_exit = RegisterEventHandler(
+        OnProcessExit(
+            target_action=localization_node,
+            on_exit=[
+                EmitEvent(
+                    event=Shutdown(reason='rtk_localization exited')
+                )
+            ],
         )
     )
 
@@ -141,6 +175,8 @@ def generate_launch_description():
 
         # GPS
         gps_launch,
+        shutdown_on_localization_exit,
+        localization_node,
 
         # IMU
         imu_publisher,
