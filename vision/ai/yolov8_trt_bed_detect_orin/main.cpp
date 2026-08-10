@@ -23,6 +23,8 @@ std::atomic<bool> tracker_reset_requested{false};
 
 struct TrtParams {
     std::string engine_name;
+    std::string wts_name;
+    std::string model_type;
     int         input_h;
     int         input_w;
     std::string precision;
@@ -40,6 +42,8 @@ struct TrtParams {
 TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
     TrtParams p;
     p.engine_name       = n->declare_parameter<std::string>("engine_name",       "yolov8n.engine");
+    p.wts_name          = n->declare_parameter<std::string>("wts_name",          "yolov8n.wts");
+    p.model_type        = n->declare_parameter<std::string>("model_type",        "n");
     p.input_h           = n->declare_parameter<int>        ("input_h",           416);
     p.input_w           = n->declare_parameter<int>        ("input_w",           416);
     p.precision         = n->declare_parameter<std::string>("precision",         "fp16");
@@ -197,7 +201,26 @@ int main(int argc, char *argv[]) {
 
     cv::Mat frame;
 
+    cudaSetDevice(kGpuId);
+
     TrtParams p = declare_and_get_params(node);
+
+    // Serialize mode: launch with a bare -s flag (see serialize_engine.launch.py).
+    // All inputs -- wts_name, engine_name, model_type, input_h, input_w --
+    // come from ROS params (trt_params.yaml), not positional CLI argv.
+    bool serialize_mode = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "-s") { serialize_mode = true; break; }
+    }
+    if (serialize_mode) {
+        kInputH = p.input_h;
+        kInputW = p.input_w;
+        RCLCPP_INFO(node->get_logger(), "serializing engine: %s -> %s  type: %s  res: %dx%d",
+            p.wts_name.c_str(), p.engine_name.c_str(), p.model_type.c_str(), kInputW, kInputH);
+        serialize_engine(p.wts_name, p.engine_name, p.model_type);
+        return 0;
+    }
+
     std_msgs::msg::UInt8 initial_tracking_msg;
     initial_tracking_msg.data = p.is_track ? 1 : 0;
     tracking_enabled_pub->publish(initial_tracking_msg);
@@ -205,19 +228,7 @@ int main(int argc, char *argv[]) {
     RCLCPP_INFO(node->get_logger(), "engine: %s  res: %dx%d  precision: %s  post: %s",
         p.engine_name.c_str(), p.input_w, p.input_h, p.precision.c_str(), p.cuda_post_process.c_str());
 
-    cudaSetDevice(kGpuId);
     int model_bboxes;
-
-    // Serialize mode: pass -s <wts> <engine> <variant> as before
-    {
-        std::string wts_name, engine_name, img_dir, sub_type, cuda_pp;
-        if (argc >= 4 && parse_args(argc, argv, wts_name, engine_name, img_dir, sub_type, cuda_pp)) {
-            if (!wts_name.empty()) {
-                serialize_engine(wts_name, engine_name, sub_type);
-                return 0;
-            }
-        }
-    }
 
     int opened_camera_index = -1;
     cv::VideoCapture cap = open_camera(p.camera_index, opened_camera_index);

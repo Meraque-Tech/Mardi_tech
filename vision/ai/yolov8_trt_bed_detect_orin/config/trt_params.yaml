@@ -10,6 +10,13 @@ yolov8_trt:
     engine_name: "/weights/yolov8n_orin_nano_ros2_humble.engine"
     # engine_name: "/weights/yolov8n_416.engine"        # path to serialised TRT engine
 
+    # ── Serialize mode (only used when launched with -s) ──────────────────────
+    # Input .wts weights file and YOLOv8 model size (n, s, m, l, x).
+    # engine_name and input_h/input_w above are reused for the output engine
+    # path and build resolution.
+    wts_name: "/weights/yolov8n.wts"
+    model_type: "n"
+
     # ── Input resolution (must match engine build) ───────────────────────────
     # 640 → 416 saves ~34% compute | 320 saves ~61%
     # Change here AND rebuild the engine (-s step).

@@ -144,26 +144,6 @@ void infer(IExecutionContext &context, cudaStream_t &stream, void **buffers, flo
 }
 
 
-bool parse_args(int argc, char **argv, std::string &wts, std::string &engine, std::string &img_dir, std::string &sub_type, std::string &cuda_post_process) {
-    if (argc < 4) return false;
-    if (std::string(argv[1]) == "-s") {
-        wts = std::string(argv[2]);
-        engine = std::string(argv[3]);
-        sub_type = std::string(argv[4]);
-        if (argc >= 7) {
-            kInputH = std::stoi(argv[5]);
-            kInputW = std::stoi(argv[6]);
-        }
-    } else if (std::string(argv[1]) == "-d") {
-        engine = std::string(argv[2]);
-        img_dir = std::string(argv[3]);
-        cuda_post_process = std::string(argv[4]);
-    } else {
-        return false;
-    }
-    return true;
-}
-
 // int getOCVtype(sl::MAT_TYPE type);
 
 // cv::Mat slMat2cvMat(Mat& input);
