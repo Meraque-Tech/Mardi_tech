@@ -4,3 +4,4 @@ logs.txt
 *.pt
 /rosbags
 /bags2
+/bags
