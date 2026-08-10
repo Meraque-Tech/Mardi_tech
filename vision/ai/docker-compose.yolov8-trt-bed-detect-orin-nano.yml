@@ -1,4 +1,25 @@
 services:
+  yolov8-trt-serialize-orin-nano:
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v3
+    container_name: yolov8-trt-serialize-orin-nano
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.yolov8_trt_bed_detect_jetson_orien_nano
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    
+    volumes:
+      - ./yolov8/weights:/weights
+      - ./yolov8_trt_bed_detect_orin/config:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config
+      - ./yolov8_trt_bed_detect_orin/launch:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/launch
+      - ./saved_frames:/saved_frames
+    runtime: nvidia
+    restart: "no"
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash &&
+               source /ros2_ws/install/setup.bash &&
+               ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin -s /weights/yolov8n.wts /weights/yolov8n_orin_nano_ros2_humble.engine n 512 512"
+
   yolov8-trt-bed-detect-orin:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v4
     container_name: yolov8-trt-bed-detect-orin-nano
@@ -23,6 +44,9 @@ services:
     pid: host
     privileged: true
     runtime: nvidia
+    # depends_on:
+    #   yolov8-trt-serialize-orin-nano:
+    #     condition: service_completed_successfully
     command: >
       bash -c "source /opt/ros/humble/setup.bash &&
                source /ros2_ws/install/setup.bash &&
@@ -31,7 +55,9 @@ services:
 # Usage:
 #   mkdir -p saved_frames
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml build
-#   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml up -d
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml run --rm yolov8-trt-serialize-orin-nano
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml up yolov8-trt-bed-detect-orin
+#   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml up -d yolov8-trt-bed-detect-orin
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml exec yolov8-trt-bed-detect-orin bash
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml logs -f
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-orin-nano.yml down
