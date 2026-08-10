@@ -241,14 +241,21 @@ def _state_snapshot():
 
 
 def _direction_allows_auto_save(snapshot):
-    return bool(snapshot["direction_valid"]) and (
-        snapshot["is_forward"] is True
-        or snapshot["is_backward"] is True
+    return (
+        bool(snapshot["direction_valid"])
+        and snapshot["is_forward"] is True
+        and snapshot["is_backward"] is False
     )
 
 
 def _snapshot_payload(message_type="snapshot"):
     snapshot = _state_snapshot()
+    snapshot["auto_save_direction_eligible"] = _direction_allows_auto_save(snapshot)
+    snapshot["auto_save_active"] = (
+        snapshot["auto_save"]
+        and snapshot["detecting"]
+        and snapshot["auto_save_direction_eligible"]
+    )
     snapshot["type"] = message_type
     return snapshot
 
@@ -525,7 +532,7 @@ def _write_frame(jpeg, latitude=None, longitude=None):
 
 
 def _auto_save_loop():
-    """Auto-save while detection and a fresh direction flag are active."""
+    """Auto-save only while detection and fresh forward-only motion are active."""
     while True:
         auto_save_wakeup.wait(timeout=AUTO_SAVE_INTERVAL)
         auto_save_wakeup.clear()
@@ -666,7 +673,7 @@ def set_auto_save():
     broadcast_state("status")
     return jsonify({
         "success": True,
-        "message": "automatic saving enabled" if enabled else "automatic saving disabled",
+        "message": "automatic saving armed" if enabled else "automatic saving disarmed",
         "auto_save": enabled,
         "interval_seconds": AUTO_SAVE_INTERVAL,
     })

@@ -208,7 +208,7 @@
         <div class="toggle-row">
           <div class="toggle-label">
             <strong>Auto-save</strong>
-            <div class="sub">Frame + count every 0.5 s while running</div>
+            <div class="sub" id="auto-save-desc">Off — enable to arm forward-only saving</div>
           </div>
           <label class="switch"><input id="auto-save-toggle" type="checkbox" onchange="setAutoSave(this.checked)"><span class="slider"></span></label>
         </div>
@@ -315,6 +315,16 @@
   // Persistent class registry — classes never disappear once seen, only go to 0
   const knownClasses = new Map(); // id → index (for stable color assignment)
 
+  function applyAutoSaveStatus(data,running) {
+    const enabled=Boolean(data.auto_save), desc=document.getElementById('auto-save-desc');
+    document.getElementById('auto-save-toggle').checked=enabled;
+    if(!enabled)desc.textContent='Off — enable to arm forward-only saving';
+    else if(!running)desc.textContent='Armed — waiting for detection to run';
+    else if(!data.direction_valid)desc.textContent='Armed — waiting for fresh direction data';
+    else if(!data.auto_save_direction_eligible)desc.textContent='Armed — paused until Forward=YES and Backward=NO';
+    else desc.textContent='Active — saving frame + count every 0.5 s';
+  }
+
   function applySnapshot(data) {
     const running=Boolean(data.detecting), bed=Boolean(data.bed_status);
     // Top status bar
@@ -335,7 +345,7 @@
     if(data.last_updated)document.getElementById('last-update').textContent=formatTime(data.last_updated);
     renderCounts(data.counts||{});
     if(typeof data.is_track==='boolean')applyTracking(data.is_track);
-    if(typeof data.auto_save==='boolean')document.getElementById('auto-save-toggle').checked=data.auto_save;
+    applyAutoSaveStatus(data,running);
     document.getElementById('start-btn').disabled=running;
     document.getElementById('stop-btn').disabled=!running;
   }

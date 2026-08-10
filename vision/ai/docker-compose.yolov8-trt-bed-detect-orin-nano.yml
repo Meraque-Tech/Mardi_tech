@@ -9,9 +9,6 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - GNSS_FIX_TOPIC=/receiver/fix
       - GNSS_STALE_TIMEOUT=3.0
-      - FORWARD_TOPIC=/gnss/is_forward
-      - BACKWARD_TOPIC=/gnss/is_backward
-      - DIRECTION_STALE_TIMEOUT=3.0
     devices:
       - /dev/video0:/dev/video0
       - /dev/video1:/dev/video1
