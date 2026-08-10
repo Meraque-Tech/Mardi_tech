@@ -17,7 +17,7 @@ services:
                ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin -s /weights/yolov8n.wts /weights/yolov8n_orin_nano_ros2_humble.engine n 512 512"
 
   yolov8-trt-bed-detect-orin:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v2
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v3
     container_name: yolov8-trt-bed-detect-orin-nano
     build:
       context: .
