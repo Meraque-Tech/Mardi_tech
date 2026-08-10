@@ -218,6 +218,8 @@ int main(int argc, char *argv[]) {
         RCLCPP_INFO(node->get_logger(), "serializing engine: %s -> %s  type: %s  res: %dx%d",
             p.wts_name.c_str(), p.engine_name.c_str(), p.model_type.c_str(), kInputW, kInputH);
         serialize_engine(p.wts_name, p.engine_name, p.model_type);
+        node.reset();
+        rclcpp::shutdown();
         return 0;
     }
 
