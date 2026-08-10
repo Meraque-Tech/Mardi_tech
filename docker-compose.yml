@@ -2,7 +2,7 @@ version: "3.3"
 
 services:
   bwt901ble_imu:
-    image: meraquetech/race_nav:bwt901ble_imu.humble.jetson
+    image: meraquetech/race_nav:bwt901ble_imu.humble.jetson.v2
     container_name: bwt901ble_imu
     build:
       context: ./vision/sf
@@ -33,7 +33,7 @@ services:
       - CYCLONEDDS_URI=file:///dds_ws/cyclone_dds_profile.xml
 
   rosbag_recorder:
-    image: meraquetech/race_nav:bwt901ble_imu.humble.jetson
+    image: meraquetech/race_nav:bwt901ble_imu.humble.jetson.v2
     container_name: rosbag_recorder
     depends_on:
       - bwt901ble_imu
