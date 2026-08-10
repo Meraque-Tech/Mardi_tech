@@ -1,6 +1,6 @@
 services:
   yolov8-trt-bed-detect-orin:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v3
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v4
     container_name: yolov8-trt-bed-detect-orin-nano
     build:
       context: .

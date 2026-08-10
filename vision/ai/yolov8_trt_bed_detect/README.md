@@ -270,7 +270,7 @@ http://<host-ip>:8080/          ← MJPEG live stream
 ```
 
 Saved frames are written to `./vision/ai/saved_frames/` on the host (mounted into the container at `/saved_frames`).
-Live counts update continuously in the dashboard. They are persisted when `POST /api/save_count` is called, **Save current count** is pressed, or automatic saving is armed. Automatic saving stores a paired frame and count every 0.5 seconds only while detection runs and fresh ROS direction data is exactly `/gnss/is_forward=true` and `/gnss/is_backward=false`. All other direction states, including stale or missing data, pause collection without switching off the Auto-save toggle; collection resumes automatically when the forward-only condition returns. Saved history lives in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
+Live counts update continuously in the dashboard. They are persisted when `POST /api/save_count` is called, **Save current count** is pressed, or automatic saving is enabled. Automatic saving stores a paired frame and count every 0.5 seconds only while detection runs and fresh ROS direction data is exactly `/gnss/is_forward=true` and `/gnss/is_backward=false`. All other direction states, including stale or missing data, pause collection without switching off the Auto-save toggle; collection resumes automatically when the forward-only condition returns. Saved history lives in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
 
 > Automatic saving can create up to 172,800 JPEG files per day. Keep it disabled when it is not required and monitor free disk space.
 
@@ -289,7 +289,7 @@ Base URL: `http://<host-ip>:8090`
 | `POST` | `/api/set_track` | JSON: `{"enabled":true}` | `{"success":true,"message":"...","is_track":true}` | Select unique-object or per-frame counting |
 | `POST` | `/api/reset_tracker` | None | `{"success":true,"message":"tracker reset requested"}` | Clear cumulative unique-object counts |
 | `POST` | `/api/save_count` | None | Saved record ID, time, counts, and total | Save exactly one current live-count snapshot to SQLite |
-| `POST` | `/api/auto_save` | JSON: `{"enabled":true}` | Mode, message, and `interval_seconds` | Arm or disarm forward-only paired frame-and-count saving |
+| `POST` | `/api/auto_save` | JSON: `{"enabled":true}` | Mode, message, and `interval_seconds` | Enable or disable forward-only paired frame-and-count saving |
 | `GET` | `/api/history` | Query: `limit` (1–5000), `offset` (≥0) | Paginated history object | Read manually saved counts, newest first |
 | `POST` | `/api/save` | None | `{"success":true,"filename":"frame_....jpg"}` | Save the current MJPEG frame as JPEG |
 | `GET` | `/api/images` | None | Array of saved-image metadata | List saved JPEG frames |
@@ -309,12 +309,12 @@ The `/api/status` endpoint and WebSocket messages share these fields:
 | `conf` | number | Highest confidence from the latest detection frame |
 | `detecting` | boolean | Whether TensorRT inference is running |
 | `is_track` | boolean | `true` = cumulative unique tracking; `false` = per-frame counting |
-| `auto_save` | boolean | Whether paired frame-and-count automatic saving is armed |
+| `auto_save` | boolean | Whether paired frame-and-count automatic saving is enabled |
 | `is_forward` | boolean/null | Latest forward flag, or `null` when direction data is missing or stale |
 | `is_backward` | boolean/null | Latest backward flag, or `null` when direction data is missing or stale |
 | `direction_valid` | boolean | Whether both direction flags were received within the stale timeout |
 | `auto_save_direction_eligible` | boolean | Whether fresh direction data is exactly forward=`true`, backward=`false` |
-| `auto_save_active` | boolean | Whether Auto-save is armed, detection is running, and direction is eligible |
+| `auto_save_active` | boolean | Whether Auto-save is enabled, detection is running, and direction is eligible |
 | `last_updated` | string/null | ISO-8601 time of the latest live count |
 | `mjpeg_port` | integer | MJPEG port; present only in `/api/status` |
 
