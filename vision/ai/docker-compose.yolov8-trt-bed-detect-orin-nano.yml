@@ -18,7 +18,12 @@ services:
     command: >
       bash -c "source /opt/ros/humble/setup.bash &&
                source /ros2_ws/install/setup.bash &&
-               ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin -s /weights/yolov8n.wts /weights/yolov8n_orin_nano_ros2_humble.engine n 512 512"
+               ros2 launch yolov8_trt_bed_detect_orin serialize_engine.launch.py
+                 wts:=/weights/yolov8n.wts
+                 engine:=/weights/yolov8n_orin_nano_ros2_humble.engine
+                 model_type:=n
+                 input_h:=512
+                 input_w:=512"
 
   yolov8-trt-bed-detect-orin:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v3
