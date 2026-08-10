@@ -6,8 +6,9 @@ from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
-    pkg = get_package_share_directory('yolov8_trt_bed_detect_orin')
-    exe = os.path.join(pkg, 'lib', 'yolov8_trt_bed_detect_orin', 'yolov8_trt_bed_detect_orin')
+    pkg_share = get_package_share_directory('yolov8_trt_bed_detect_orin')
+    pkg_prefix = os.path.dirname(os.path.dirname(pkg_share))  # .../install/<pkg>
+    exe = os.path.join(pkg_prefix, 'lib', 'yolov8_trt_bed_detect_orin', 'yolov8_trt_bed_detect_orin')
 
     wts_arg = DeclareLaunchArgument(
         'wts',
