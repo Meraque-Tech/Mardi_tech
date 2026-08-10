@@ -427,11 +427,17 @@ class BridgeNode(Node):
             return bool(result.success), result.message
 
     def call_start(self):
+        clocks_ok, clocks_message = _run_jetson_clocks()
+        if not clocks_ok:
+            print("jetson_clocks warning: %s" % clocks_message)
+
         result = self._call(self._start_cli, Trigger.Request())
         if result[0]:
             with state_lock:
                 state["detecting"] = True
             broadcast_state("status")
+            if not clocks_ok:
+                return result[0], "%s (jetson_clocks warning: %s)" % (result[1], clocks_message)
         return result
 
     def call_stop(self):
@@ -723,6 +729,29 @@ def _control_response(method_name):
         return jsonify({"success": False, "message": "ROS bridge is not ready"}), 503
     ok, message = getattr(bridge, method_name)()
     return jsonify({"success": ok, "message": message}), (200 if ok else 503)
+
+
+def _run_jetson_clocks():
+    # Same nsenter-into-host-PID-1 trick as /api/shutdown below: pid: host
+    # in docker-compose puts this container in the host's PID namespace, so
+    # PID 1 here *is* the host's init. jetson_clocks/nvpmodel live on the
+    # Jetson host, not in this container, so we have to run them there.
+    # No sudo needed: this container runs as root, and nsenter carries that
+    # UID into the host's namespaces -- same reason /api/shutdown's
+    # `nsenter -- shutdown -h now` below needs no sudo either.
+    try:
+        result = subprocess.run(
+            ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid",
+             "--", "jetson_clocks"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return False, "jetson_clocks failed: %s" % (result.stderr.strip() or result.stdout.strip())
+        return True, "jetson_clocks applied"
+    except subprocess.TimeoutExpired:
+        return False, "jetson_clocks timed out"
+    except OSError as exc:
+        return False, "could not run jetson_clocks: %s" % exc
 
 
 @app.route("/api/start", methods=["POST"])
