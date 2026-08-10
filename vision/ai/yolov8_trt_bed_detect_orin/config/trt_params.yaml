@@ -6,7 +6,8 @@ yolov8_trt:
     # engine_name: "/weights/mardi_pineapple_yolo_v8.engine"        # path to serialised TRT engine
     # engine_name: "/weights/yolov8n_x86.engine"        # path to serialised TRT engine
     # engine_name: "/weights/yolov8n_x86_ros2_jazzy.engine"        # path to serialised TRT engine
-    engine_name: "/weights/yolov8n_orien_v1.engine"        # path to serialised TRT engine
+    # engine_name: "/weights/yolov8n_orien_v1.engine"        # path to serialised TRT engine
+    engine_name: "/weights/yolov8n_orin_nano_ros2_humble.engine"
     # engine_name: "/weights/yolov8n_416.engine"        # path to serialised TRT engine
 
     # ── Input resolution (must match engine build) ───────────────────────────
