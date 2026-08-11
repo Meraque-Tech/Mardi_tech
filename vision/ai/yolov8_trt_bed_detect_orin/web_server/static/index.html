@@ -162,16 +162,23 @@
       </section>
       <section class="card">
         <div class="card-head">
-          <h2>Model weights (.pt)</h2>
+          <h2>Model weights</h2>
           <button class="link" onclick="loadModels()">Refresh</button>
         </div>
         <div class="row">
           <input id="model-file-input" type="file" accept=".pt">
-          <button id="upload-model-btn" onclick="uploadModel()">⭱ Upload</button>
+          <button id="upload-model-btn" onclick="uploadModel()">⭱ Upload .pt</button>
         </div>
-        <div id="model-list" class="label-list" style="margin-top:10px">
-          <span class="muted">No models uploaded yet.</span>
-        </div>
+        <div id="convert-status" class="sub" style="margin:8px 0"></div>
+
+        <h3 style="font-size:12px;color:var(--muted);margin:14px 0 6px">.pt files</h3>
+        <div id="pt-list" class="label-list"><span class="muted">No .pt files yet.</span></div>
+
+        <h3 style="font-size:12px;color:var(--muted);margin:14px 0 6px">.wts files</h3>
+        <div id="wts-list" class="label-list"><span class="muted">No .wts files yet.</span></div>
+
+        <h3 style="font-size:12px;color:var(--muted);margin:14px 0 6px">.engine files</h3>
+        <div id="engine-list" class="label-list"><span class="muted">No .engine files yet.</span></div>
       </section>
       <section class="card">
         <div class="card-head">
@@ -581,19 +588,64 @@
       btn.disabled=false;
     }
   }
+  function renderFileList(elId,files,opts) {
+    const el=document.getElementById(elId);
+    const emptyLabel=(opts&&opts.emptyLabel)||'files';
+    el.innerHTML=files.length
+      ?files.map(f=>`<div class="label-row"><span class="name-val">${escapeHtml(f.filename)}</span><span class="muted">${(f.size/1e6).toFixed(1)} MB</span>${opts&&opts.convertible?`<button class="link" onclick="convertModel('${escapeHtml(f.filename)}')">Convert to .wts</button>`:''}</div>`).join('')
+      :`<span class="muted">No ${emptyLabel} yet.</span>`;
+  }
+
   async function loadModels() {
-    const el=document.getElementById('model-list');
     try {
-      const models=await api('/api/models');
-      el.innerHTML=models.length
-        ?models.map(m=>`<div class="label-row"><span class="name-val">${escapeHtml(m.filename)}</span><span class="muted">${(m.size/1e6).toFixed(1)} MB</span></div>`).join('')
-        :'<span class="muted">No models uploaded yet.</span>';
+      const data=await api('/api/models');
+      renderFileList('pt-list',data.pt,{convertible:true,emptyLabel:'.pt files'});
+      renderFileList('wts-list',data.wts,{emptyLabel:'.wts files'});
+      renderFileList('engine-list',data.engine,{emptyLabel:'.engine files'});
     } catch(error) {
-      el.innerHTML='<span class="muted">Could not load model list.</span>';
+      toast(error.message,true);
     }
   }
 
-  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();
+  let convertPollTimer=null;
+
+  async function convertModel(filename) {
+    try {
+      await api('/api/models/convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename})});
+      toast(`Converting ${filename}…`);
+      document.getElementById('convert-status').textContent=`Converting ${filename}…`;
+      clearInterval(convertPollTimer);
+      convertPollTimer=setInterval(pollConvertStatus,2000);
+    } catch(error) {
+      toast(error.message,true);
+    }
+  }
+
+  async function pollConvertStatus() {
+    let data;
+    try { data=await api('/api/models/convert/status'); } catch(_error) { return; }
+    const el=document.getElementById('convert-status');
+    if(data.running){el.textContent=`Converting ${data.pt_filename}…`;return;}
+    clearInterval(convertPollTimer);
+    convertPollTimer=null;
+    if(data.message){
+      el.textContent='';
+      toast(data.message,data.ok===false);
+      if(data.ok)loadModels();
+    }
+  }
+
+  async function initConvertPoll() {
+    try {
+      const data=await api('/api/models/convert/status');
+      if(data.running){
+        document.getElementById('convert-status').textContent=`Converting ${data.pt_filename}…`;
+        convertPollTimer=setInterval(pollConvertStatus,2000);
+      }
+    } catch(_error) { /* no job in progress or endpoint unreachable — ignore */ }
+  }
+
+  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();initConvertPoll();
   setInterval(()=>loadStatus().catch(()=>{}),3000);
   window.addEventListener('resize',()=>drawChart(chartItems));
 </script>
