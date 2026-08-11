@@ -25,24 +25,7 @@ def generate_launch_description():
         parameters=[LaunchConfiguration('params_file')],
     )
 
-    web_server = ExecuteProcess(
-        cmd=['python3', web_server_path],
-        output='screen',
-        env={
-            **os.environ,
-            'SAVE_DIR':    '/saved_frames',
-            'MJPEG_PORT':  '8080',
-            'API_PORT':    '8090',
-            'HISTORY_DB':  '/saved_frames/count_history.db',
-            'AUTO_SAVE_INTERVAL': '0.5',
-            'FORWARD_TOPIC': os.environ.get('FORWARD_TOPIC', '/gnss/is_forward'),
-            'BACKWARD_TOPIC': os.environ.get('BACKWARD_TOPIC', '/gnss/is_backward'),
-            'DIRECTION_STALE_TIMEOUT': os.environ.get('DIRECTION_STALE_TIMEOUT', '3.0'),
-        }
-    )
-
     return LaunchDescription([
         params_file_arg,
-        yolov8_node,
-        # web_server,
+        yolov8_node
     ])
