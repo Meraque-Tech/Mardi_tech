@@ -55,7 +55,7 @@ services:
     command: >
       bash -c "source /opt/ros/humble/setup.bash &&
                source /ros2_ws/install/setup.bash &&
-               ros2 launch yolov8_trt_bed_detect_orin bed_detect.launch.py"
+               ros2 launch yolov8_trt_bed_detect_orin yolov8_web.launch.py"
 
 # Usage:
 #   mkdir -p saved_frames
