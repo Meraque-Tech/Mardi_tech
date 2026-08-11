@@ -31,7 +31,7 @@ services:
       - GNSS_FIX_TOPIC=/receiver/fix
       - GNSS_STALE_TIMEOUT=3.0
       - HOST_WEIGHTS_DIR=${HOME}/yolov8/weights
-      - HOST_YOLOV8_DIR=${HOME}/yolov8
+      - HOST_YOLOV8_DIR=${PWD}/yolov8
     devices:
       - /dev/video0:/dev/video0
       - /dev/video1:/dev/video1
