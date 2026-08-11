@@ -722,6 +722,7 @@
     try {
       const data=await api('/api/models/select_engine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename,num_class:numClass})});
       toast(data.message);
+      await deserializeModel();
     } catch(error) {
       toast(error.message,true);
     }

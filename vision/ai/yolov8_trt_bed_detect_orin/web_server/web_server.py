@@ -46,6 +46,9 @@ HOST_YOLOV8_DIR = os.environ.get("HOST_YOLOV8_DIR")
 # Gate the .pt -> .wts conversion feature to x86 hosts only.
 CONVERSION_SUPPORTED = platform.machine() in ("x86_64", "AMD64")
 SYSTEM_TYPE = platform.machine() or "unknown"
+# jetson_clocks/nvpmodel only exist on Jetson (aarch64) hosts; skip the call
+# entirely on x86 rather than attempting it and reporting a spurious failure.
+IS_JETSON = platform.machine() in ("aarch64", "arm64")
 TRT_PARAMS_FILE = os.environ.get(
     "TRT_PARAMS_FILE",
     "/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config/trt_params.yaml",
@@ -470,7 +473,10 @@ class BridgeNode(Node):
             return bool(result.success), result.message
 
     def call_start(self):
-        clocks_ok, clocks_message = _run_jetson_clocks()
+        if IS_JETSON:
+            clocks_ok, clocks_message = _run_jetson_clocks()
+        else:
+            clocks_ok, clocks_message = True, None
         if not clocks_ok:
             print("jetson_clocks warning: %s" % clocks_message)
 
@@ -1185,10 +1191,10 @@ def _run_launch(mode):
         launch_job.update(running=False, message=message, ok=(None if stopped else ok))
 
 
-def _start_launch(mode):
+def _start_launch(mode, restart_same_mode=False):
     with launch_job_lock:
         if launch_job["running"]:
-            if launch_job["mode"] == mode:
+            if launch_job["mode"] == mode and not restart_same_mode:
                 return jsonify({
                     "success": False,
                     "message": "a %s launch is already running" % mode,
@@ -1217,7 +1223,7 @@ def serialize_model():
 
 @app.route("/api/deserialize/model", methods=["POST"])
 def deserialize_model():
-    return _start_launch("deserialize")
+    return _start_launch("deserialize", restart_same_mode=True)
 
 
 @app.route("/api/models/launch/status")
