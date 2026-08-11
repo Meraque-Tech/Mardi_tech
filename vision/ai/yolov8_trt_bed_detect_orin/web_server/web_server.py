@@ -7,6 +7,7 @@ import io
 import json
 import math
 import os
+import platform
 import sqlite3
 import subprocess
 import tempfile
@@ -40,6 +41,10 @@ CONVERT_IMAGE = os.environ.get("CONVERT_IMAGE", "meraquetech/tensorrt-yolov8:ult
 # same reason engine_file_build.sh uses $(pwd) rather than an in-container path.
 HOST_WEIGHTS_DIR = os.environ.get("HOST_WEIGHTS_DIR")
 HOST_YOLOV8_DIR = os.environ.get("HOST_YOLOV8_DIR")
+# meraquetech/tensorrt-yolov8:ultralytics is an x86-only image (no arm64
+# build) -- docker run rejects it with a platform-mismatch error on Jetson.
+# Gate the .pt -> .wts conversion feature to x86 hosts only.
+CONVERSION_SUPPORTED = platform.machine() in ("x86_64", "AMD64")
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
@@ -887,6 +892,7 @@ def list_models():
         "pt": _list_dir(PT_DIR, "*.pt"),
         "wts": _list_dir(WTS_DIR, "*.wts"),
         "engine": _list_dir(ENGINE_DIR, "*.engine"),
+        "conversion_supported": CONVERSION_SUPPORTED,
     })
 
 
@@ -930,6 +936,12 @@ def _run_conversion(pt_filename):
 
 @app.route("/api/models/convert", methods=["POST"])
 def convert_model():
+    if not CONVERSION_SUPPORTED:
+        return jsonify({
+            "success": False,
+            "message": ".pt to .wts conversion is only supported on x86 hosts "
+                       "(meraquetech/tensorrt-yolov8:ultralytics has no arm64 build)",
+        }), 400
     data = request.get_json(silent=True) or {}
     pt_filename = Path(data.get("filename", "")).name
     if not pt_filename.lower().endswith(".pt"):

@@ -598,17 +598,22 @@
   function renderFileList(elId,files,opts) {
     const el=document.getElementById(elId);
     const emptyLabel=(opts&&opts.emptyLabel)||'files';
+    const showConvert=opts&&opts.convertible&&opts.conversionSupported;
     el.innerHTML=files.length
-      ?files.map(f=>`<div class="label-row"><span class="name-val">${escapeHtml(f.filename)}</span><span class="muted">${(f.size/1e6).toFixed(1)} MB</span>${opts&&opts.convertible?`<button class="link" onclick="convertModel('${escapeHtml(f.filename)}')">Convert to .wts</button>`:''}</div>`).join('')
+      ?files.map(f=>`<div class="label-row"><span class="name-val">${escapeHtml(f.filename)}</span><span class="muted">${(f.size/1e6).toFixed(1)} MB</span>${showConvert?`<button class="link" onclick="convertModel('${escapeHtml(f.filename)}')">Convert to .wts</button>`:''}</div>`).join('')
       :`<span class="muted">No ${emptyLabel} yet.</span>`;
   }
 
   async function loadModels() {
     try {
       const data=await api('/api/models');
-      renderFileList('pt-list',data.pt,{convertible:true,emptyLabel:'.pt files'});
+      renderFileList('pt-list',data.pt,{convertible:true,conversionSupported:data.conversion_supported,emptyLabel:'.pt files'});
       renderFileList('wts-list',data.wts,{emptyLabel:'.wts files'});
       renderFileList('engine-list',data.engine,{emptyLabel:'.engine files'});
+      const convertNote=document.getElementById('convert-status');
+      if(!data.conversion_supported&&!convertNote.textContent){
+        convertNote.textContent='Convert to .wts is only supported on x86 hosts.';
+      }
     } catch(error) {
       toast(error.message,true);
     }
