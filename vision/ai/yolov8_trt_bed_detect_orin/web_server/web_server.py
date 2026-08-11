@@ -31,8 +31,15 @@ from flask_sock import Sock
 # Configuration
 SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
 WEIGHTS_DIR = os.environ.get("WEIGHTS_DIR", "/weights")
+PT_DIR = os.path.join(WEIGHTS_DIR, "pt")
 WTS_DIR = os.path.join(WEIGHTS_DIR, "wts")
 ENGINE_DIR = os.path.join(WEIGHTS_DIR, "engine")
+CONVERT_IMAGE = os.environ.get("CONVERT_IMAGE", "meraquetech/tensorrt-yolov8:ultralytics")
+# docker run below talks to the *host* daemon via the mounted docker.sock, so
+# its -v bind mounts must be host paths, not paths inside this container --
+# same reason engine_file_build.sh uses $(pwd) rather than an in-container path.
+HOST_WEIGHTS_DIR = os.environ.get("HOST_WEIGHTS_DIR")
+HOST_YOLOV8_DIR = os.environ.get("HOST_YOLOV8_DIR")
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
@@ -50,7 +57,7 @@ if not math.isfinite(DIRECTION_STALE_TIMEOUT) or DIRECTION_STALE_TIMEOUT <= 0:
     raise ValueError("DIRECTION_STALE_TIMEOUT must be a finite number greater than zero")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
-for _dir in (WTS_DIR, ENGINE_DIR):
+for _dir in (PT_DIR, WTS_DIR, ENGINE_DIR):
     os.makedirs(_dir, exist_ok=True)
 os.makedirs(os.path.dirname(HISTORY_DB) or ".", exist_ok=True)
 
