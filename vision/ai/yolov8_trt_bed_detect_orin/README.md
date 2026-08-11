@@ -170,7 +170,16 @@ yolov8_trt:
     camera_index:       0
     camera_width:       1280
     camera_height:      720
+
+web_bridge:
+  ros__parameters:
+    odom_topic: "/gnss/odom"
+    auto_save_interval: 0.5
+    auto_save_distance_m: 0.15
 ```
+
+The `web_bridge` values configure automatic frame saving. The interval must be
+at least 0.5 seconds, and the distance must be greater than zero metres.
 
 > **Resolution note:** `input_h` / `input_w` are baked into the TensorRT engine at serialize time.
 > If you change them here, delete the old `.engine` and re-run Step 3.
@@ -275,7 +284,7 @@ http://<host-ip>:8080/          ← MJPEG live stream
 ```
 
 Saved frames are written to `./vision/ai/saved_frames/` on the host (mounted into the container at `/saved_frames`).
-Live counts update continuously in the dashboard. They are persisted when `POST /api/save_count` is called, **Save current count** is pressed, or automatic saving is enabled. Automatic saving stores a paired frame and count every 0.5 seconds only while detection runs and fresh ROS direction data is exactly `/gnss/is_forward=true` and `/gnss/is_backward=false`. All other direction states, including stale or missing data, pause collection without switching off the Auto-save toggle; collection resumes automatically when the forward-only condition returns. Saved history lives in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
+Live counts update continuously in the dashboard. They are persisted when `POST /api/save_count` is called, **Save current count** is pressed, or automatic saving is enabled. Automatic saving checks every 0.5 seconds and stores a paired frame and count after the robot has moved at least 0.15 metres from the previous saved position, using local metre coordinates from `/gnss/odom`. It saves only while detection runs and fresh ROS direction data is exactly `/gnss/is_forward=true` and `/gnss/is_backward=false`. All other direction states, including stale or missing data, pause collection without switching off the Auto-save toggle; collection resumes automatically when the forward-only condition returns. The `web_bridge` section in `config/trt_params.yaml` configures the odometry topic, time interval, and distance threshold. Saved history lives in `/saved_frames/count_history.db`, so it remains available after a page refresh or container restart. The dashboard table is paginated so every stored sample remains viewable without making the page progressively slower.
 
 > Automatic saving can create up to 172,800 JPEG files per day. Keep it disabled when it is not required and monitor free disk space.
 
@@ -294,7 +303,7 @@ Base URL: `http://<host-ip>:8090`
 | `POST` | `/api/set_track` | JSON: `{"enabled":true}` | `{"success":true,"message":"...","is_track":true}` | Select unique-object or per-frame counting |
 | `POST` | `/api/reset_tracker` | None | `{"success":true,"message":"tracker reset requested"}` | Clear cumulative unique-object counts |
 | `POST` | `/api/save_count` | None | Saved record ID, time, counts, and total | Save exactly one current live-count snapshot to SQLite |
-| `POST` | `/api/auto_save` | JSON: `{"enabled":true}` | Mode, message, and `interval_seconds` | Enable or disable forward-only paired frame-and-count saving |
+| `POST` | `/api/auto_save` | JSON: `{"enabled":true}` | Mode, message, `interval_seconds`, and `distance_meters` | Enable or disable time-and-distance-gated forward-only paired saving |
 | `GET` | `/api/history` | Query: `limit` (1–5000), `offset` (≥0) | Paginated history object | Read manually saved counts, newest first |
 | `POST` | `/api/save` | None | `{"success":true,"filename":"frame_....jpg"}` | Save the current MJPEG frame as JPEG |
 | `GET` | `/api/images` | None | Array of saved-image metadata | List saved JPEG frames |
@@ -319,7 +328,12 @@ The `/api/status` endpoint and WebSocket messages share these fields:
 | `is_backward` | boolean/null | Latest backward flag, or `null` when direction data is missing or stale |
 | `direction_valid` | boolean | Whether both direction flags were received within the stale timeout |
 | `auto_save_direction_eligible` | boolean | Whether fresh direction data is exactly forward=`true`, backward=`false` |
-| `auto_save_active` | boolean | Whether Auto-save is enabled, detection is running, and direction is eligible |
+| `odom_valid` | boolean | Whether a finite local position has been received from `/gnss/odom` |
+| `auto_save_interval_seconds` | number | Configured minimum time between automatic saves |
+| `auto_save_distance_m` | number/null | Horizontal displacement from the current Auto-save reference position |
+| `auto_save_distance_threshold_m` | number | Configured minimum displacement required for automatic saving |
+| `auto_save_distance_eligible` | boolean | Whether displacement has reached the configured distance threshold |
+| `auto_save_active` | boolean | Whether Auto-save, detection, direction, and distance conditions are eligible |
 | `last_updated` | string/null | ISO-8601 time of the latest live count |
 | `mjpeg_port` | integer | MJPEG port; present only in `/api/status` |
 
@@ -382,7 +396,7 @@ curl 'http://<host-ip>:8090/api/history?limit=50&offset=0'
 # save the current live count to history
 curl -X POST http://<host-ip>:8090/api/save_count
 
-# enable paired frame + count saving every 0.5 seconds while detecting
+# enable paired saving at >=0.5-second and >=0.15-metre intervals
 curl -X POST http://<host-ip>:8090/api/auto_save \
   -H "Content-Type: application/json" \
   -d '{"enabled": true}'

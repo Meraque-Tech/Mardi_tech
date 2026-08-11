@@ -341,7 +341,13 @@
     else if(!running)desc.textContent='On — waiting for detection to start';
     else if(!data.direction_valid)desc.textContent='On — waiting for direction data';
     else if(!data.auto_save_direction_eligible)desc.textContent='On — waiting for forward movement';
-    else desc.textContent='Saving frame and count every 0.5 seconds';
+    else if(!data.odom_valid)desc.textContent='On — waiting for odometry';
+    else {
+      const distance=Number(data.auto_save_distance_m||0), threshold=Number(data.auto_save_distance_threshold_m||0.15), interval=Number(data.auto_save_interval_seconds||0.5);
+      desc.textContent=data.auto_save_distance_eligible
+        ? `Ready — ≥${interval.toFixed(1)} s and ≥${threshold.toFixed(2)} m reached`
+        : `On — ${distance.toFixed(2)} / ${threshold.toFixed(2)} m travelled`;
+    }
   }
 
   function applySnapshot(data) {

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import rclpy
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import NavSatFix
@@ -33,9 +34,11 @@ SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
-AUTO_SAVE_INTERVAL = max(0.5, float(os.environ.get("AUTO_SAVE_INTERVAL", "0.5")))
+AUTO_SAVE_INTERVAL = 0.5
+AUTO_SAVE_DISTANCE_M = 0.15
 GNSS_FIX_TOPIC = os.environ.get("GNSS_FIX_TOPIC", "/receiver/fix")
 GNSS_STALE_TIMEOUT = float(os.environ.get("GNSS_STALE_TIMEOUT", "3.0"))
+ODOM_TOPIC = "/gnss/odom"
 FORWARD_TOPIC = os.environ.get("FORWARD_TOPIC", "/gnss/is_forward")
 BACKWARD_TOPIC = os.environ.get("BACKWARD_TOPIC", "/gnss/is_backward")
 DIRECTION_STALE_TIMEOUT = float(os.environ.get("DIRECTION_STALE_TIMEOUT", "3.0"))
@@ -65,6 +68,9 @@ state = {
     "longitude": None,
     "gnss_valid": False,
     "gnss_received_at": None,
+    "odom_x": None,
+    "odom_y": None,
+    "odom_received_at": None,
     "is_forward": None,
     "is_backward": None,
     "direction_received_at": None,
@@ -73,6 +79,8 @@ state_lock = threading.Lock()
 gnss_last_monotonic = None
 forward_last_monotonic = None
 backward_last_monotonic = None
+auto_save_reference_position = None
+auto_save_reference_monotonic = None
 auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
@@ -214,6 +222,7 @@ def _state_snapshot():
     with state_lock:
         snapshot = dict(state)
         snapshot["counts"] = dict(state["counts"])
+        reference_position = auto_save_reference_position
 
         gnss_is_fresh = (
             state["gnss_valid"]
@@ -237,7 +246,32 @@ def _state_snapshot():
         snapshot["is_forward"] = None
         snapshot["is_backward"] = None
         snapshot["direction_received_at"] = None
+
+    odom_position = _odom_position(snapshot)
+    snapshot["odom_valid"] = odom_position is not None
+    snapshot["auto_save_interval_seconds"] = AUTO_SAVE_INTERVAL
+    snapshot["auto_save_distance_threshold_m"] = AUTO_SAVE_DISTANCE_M
+    if odom_position is None or reference_position is None:
+        snapshot["auto_save_distance_m"] = None
+        snapshot["auto_save_distance_eligible"] = False
+    else:
+        distance = math.hypot(
+            odom_position[0] - reference_position[0],
+            odom_position[1] - reference_position[1],
+        )
+        snapshot["auto_save_distance_m"] = round(distance, 3)
+        snapshot["auto_save_distance_eligible"] = distance >= AUTO_SAVE_DISTANCE_M
     return snapshot
+
+
+def _odom_position(snapshot):
+    x_position = snapshot.get("odom_x")
+    y_position = snapshot.get("odom_y")
+    if x_position is None or y_position is None:
+        return None
+    if not math.isfinite(x_position) or not math.isfinite(y_position):
+        return None
+    return x_position, y_position
 
 
 def _direction_allows_auto_save(snapshot):
@@ -255,6 +289,7 @@ def _snapshot_payload(message_type="snapshot"):
         snapshot["auto_save"]
         and snapshot["detecting"]
         and snapshot["auto_save_direction_eligible"]
+        and snapshot["auto_save_distance_eligible"]
     )
     snapshot["type"] = message_type
     return snapshot
@@ -268,6 +303,7 @@ def broadcast_state(message_type="snapshot"):
 class BridgeNode(Node):
     def __init__(self):
         super().__init__("web_bridge")
+        self._load_auto_save_parameters()
         state_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
@@ -282,6 +318,7 @@ class BridgeNode(Node):
         self.create_subscription(Int32, "/camera_index", self._camera_index_cb, state_qos)
         self.create_subscription(Float32, "/infer_ms", self._infer_ms_cb, 10)
         self.create_subscription(NavSatFix, GNSS_FIX_TOPIC, self._gnss_fix_cb, 10)
+        self.create_subscription(Odometry, ODOM_TOPIC, self._odom_cb, 10)
         self.create_subscription(Bool, FORWARD_TOPIC, self._forward_cb, 10)
         self.create_subscription(Bool, BACKWARD_TOPIC, self._backward_cb, 10)
 
@@ -296,9 +333,35 @@ class BridgeNode(Node):
             % (GNSS_FIX_TOPIC, GNSS_STALE_TIMEOUT)
         )
         self.get_logger().info(
+            "Listening for auto-save distance on %s (threshold %.2f m)"
+            % (ODOM_TOPIC, AUTO_SAVE_DISTANCE_M)
+        )
+        self.get_logger().info(
             "Listening for direction flags on %s and %s (stale after %.1f s)"
             % (FORWARD_TOPIC, BACKWARD_TOPIC, DIRECTION_STALE_TIMEOUT)
         )
+
+    def _load_auto_save_parameters(self):
+        global AUTO_SAVE_INTERVAL, AUTO_SAVE_DISTANCE_M, ODOM_TOPIC
+
+        self.declare_parameter("odom_topic", ODOM_TOPIC)
+        self.declare_parameter("auto_save_interval", AUTO_SAVE_INTERVAL)
+        self.declare_parameter("auto_save_distance_m", AUTO_SAVE_DISTANCE_M)
+
+        odom_topic = str(self.get_parameter("odom_topic").value).strip()
+        interval = float(self.get_parameter("auto_save_interval").value)
+        distance = float(self.get_parameter("auto_save_distance_m").value)
+
+        if not odom_topic:
+            raise ValueError("odom_topic must not be empty")
+        if not math.isfinite(interval) or interval < 0.5:
+            raise ValueError("auto_save_interval must be finite and at least 0.5 seconds")
+        if not math.isfinite(distance) or distance <= 0:
+            raise ValueError("auto_save_distance_m must be finite and greater than zero")
+
+        ODOM_TOPIC = odom_topic
+        AUTO_SAVE_INTERVAL = interval
+        AUTO_SAVE_DISTANCE_M = distance
 
     def _counts_cb(self, msg):
         counts = {}
@@ -368,6 +431,21 @@ class BridgeNode(Node):
 
     def _forward_cb(self, msg):
         self._direction_cb("is_forward", bool(msg.data))
+
+    def _odom_cb(self, msg):
+        x_position = float(msg.pose.pose.position.x)
+        y_position = float(msg.pose.pose.position.y)
+        with state_lock:
+            if math.isfinite(x_position) and math.isfinite(y_position):
+                state["odom_x"] = x_position
+                state["odom_y"] = y_position
+                state["odom_received_at"] = datetime.datetime.now(
+                    datetime.timezone.utc
+                ).isoformat()
+            else:
+                state["odom_x"] = None
+                state["odom_y"] = None
+                state["odom_received_at"] = None
 
     def _backward_cb(self, msg):
         self._direction_cb("is_backward", bool(msg.data))
@@ -465,14 +543,21 @@ class BridgeNode(Node):
 ros_node = None
 
 
-def _ros_spin():
+def _init_ros():
     global ros_node
     rclpy.init(args=None)
     ros_node = BridgeNode()
+
+
+def _ros_spin():
+    global ros_node
+    node = ros_node
+    if node is None:
+        return
     try:
-        rclpy.spin(ros_node)
+        rclpy.spin(node)
     finally:
-        ros_node.destroy_node()
+        node.destroy_node()
         ros_node = None
         rclpy.shutdown()
 
@@ -538,7 +623,9 @@ def _write_frame(jpeg, latitude=None, longitude=None):
 
 
 def _auto_save_loop():
-    """Auto-save only while detection and fresh forward-only motion are active."""
+    """Auto-save after both the time and horizontal-distance thresholds."""
+    global auto_save_reference_position, auto_save_reference_monotonic
+
     while True:
         auto_save_wakeup.wait(timeout=AUTO_SAVE_INTERVAL)
         auto_save_wakeup.clear()
@@ -548,6 +635,28 @@ def _auto_save_loop():
             not snapshot["auto_save"]
             or not snapshot["detecting"]
             or not _direction_allows_auto_save(snapshot)
+        ):
+            continue
+
+        odom_position = _odom_position(snapshot)
+        if odom_position is None:
+            continue
+
+        with state_lock:
+            if auto_save_reference_position is None:
+                auto_save_reference_position = odom_position
+                auto_save_reference_monotonic = time.monotonic()
+                continue
+            reference_position = auto_save_reference_position
+            reference_monotonic = auto_save_reference_monotonic
+
+        if (
+            reference_monotonic is None
+            or time.monotonic() - reference_monotonic < AUTO_SAVE_INTERVAL
+            or math.hypot(
+                odom_position[0] - reference_position[0],
+                odom_position[1] - reference_position[1],
+            ) < AUTO_SAVE_DISTANCE_M
         ):
             continue
 
@@ -563,6 +672,7 @@ def _auto_save_loop():
             or not snapshot["detecting"]
             or snapshot["last_updated"] is None
             or not _direction_allows_auto_save(snapshot)
+            or not snapshot["auto_save_distance_eligible"]
         ):
             continue
 
@@ -575,6 +685,7 @@ def _auto_save_loop():
                     or not snapshot["detecting"]
                     or snapshot["last_updated"] is None
                     or not _direction_allows_auto_save(snapshot)
+                    or not snapshot["auto_save_distance_eligible"]
                 ):
                     continue
                 snapshot["last_updated"] = datetime.datetime.now(
@@ -584,6 +695,10 @@ def _auto_save_loop():
                     jpeg, snapshot["latitude"], snapshot["longitude"]
                 )
                 _store_history(snapshot, frame_filename)
+                saved_position = _odom_position(snapshot)
+                with state_lock:
+                    auto_save_reference_position = saved_position
+                    auto_save_reference_monotonic = time.monotonic()
         except (OSError, sqlite3.Error) as exc:
             if frame_path and os.path.exists(frame_path):
                 os.unlink(frame_path)
@@ -669,12 +784,22 @@ def save_count():
 
 @app.route("/api/auto_save", methods=["POST"])
 def set_auto_save():
+    global auto_save_reference_position, auto_save_reference_monotonic
+
     data = request.get_json(silent=True) or {}
     enabled = data.get("enabled")
     if not isinstance(enabled, bool):
         return jsonify({"success": False, "message": "enabled must be a boolean"}), 400
     with state_lock:
         state["auto_save"] = enabled
+        auto_save_reference_position = (
+            _odom_position(state) if enabled else None
+        )
+        auto_save_reference_monotonic = (
+            time.monotonic()
+            if enabled and auto_save_reference_position is not None
+            else None
+        )
     auto_save_wakeup.set()
     broadcast_state("status")
     return jsonify({
@@ -682,13 +807,18 @@ def set_auto_save():
         "message": "automatic saving enabled" if enabled else "automatic saving disabled",
         "auto_save": enabled,
         "interval_seconds": AUTO_SAVE_INTERVAL,
+        "distance_meters": AUTO_SAVE_DISTANCE_M,
     })
 
 
 @app.route("/api/data", methods=["DELETE"])
 def delete_all_data():
+    global auto_save_reference_position, auto_save_reference_monotonic
+
     with state_lock:
         state["auto_save"] = False
+        auto_save_reference_position = None
+        auto_save_reference_monotonic = None
     auto_save_wakeup.set()
 
     deleted_images = 0
@@ -929,6 +1059,7 @@ def delete_image(filename):
 
 if __name__ == "__main__":
     _init_db()
+    _init_ros()
     threading.Thread(target=_ros_spin, daemon=True).start()
     threading.Thread(target=_auto_save_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=API_PORT, threaded=True, use_reloader=False)

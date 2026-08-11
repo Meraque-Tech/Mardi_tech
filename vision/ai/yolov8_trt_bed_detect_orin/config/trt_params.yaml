@@ -70,5 +70,14 @@ yolov8_trt:
     camera_height:  720
 
 
+web_bridge:
+  ros__parameters:
+    # Auto-save checks this local ENU odometry position in metres.
+    odom_topic: "/gnss/odom"
+    # A frame is saved only after both thresholds have been reached.
+    auto_save_interval: 0.5
+    auto_save_distance_m: 0.15
+
+
 # 24 FPS: ≈ 42 ms (Standard for cinematic movies)
 # 30 FPS: ≈ 33.3 ms (Common for console games and social media)

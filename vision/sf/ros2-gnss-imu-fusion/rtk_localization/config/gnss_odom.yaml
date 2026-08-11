@@ -11,11 +11,11 @@ rtk_localization:
     base_frame: base_link
 
     require_rtk: false
-    min_heading_distance: 1.0
-    stationary_timeout_s: 5.0
-    direction_stale_timeout_s: 3.0
-    reversal_angle_deg: 150.0
-    direction_consistency_deg: 30.0
+    min_heading_distance: 3.0 # in meters
+    stationary_timeout_s: 5.0 # in seconds
+    direction_stale_timeout_s: 3.0 # in seconds
+    reversal_angle_deg: 150.0 # in degrees
+    direction_consistency_deg: 30.0 # in degrees
     heading_variance: 0.05
     fallback_horizontal_variance: 1.0
     fallback_vertical_variance: 4.0
