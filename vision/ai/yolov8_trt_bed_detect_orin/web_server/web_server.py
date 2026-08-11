@@ -113,6 +113,10 @@ engine_build_job = {
 }
 engine_build_job_lock = threading.Lock()
 
+launch_job = {"running": False, "mode": None, "message": None, "ok": None}
+launch_job_lock = threading.Lock()
+launch_process = None
+
 
 # Persistent count history
 db_lock = threading.Lock()
@@ -1043,6 +1047,66 @@ def build_engine():
         "wts_name": wts_path,
         "engine_name": engine_path,
     })
+
+
+_LAUNCH_FILES = {
+    "serialize": "serialize_engine.launch.py",
+    "deserialize": "bed_detect.launch.py",
+}
+
+
+def _run_launch(mode):
+    global launch_process
+    launch_file = _LAUNCH_FILES[mode]
+    try:
+        process = subprocess.Popen(
+            ["ros2", "launch", "yolov8_trt_bed_detect_orin", launch_file],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+    except OSError as exc:
+        with launch_job_lock:
+            launch_job.update(running=False, message="could not start ros2 launch: %s" % exc, ok=False)
+        return
+
+    with launch_job_lock:
+        launch_process = process
+
+    output, _ = process.communicate()
+    ok = process.returncode == 0
+    message = "%s complete" % mode if ok else (
+        "%s failed (exit %d): %s" % (mode, process.returncode, output[-2000:] if output else "")
+    )
+    with launch_job_lock:
+        launch_process = None
+        launch_job.update(running=False, message=message, ok=ok)
+
+
+def _start_launch(mode):
+    with launch_job_lock:
+        if launch_job["running"]:
+            return jsonify({
+                "success": False,
+                "message": "a %s launch is already running" % launch_job["mode"],
+            }), 409
+        launch_job.update(running=True, mode=mode, message=None, ok=None)
+    threading.Thread(target=_run_launch, args=(mode,), daemon=True).start()
+    return jsonify({"success": True, "message": "%s started" % mode})
+
+
+@app.route("/api/serialize/model", methods=["POST"])
+def serialize_model():
+    return _start_launch("serialize")
+
+
+@app.route("/api/deserialize/model", methods=["POST"])
+def deserialize_model():
+    return _start_launch("deserialize")
+
+
+@app.route("/api/models/launch/status")
+def launch_status():
+    with launch_job_lock:
+        return jsonify(dict(launch_job))
 
 
 @app.route("/api/images")

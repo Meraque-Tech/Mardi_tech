@@ -301,6 +301,9 @@ Base URL: `http://<host-ip>:8090`
 | `DELETE` | `/api/images/{filename}` | Filename in URL | `{"success":true}` | Delete one saved JPEG frame |
 | `DELETE` | `/api/data` | None | Numbers of deleted records and images | Disable auto-save and permanently clear all count history and JPEG frames |
 | `GET` | `/saved/{filename}` | Filename in URL | JPEG bytes | Display or download a saved frame |
+| `POST` | `/api/serialize/model` | None | `{"success":true,"message":"serialize started"}` | Launch `serialize_engine.launch.py` in the background to build the `.engine` from the configured `.wts` |
+| `POST` | `/api/deserialize/model` | None | `{"success":true,"message":"deserialize started"}` | Launch `bed_detect.launch.py` in the background to load the `.engine` and run detection |
+| `GET` | `/api/models/launch/status` | None | `{"running":bool,"mode":"serialize"\|"deserialize"\|null,"message":str\|null,"ok":bool\|null}` | Poll the status of the most recent serialize/deserialize launch |
 
 #### Live state object
 
@@ -332,7 +335,7 @@ The `/api/status` endpoint and WebSocket messages share these fields:
 | `offset` | integer | Number of newer records skipped |
 | `items` | array | History records containing `id`, `time`, `counts`, `total`, `bed`, `conf`, `tracking`, and optional `frame` filename |
 
-Common error responses use `{"success":false,"message":"..."}`. Expected status codes include `400` for invalid pagination or filenames, `409` when saving before any live count exists, `500` for frame/database failures, and `503` when a ROS service is unavailable.
+Common error responses use `{"success":false,"message":"..."}`. Expected status codes include `400` for invalid pagination or filenames, `409` when saving before any live count exists or when a serialize/deserialize launch is already running, `500` for frame/database failures, and `503` when a ROS service is unavailable.
 
 > `DELETE /api/data` is destructive and cannot be undone. The SQLite schema is retained so new records can be saved immediately afterward.
 
@@ -397,6 +400,15 @@ curl -X POST http://<host-ip>:8090/api/set_track \
 
 # list saved frames
 curl http://<host-ip>:8090/api/images
+
+# serialize the .wts into a TensorRT .engine (runs serialize_engine.launch.py)
+curl -X POST http://<host-ip>:8090/api/serialize/model
+
+# deserialize the .engine and start detection (runs bed_detect.launch.py)
+curl -X POST http://<host-ip>:8090/api/deserialize/model
+
+# poll the serialize/deserialize launch status
+curl http://<host-ip>:8090/api/models/launch/status
 ```
 
 ---
