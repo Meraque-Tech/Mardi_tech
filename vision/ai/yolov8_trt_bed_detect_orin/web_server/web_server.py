@@ -32,9 +32,6 @@ from flask_sock import Sock
 # Configuration
 SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
 WEIGHTS_DIR = os.environ.get("WEIGHTS_DIR", "/weights")
-PT_DIR = os.path.join(WEIGHTS_DIR, "pt")
-WTS_DIR = os.path.join(WEIGHTS_DIR, "wts")
-ENGINE_DIR = os.path.join(WEIGHTS_DIR, "engine")
 CONVERT_IMAGE = os.environ.get("CONVERT_IMAGE", "meraquetech/tensorrt-yolov8:ultralytics")
 # docker run below talks to the *host* daemon via the mounted docker.sock, so
 # its -v bind mounts must be host paths, not paths inside this container --
@@ -62,8 +59,7 @@ if not math.isfinite(DIRECTION_STALE_TIMEOUT) or DIRECTION_STALE_TIMEOUT <= 0:
     raise ValueError("DIRECTION_STALE_TIMEOUT must be a finite number greater than zero")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
-for _dir in (PT_DIR, WTS_DIR, ENGINE_DIR):
-    os.makedirs(_dir, exist_ok=True)
+os.makedirs(WEIGHTS_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(HISTORY_DB) or ".", exist_ok=True)
 
 
@@ -850,7 +846,7 @@ def _save_upload(directory, extension):
 
 @app.route("/api/models/upload", methods=["POST"])
 def upload_model():
-    dest_path, error = _save_upload(WTS_DIR, ".wts")
+    dest_path, error = _save_upload(WEIGHTS_DIR, ".wts")
     if error:
         return error
     return jsonify({
@@ -863,7 +859,7 @@ def upload_model():
 
 @app.route("/api/models/upload_pt", methods=["POST"])
 def upload_pt_model():
-    dest_path, error = _save_upload(PT_DIR, ".pt")
+    dest_path, error = _save_upload(WEIGHTS_DIR, ".pt")
     if error:
         return error
     return jsonify({
@@ -889,24 +885,23 @@ def _list_dir(directory, pattern):
 @app.route("/api/models")
 def list_models():
     return jsonify({
-        "pt": _list_dir(PT_DIR, "*.pt"),
-        "wts": _list_dir(WTS_DIR, "*.wts"),
-        "engine": _list_dir(ENGINE_DIR, "*.engine"),
+        "pt": _list_dir(WEIGHTS_DIR, "*.pt"),
+        "wts": _list_dir(WEIGHTS_DIR, "*.wts"),
+        "engine": _list_dir(WEIGHTS_DIR, "*.engine"),
         "conversion_supported": CONVERSION_SUPPORTED,
     })
 
 
-_MODEL_KIND_DIRS = {"pt": PT_DIR, "wts": WTS_DIR, "engine": ENGINE_DIR}
+_MODEL_KIND_EXTENSIONS = {"pt", "wts", "engine"}
 
 
 @app.route("/api/models/<kind>/<filename>/download")
 def download_model(kind, filename):
-    directory = _MODEL_KIND_DIRS.get(kind)
-    if directory is None:
+    if kind not in _MODEL_KIND_EXTENSIONS:
         return jsonify({"success": False, "message": "unknown file type"}), 400
     if Path(filename).name != filename or not filename.lower().endswith("." + kind):
         return jsonify({"success": False, "message": "invalid filename"}), 400
-    path = Path(directory) / filename
+    path = Path(WEIGHTS_DIR) / filename
     if not path.is_file():
         return jsonify({"success": False, "message": "file not found"}), 404
     return send_file(str(path), as_attachment=True, download_name=filename)
@@ -936,8 +931,8 @@ def _run_conversion(pt_filename):
              CONVERT_IMAGE,
              "bash", "-c",
              f"cd /yolov8 && python3 gen_wts.py "
-             f"-w /workspace/yolov8/build/weights/pt/{pt_filename} "
-             f"-o /workspace/yolov8/build/weights/wts/{wts_filename} -t detect"],
+             f"-w /workspace/yolov8/build/weights/{pt_filename} "
+             f"-o /workspace/yolov8/build/weights/{wts_filename} -t detect"],
             capture_output=True, text=True, timeout=600,
         )
         ok = result.returncode == 0
@@ -962,7 +957,7 @@ def convert_model():
     pt_filename = Path(data.get("filename", "")).name
     if not pt_filename.lower().endswith(".pt"):
         return jsonify({"success": False, "message": "filename must be a .pt file"}), 400
-    if not (Path(PT_DIR) / pt_filename).is_file():
+    if not (Path(WEIGHTS_DIR) / pt_filename).is_file():
         return jsonify({"success": False, "message": "file not found"}), 404
     with convert_job_lock:
         if convert_job["running"]:

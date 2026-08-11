@@ -10,12 +10,15 @@ services:
     volumes:
       # - ./yolov8/weights:/weights
       - ${HOME}/yolov8/weights:/weights
+      - ./yolov8_trt_bed_detect_orin/config:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config
+      - ./yolov8_trt_bed_detect_orin/launch:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/launch
+      - ${HOME}/saved_frames:/saved_frames
     runtime: nvidia
     restart: "no"
     command: >
-      bash -c "source /opt/ros/jazzy/setup.bash &&
+      bash -c "source /opt/ros/humble/setup.bash &&
                source /ros2_ws/install/setup.bash &&
-               ros2 run yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin -s /weights/yolov8n.wts /weights/yolov8n_x86_ros2_jazzy.engine n 512 512"
+               ros2 launch yolov8_trt_bed_detect_orin serialize_engine.launch.py"
 
   yolov8-trt-bed-detect-x86-jazzy:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v7
