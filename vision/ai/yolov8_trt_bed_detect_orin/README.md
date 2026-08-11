@@ -284,7 +284,8 @@ The dashboard is self-contained and does not require internet access or CDN scri
 ### Serialize / deserialize from the dashboard
 
 - **Convert to .engine** (in the *Model weights* card, next to a `.wts` file) requires a **# classes** value entered in the field beside the button — the number of classes that `.wts` was trained on. The button updates `trt_params.yaml` (`wts_name`, `engine_name`, and `num_class`) and then calls `POST /api/serialize/model`, which runs `serialize_engine.launch.py` in the background. The number of classes is not guessed or defaulted; the request is rejected client-side and server-side (`400`) if it's missing or not a positive integer, since serializing with the wrong class count silently produces a broken engine.
-- **Deserialize model** (in the *Controls* card) calls `POST /api/deserialize/model`, which runs `bed_detect.launch.py` in the background to (re)load the current `.engine` and start the detection node.
+- **Use for detection** (in the *Model weights* card, next to a `.engine` file) also requires a **# classes** value in the field beside it — the number of classes that `.engine` was built for. It writes `engine_name` and `num_class` into `trt_params.yaml` via `POST /api/models/select_engine`, without touching `wts_name`. It only updates the config; run **Deserialize model** afterward to actually load it.
+- **Deserialize model** (in the *Controls* card) calls `POST /api/deserialize/model`, which runs `bed_detect.launch.py` in the background to (re)load the `.engine` currently configured in `trt_params.yaml` and start the detection node.
 - **Start detection** / **Stop detection** call `POST /api/start` / `POST /api/stop` directly (the ROS `Trigger` services) — unchanged, and independent of the serialize/deserialize launch jobs.
 - Live `ros2 launch` output for the current or most recent serialize/deserialize job streams into the **Serialize / detect log** panel underneath the model file lists, polled from `GET /api/models/launch/log`.
 
@@ -309,6 +310,7 @@ Base URL: `http://<host-ip>:8090`
 | `DELETE` | `/api/data` | None | Numbers of deleted records and images | Disable auto-save and permanently clear all count history and JPEG frames |
 | `GET` | `/saved/{filename}` | Filename in URL | JPEG bytes | Display or download a saved frame |
 | `POST` | `/api/models/build_engine` | JSON: `{"filename":"model.wts","num_class":80}` | `{"success":true,"message":"...","engine_filename":"...","num_class":80}` | Write `wts_name`, `engine_name`, and `num_class` into `trt_params.yaml` for the next serialize. `num_class` is required — `400` if missing or not a positive integer |
+| `POST` | `/api/models/select_engine` | JSON: `{"filename":"model.engine","num_class":80}` | `{"success":true,"message":"...","engine_name":"...","num_class":80}` | Write `engine_name` and `num_class` into `trt_params.yaml` to select an existing `.engine` for the next deserialize. `num_class` is required — `400` if missing or not a positive integer |
 | `DELETE` | `/api/models/{kind}/{filename}` | `kind` (`pt`\|`wts`\|`engine`) and filename in URL | `{"success":true}` | Permanently delete one `.pt`, `.wts`, or `.engine` file from the weights directory |
 | `POST` | `/api/serialize/model` | None | `{"success":true,"message":"serialize started"}` | Launch `serialize_engine.launch.py` in the background to build the `.engine` from the configured `.wts` (and `num_class`). Stops a running deserialize first. Skipped (`"skipped":true`) if the configured `.engine` file already exists |
 | `POST` | `/api/deserialize/model` | None | `{"success":true,"message":"deserialize started"}` | Launch `bed_detect.launch.py` in the background to load the `.engine` and run detection. Stops a running serialize first |
@@ -418,6 +420,11 @@ curl -X POST http://<host-ip>:8090/api/models/build_engine \
 
 # serialize the .wts into a TensorRT .engine (runs serialize_engine.launch.py)
 curl -X POST http://<host-ip>:8090/api/serialize/model
+
+# select an existing .engine (and its class count) for the next deserialize
+curl -X POST http://<host-ip>:8090/api/models/select_engine \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "yolov8n_x86_64.engine", "num_class": 80}'
 
 # deserialize the .engine and start detection (runs bed_detect.launch.py)
 curl -X POST http://<host-ip>:8090/api/deserialize/model

@@ -1030,16 +1030,13 @@ def _set_yaml_scalar(lines, key, value, quote=True):
     return False
 
 
-def _update_trt_params(wts_path, engine_path, num_class):
+def _update_trt_params(**scalars):
     with open(TRT_PARAMS_FILE) as f:
         lines = f.readlines()
     shutil.copy2(TRT_PARAMS_FILE, TRT_PARAMS_FILE + ".bak")
-    if not _set_yaml_scalar(lines, "wts_name", wts_path):
-        raise ValueError("wts_name key not found in %s" % TRT_PARAMS_FILE)
-    if not _set_yaml_scalar(lines, "engine_name", engine_path):
-        raise ValueError("engine_name key not found in %s" % TRT_PARAMS_FILE)
-    if not _set_yaml_scalar(lines, "num_class", num_class, quote=False):
-        raise ValueError("num_class key not found in %s" % TRT_PARAMS_FILE)
+    for key, (value, quote) in scalars.items():
+        if not _set_yaml_scalar(lines, key, value, quote=quote):
+            raise ValueError("%s key not found in %s" % (key, TRT_PARAMS_FILE))
     with open(TRT_PARAMS_FILE, "w") as f:
         f.writelines(lines)
 
@@ -1063,7 +1060,11 @@ def build_engine():
     wts_path = f"{WEIGHTS_DIR}/{wts_filename}"
     engine_path = f"{WEIGHTS_DIR}/{engine_filename}"
     try:
-        _update_trt_params(wts_path, engine_path, num_class)
+        _update_trt_params(
+            wts_name=(wts_path, True),
+            engine_name=(engine_path, True),
+            num_class=(num_class, False),
+        )
     except (OSError, ValueError) as exc:
         return jsonify({"success": False, "message": "could not update trt_params.yaml: %s" % exc}), 500
     return jsonify({
@@ -1071,6 +1072,36 @@ def build_engine():
         "message": "trt_params.yaml updated — restart the detection service to build %s" % engine_filename,
         "engine_filename": engine_filename,
         "wts_name": wts_path,
+        "engine_name": engine_path,
+        "num_class": num_class,
+    })
+
+
+@app.route("/api/models/select_engine", methods=["POST"])
+def select_engine():
+    data = request.get_json(silent=True) or {}
+    engine_filename = Path(data.get("filename", "")).name
+    if not engine_filename.lower().endswith(".engine"):
+        return jsonify({"success": False, "message": "filename must be a .engine file"}), 400
+    if not (Path(WEIGHTS_DIR) / engine_filename).is_file():
+        return jsonify({"success": False, "message": "file not found"}), 404
+    try:
+        num_class = int(data.get("num_class"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "num_class must be a positive integer"}), 400
+    if num_class <= 0:
+        return jsonify({"success": False, "message": "num_class must be a positive integer"}), 400
+    engine_path = f"{WEIGHTS_DIR}/{engine_filename}"
+    try:
+        _update_trt_params(
+            engine_name=(engine_path, True),
+            num_class=(num_class, False),
+        )
+    except (OSError, ValueError) as exc:
+        return jsonify({"success": False, "message": "could not update trt_params.yaml: %s" % exc}), 500
+    return jsonify({
+        "success": True,
+        "message": "trt_params.yaml now points at %s — deserialize to run detection with it" % engine_filename,
         "engine_name": engine_path,
         "num_class": num_class,
     })
