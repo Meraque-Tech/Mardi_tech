@@ -89,6 +89,9 @@ auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
 
+convert_job = {"running": False, "pt_filename": None, "message": None, "ok": None}
+convert_job_lock = threading.Lock()
+
 
 # Persistent count history
 db_lock = threading.Lock()
@@ -825,23 +828,43 @@ def save_frame():
     return jsonify({"success": True, "filename": filename})
 
 
-@app.route("/api/models/upload", methods=["POST"])
-def upload_model():
+def _save_upload(directory, extension):
     if "model" not in request.files:
-        return jsonify({"success": False, "message": "no file uploaded"}), 400
+        return None, (jsonify({"success": False, "message": "no file uploaded"}), 400)
     file = request.files["model"]
     filename = Path(file.filename or "").name  # strip any path components
-    if not filename.lower().endswith(".wts"):
-        return jsonify({"success": False, "message": "only .wts files are accepted"}), 400
-    if filename in ("", ".wts"):
-        return jsonify({"success": False, "message": "invalid filename"}), 400
-    dest_path = Path(WTS_DIR) / filename
+    if not filename.lower().endswith(extension):
+        return None, (jsonify({"success": False, "message": "only %s files are accepted" % extension}), 400)
+    if filename in ("", extension):
+        return None, (jsonify({"success": False, "message": "invalid filename"}), 400)
+    dest_path = Path(directory) / filename
     with storage_lock:
         file.save(str(dest_path))
+    return dest_path, None
+
+
+@app.route("/api/models/upload", methods=["POST"])
+def upload_model():
+    dest_path, error = _save_upload(WTS_DIR, ".wts")
+    if error:
+        return error
     return jsonify({
         "success": True,
         "message": "model uploaded",
-        "filename": filename,
+        "filename": dest_path.name,
+        "size": dest_path.stat().st_size,
+    })
+
+
+@app.route("/api/models/upload_pt", methods=["POST"])
+def upload_pt_model():
+    dest_path, error = _save_upload(PT_DIR, ".pt")
+    if error:
+        return error
+    return jsonify({
+        "success": True,
+        "message": "model uploaded",
+        "filename": dest_path.name,
         "size": dest_path.stat().st_size,
     })
 
@@ -861,9 +884,70 @@ def _list_dir(directory, pattern):
 @app.route("/api/models")
 def list_models():
     return jsonify({
+        "pt": _list_dir(PT_DIR, "*.pt"),
         "wts": _list_dir(WTS_DIR, "*.wts"),
         "engine": _list_dir(ENGINE_DIR, "*.engine"),
     })
+
+
+def _run_conversion(pt_filename):
+    # Mirrors engine_file_build.sh's Step 1 exactly: docker run against the
+    # ultralytics image, mounting the *host* yolov8/ source dir (for
+    # gen_wts.py) and the host weights dir. This container only has the
+    # docker CLI + docker.sock -- it talks to the host daemon, so these -v
+    # paths must be host paths (HOST_YOLOV8_DIR / HOST_WEIGHTS_DIR), not
+    # paths inside this container.
+    wts_filename = os.path.splitext(pt_filename)[0] + ".wts"
+    if not HOST_YOLOV8_DIR or not HOST_WEIGHTS_DIR:
+        with convert_job_lock:
+            convert_job.update(
+                running=False, ok=False,
+                message="HOST_YOLOV8_DIR / HOST_WEIGHTS_DIR not configured for this container",
+            )
+        return
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "--net=host",
+             "--runtime", "nvidia", "--gpus", "all", "--privileged",
+             "-v", f"{HOST_WEIGHTS_DIR}:/workspace/yolov8/build/weights",
+             "-v", f"{HOST_YOLOV8_DIR}:/yolov8",
+             CONVERT_IMAGE,
+             "bash", "-c",
+             f"cd /yolov8 && python3 gen_wts.py "
+             f"-w /workspace/yolov8/build/weights/pt/{pt_filename} "
+             f"-o /workspace/yolov8/build/weights/wts/{wts_filename} -t detect"],
+            capture_output=True, text=True, timeout=600,
+        )
+        ok = result.returncode == 0
+        message = "conversion complete" if ok else (result.stderr.strip() or "conversion failed")
+    except subprocess.TimeoutExpired:
+        ok, message = False, "conversion timed out"
+    except OSError as exc:
+        ok, message = False, "could not start conversion: %s" % exc
+    with convert_job_lock:
+        convert_job.update(running=False, message=message, ok=ok)
+
+
+@app.route("/api/models/convert", methods=["POST"])
+def convert_model():
+    data = request.get_json(silent=True) or {}
+    pt_filename = Path(data.get("filename", "")).name
+    if not pt_filename.lower().endswith(".pt"):
+        return jsonify({"success": False, "message": "filename must be a .pt file"}), 400
+    if not (Path(PT_DIR) / pt_filename).is_file():
+        return jsonify({"success": False, "message": "file not found"}), 404
+    with convert_job_lock:
+        if convert_job["running"]:
+            return jsonify({"success": False, "message": "a conversion is already running"}), 409
+        convert_job.update(running=True, pt_filename=pt_filename, message=None, ok=None)
+    threading.Thread(target=_run_conversion, args=(pt_filename,), daemon=True).start()
+    return jsonify({"success": True, "message": "conversion started"})
+
+
+@app.route("/api/models/convert/status")
+def convert_status():
+    with convert_job_lock:
+        return jsonify(dict(convert_job))
 
 
 @app.route("/api/images")

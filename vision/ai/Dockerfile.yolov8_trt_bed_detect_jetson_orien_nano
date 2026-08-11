@@ -83,7 +83,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
-    libopencv-dev
+    libopencv-dev \
+    docker.io
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --ignore-installed flask flask-sock
