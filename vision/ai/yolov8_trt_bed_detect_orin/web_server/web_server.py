@@ -31,10 +31,8 @@ from flask_sock import Sock
 # Configuration
 SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
 WEIGHTS_DIR = os.environ.get("WEIGHTS_DIR", "/weights")
-PT_DIR = os.path.join(WEIGHTS_DIR, "pt")
 WTS_DIR = os.path.join(WEIGHTS_DIR, "wts")
 ENGINE_DIR = os.path.join(WEIGHTS_DIR, "engine")
-CONVERT_IMAGE = os.environ.get("CONVERT_IMAGE", "meraquetech/tensorrt-yolov8:ultralytics")
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
@@ -52,7 +50,7 @@ if not math.isfinite(DIRECTION_STALE_TIMEOUT) or DIRECTION_STALE_TIMEOUT <= 0:
     raise ValueError("DIRECTION_STALE_TIMEOUT must be a finite number greater than zero")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
-for _dir in (PT_DIR, WTS_DIR, ENGINE_DIR):
+for _dir in (WTS_DIR, ENGINE_DIR):
     os.makedirs(_dir, exist_ok=True)
 os.makedirs(os.path.dirname(HISTORY_DB) or ".", exist_ok=True)
 
@@ -83,9 +81,6 @@ backward_last_monotonic = None
 auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
-
-convert_job = {"running": False, "pt_filename": None, "message": None, "ok": None}
-convert_job_lock = threading.Lock()
 
 
 # Persistent count history
@@ -829,11 +824,11 @@ def upload_model():
         return jsonify({"success": False, "message": "no file uploaded"}), 400
     file = request.files["model"]
     filename = Path(file.filename or "").name  # strip any path components
-    if not filename.lower().endswith(".pt"):
-        return jsonify({"success": False, "message": "only .pt files are accepted"}), 400
-    if filename in ("", ".pt"):
+    if not filename.lower().endswith(".wts"):
+        return jsonify({"success": False, "message": "only .wts files are accepted"}), 400
+    if filename in ("", ".wts"):
         return jsonify({"success": False, "message": "invalid filename"}), 400
-    dest_path = Path(PT_DIR) / filename
+    dest_path = Path(WTS_DIR) / filename
     with storage_lock:
         file.save(str(dest_path))
     return jsonify({
@@ -859,56 +854,9 @@ def _list_dir(directory, pattern):
 @app.route("/api/models")
 def list_models():
     return jsonify({
-        "pt": _list_dir(PT_DIR, "*.pt"),
         "wts": _list_dir(WTS_DIR, "*.wts"),
         "engine": _list_dir(ENGINE_DIR, "*.engine"),
     })
-
-
-def _run_conversion(pt_filename):
-    wts_filename = os.path.splitext(pt_filename)[0] + ".wts"
-    try:
-        result = subprocess.run(
-            ["docker", "run", "--rm", "--gpus", "all",
-             "-v", f"{PT_DIR}:/workspace/weights/pt",
-             "-v", f"{WTS_DIR}:/workspace/weights/wts",
-             CONVERT_IMAGE,
-             "bash", "-c",
-             f"cd /yolov8 && python3 gen_wts.py "
-             f"-w /workspace/weights/pt/{pt_filename} "
-             f"-o /workspace/weights/wts/{wts_filename} -t detect"],
-            capture_output=True, text=True, timeout=600,
-        )
-        ok = result.returncode == 0
-        message = "conversion complete" if ok else (result.stderr.strip() or "conversion failed")
-    except subprocess.TimeoutExpired:
-        ok, message = False, "conversion timed out"
-    except OSError as exc:
-        ok, message = False, "could not start conversion: %s" % exc
-    with convert_job_lock:
-        convert_job.update(running=False, message=message, ok=ok)
-
-
-@app.route("/api/models/convert", methods=["POST"])
-def convert_model():
-    data = request.get_json(silent=True) or {}
-    pt_filename = Path(data.get("filename", "")).name
-    if not pt_filename.lower().endswith(".pt"):
-        return jsonify({"success": False, "message": "filename must be a .pt file"}), 400
-    if not (Path(PT_DIR) / pt_filename).is_file():
-        return jsonify({"success": False, "message": "file not found"}), 404
-    with convert_job_lock:
-        if convert_job["running"]:
-            return jsonify({"success": False, "message": "a conversion is already running"}), 409
-        convert_job.update(running=True, pt_filename=pt_filename, message=None, ok=None)
-    threading.Thread(target=_run_conversion, args=(pt_filename,), daemon=True).start()
-    return jsonify({"success": True, "message": "conversion started"})
-
-
-@app.route("/api/models/convert/status")
-def convert_status():
-    with convert_job_lock:
-        return jsonify(dict(convert_job))
 
 
 @app.route("/api/images")

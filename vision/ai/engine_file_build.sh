@@ -81,66 +81,66 @@ else
 fi
 echo ""
 
-# ── Step 2: Build engine ──────────────────────────────────────────────────────
-if [ "${TARGET}" = "nano" ]; then
-    # ── Nano: colcon build inside bed_detect image → ros2 run -s ─────────────
-    echo "==> Step 2: Building engine via ROS2 node (Nano target) ..."
-    echo "    kNumClass=${NC}  input=${WIDTH}x${HEIGHT}"
+# # ── Step 2: Build engine ──────────────────────────────────────────────────────
+# if [ "${TARGET}" = "nano" ]; then
+#     # ── Nano: colcon build inside bed_detect image → ros2 run -s ─────────────
+#     echo "==> Step 2: Building engine via ROS2 node (Nano target) ..."
+#     echo "    kNumClass=${NC}  input=${WIDTH}x${HEIGHT}"
 
-    docker run --rm --net=host \
-        --runtime nvidia --gpus all --privileged \
-        -v "$(pwd)/yolov8/weights:/weights" \
-        -v "$(pwd)/yolov8_trt_bed_detect:/ros2_ws/src/yolov8_trt_bed_detect" \
-        meraquetech/race_nav:yolov8-trt-bed-detect-nano.v7 \
-        bash -c "
-            set -e
-            echo '--- Patching kNumClass to ${NC} ---'
-            sed -i 's/const static int kNumClass = [0-9]\\+/const static int kNumClass = ${NC}/' \
-                /ros2_ws/src/yolov8_trt_bed_detect/include/config.h
-            grep 'kNumClass' /ros2_ws/src/yolov8_trt_bed_detect/include/config.h
+#     docker run --rm --net=host \
+#         --runtime nvidia --gpus all --privileged \
+#         -v "$(pwd)/yolov8/weights:/weights" \
+#         -v "$(pwd)/yolov8_trt_bed_detect:/ros2_ws/src/yolov8_trt_bed_detect" \
+#         meraquetech/race_nav:yolov8-trt-bed-detect-nano.v7 \
+#         bash -c "
+#             set -e
+#             echo '--- Patching kNumClass to ${NC} ---'
+#             sed -i 's/const static int kNumClass = [0-9]\\+/const static int kNumClass = ${NC}/' \
+#                 /ros2_ws/src/yolov8_trt_bed_detect/include/config.h
+#             grep 'kNumClass' /ros2_ws/src/yolov8_trt_bed_detect/include/config.h
 
-            echo '--- Rebuilding package ---'
-            ROS_SETUP=\$(find /opt/ros /root -name 'setup.bash' 2>/dev/null | head -1)
-            source \"\${ROS_SETUP}\"
-            cd /ros2_ws
-            colcon build --packages-select yolov8_trt_bed_detect \
-                --cmake-args -DCMAKE_BUILD_TYPE=Release
-            source /ros2_ws/install/setup.bash
+#             echo '--- Rebuilding package ---'
+#             ROS_SETUP=\$(find /opt/ros /root -name 'setup.bash' 2>/dev/null | head -1)
+#             source \"\${ROS_SETUP}\"
+#             cd /ros2_ws
+#             colcon build --packages-select yolov8_trt_bed_detect \
+#                 --cmake-args -DCMAKE_BUILD_TYPE=Release
+#             source /ros2_ws/install/setup.bash
 
-            echo '--- Serializing engine ---'
-            ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
-                -s /weights/${WTS_FILE} /weights/${ENGINE_FILE} ${MODEL_TYPE} ${WIDTH} ${HEIGHT}
-            echo '--- Done: /weights/${ENGINE_FILE} ---'
-        "
+#             echo '--- Serializing engine ---'
+#             ros2 run yolov8_trt_bed_detect yolov8_trt_bed_detect \
+#                 -s /weights/${WTS_FILE} /weights/${ENGINE_FILE} ${MODEL_TYPE} ${WIDTH} ${HEIGHT}
+#             echo '--- Done: /weights/${ENGINE_FILE} ---'
+#         "
 
-else
-    # ── x86: make inside x86 TRT image → ./yolov8_det -s ────────────────────
-    echo "==> Step 2: Building engine via x86 TRT image ..."
-    echo "    kNumClass=${NC}"
+# else
+#     # ── x86: make inside x86 TRT image → ./yolov8_det -s ────────────────────
+#     echo "==> Step 2: Building engine via x86 TRT image ..."
+#     echo "    kNumClass=${NC}"
 
-    docker run --rm --net=host \
-        --runtime nvidia --gpus all --privileged \
-        -v "$(pwd)/yolov8/images:/workspace/yolov8/build/images:ro" \
-        -v "$(pwd)/yolov8/weights:/workspace/yolov8/build/weights" \
-        -v "$(pwd)/yolov8/weights:/output" \
-        meraquetech/race_nav:yolov8-trt-x86 \
-        bash -c "
-            set -e
-            echo '--- Patching kNumClass to ${NC} ---'
-            sed -i 's/const static int kNumClass = [0-9]\\+/const static int kNumClass = ${NC}/' \
-                /workspace/yolov8/include/config.h
-            grep 'kNumClass' /workspace/yolov8/include/config.h
+#     docker run --rm --net=host \
+#         --runtime nvidia --gpus all --privileged \
+#         -v "$(pwd)/yolov8/images:/workspace/yolov8/build/images:ro" \
+#         -v "$(pwd)/yolov8/weights:/workspace/yolov8/build/weights" \
+#         -v "$(pwd)/yolov8/weights:/output" \
+#         meraquetech/race_nav:yolov8-trt-x86 \
+#         bash -c "
+#             set -e
+#             echo '--- Patching kNumClass to ${NC} ---'
+#             sed -i 's/const static int kNumClass = [0-9]\\+/const static int kNumClass = ${NC}/' \
+#                 /workspace/yolov8/include/config.h
+#             grep 'kNumClass' /workspace/yolov8/include/config.h
 
-            echo '--- Recompiling yolov8_det ---'
-            cd /workspace/yolov8/build
-            make -j\$(nproc) yolov8_det
+#             echo '--- Recompiling yolov8_det ---'
+#             cd /workspace/yolov8/build
+#             make -j\$(nproc) yolov8_det
 
-            echo '--- Serializing engine ---'
-            ./yolov8_det -s ./weights/${WTS_FILE} ${ENGINE_FILE} ${MODEL_TYPE}
-            cp ${ENGINE_FILE} /output/
-            echo '--- Done: /output/${ENGINE_FILE} ---'
-        "
-fi
+#             echo '--- Serializing engine ---'
+#             ./yolov8_det -s ./weights/${WTS_FILE} ${ENGINE_FILE} ${MODEL_TYPE}
+#             cp ${ENGINE_FILE} /output/
+#             echo '--- Done: /output/${ENGINE_FILE} ---'
+#         "
+# fi
 
-echo ""
-echo "==> Engine ready: ./yolov8/weights/${ENGINE_FILE}"
+# echo ""
+# echo "==> Engine ready: ./yolov8/weights/${ENGINE_FILE}"

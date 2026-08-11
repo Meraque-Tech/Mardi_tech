@@ -166,13 +166,9 @@
           <button class="link" onclick="loadModels()">Refresh</button>
         </div>
         <div class="row">
-          <input id="model-file-input" type="file" accept=".pt">
-          <button id="upload-model-btn" onclick="uploadModel()">⭱ Upload .pt</button>
+          <input id="model-file-input" type="file" accept=".wts">
+          <button id="upload-model-btn" onclick="uploadModel()">⭱ Upload .wts</button>
         </div>
-        <div id="convert-status" class="sub" style="margin:8px 0"></div>
-
-        <h3 style="font-size:12px;color:var(--muted);margin:14px 0 6px">.pt files</h3>
-        <div id="pt-list" class="label-list"><span class="muted">No .pt files yet.</span></div>
 
         <h3 style="font-size:12px;color:var(--muted);margin:14px 0 6px">.wts files</h3>
         <div id="wts-list" class="label-list"><span class="muted">No .wts files yet.</span></div>
@@ -571,8 +567,8 @@
   async function uploadModel() {
     const input=document.getElementById('model-file-input');
     const file=input.files[0];
-    if(!file){toast('Choose a .pt file first.',true);return;}
-    if(!file.name.toLowerCase().endsWith('.pt')){toast('Only .pt files are accepted.',true);return;}
+    if(!file){toast('Choose a .wts file first.',true);return;}
+    if(!file.name.toLowerCase().endsWith('.wts')){toast('Only .wts files are accepted.',true);return;}
     const formData=new FormData();
     formData.append('model',file);
     const btn=document.getElementById('upload-model-btn');
@@ -592,14 +588,13 @@
     const el=document.getElementById(elId);
     const emptyLabel=(opts&&opts.emptyLabel)||'files';
     el.innerHTML=files.length
-      ?files.map(f=>`<div class="label-row"><span class="name-val">${escapeHtml(f.filename)}</span><span class="muted">${(f.size/1e6).toFixed(1)} MB</span>${opts&&opts.convertible?`<button class="link" onclick="convertModel('${escapeHtml(f.filename)}')">Convert to .wts</button>`:''}</div>`).join('')
+      ?files.map(f=>`<div class="label-row"><span class="name-val">${escapeHtml(f.filename)}</span><span class="muted">${(f.size/1e6).toFixed(1)} MB</span></div>`).join('')
       :`<span class="muted">No ${emptyLabel} yet.</span>`;
   }
 
   async function loadModels() {
     try {
       const data=await api('/api/models');
-      renderFileList('pt-list',data.pt,{convertible:true,emptyLabel:'.pt files'});
       renderFileList('wts-list',data.wts,{emptyLabel:'.wts files'});
       renderFileList('engine-list',data.engine,{emptyLabel:'.engine files'});
     } catch(error) {
@@ -607,49 +602,7 @@
     }
   }
 
-  let convertPollTimer=null;
-
-  async function convertModel(filename) {
-    const el=document.getElementById('convert-status');
-    try {
-      await api('/api/models/convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename})});
-      toast(`Converting ${filename}…`);
-      el.textContent=`Converting ${filename}…`;
-      clearInterval(convertPollTimer);
-      convertPollTimer=setInterval(pollConvertStatus,2000);
-      pollConvertStatus();
-    } catch(error) {
-      el.textContent=`Failed to start: ${error.message}`;
-      toast(error.message,true);
-    }
-  }
-
-  async function pollConvertStatus() {
-    const el=document.getElementById('convert-status');
-    let data;
-    try { data=await api('/api/models/convert/status'); }
-    catch(error) { clearInterval(convertPollTimer);convertPollTimer=null;el.textContent=`Status check failed: ${error.message}`;return; }
-    if(data.running){el.textContent=`Converting ${data.pt_filename}…`;return;}
-    clearInterval(convertPollTimer);
-    convertPollTimer=null;
-    if(data.message){
-      el.textContent='';
-      toast(data.message,data.ok===false);
-      if(data.ok)loadModels();
-    }
-  }
-
-  async function initConvertPoll() {
-    try {
-      const data=await api('/api/models/convert/status');
-      if(data.running){
-        document.getElementById('convert-status').textContent=`Converting ${data.pt_filename}…`;
-        convertPollTimer=setInterval(pollConvertStatus,2000);
-      }
-    } catch(_error) { /* no job in progress or endpoint unreachable — ignore */ }
-  }
-
-  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();initConvertPoll();
+  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();
   setInterval(()=>loadStatus().catch(()=>{}),3000);
   window.addEventListener('resize',()=>drawChart(chartItems));
 </script>
