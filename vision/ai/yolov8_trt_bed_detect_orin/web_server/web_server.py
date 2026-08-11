@@ -8,6 +8,7 @@ import json
 import math
 import os
 import platform
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -18,8 +19,6 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from typing import List, Optional
-
-import yaml
 
 import rclpy
 from rclpy.node import Node
@@ -981,15 +980,31 @@ def convert_status():
         return jsonify(dict(convert_job))
 
 
+def _set_yaml_scalar(lines, key, value):
+    # Surgical line replacement instead of yaml.safe_load/safe_dump: this
+    # file is hand-maintained with extensive comments and commented-out
+    # alternatives (see trt_prams_main.yaml) that a full YAML parse/dump
+    # round-trip would silently discard. Only the first *uncommented*
+    # "key: ..." line is replaced, preserving indentation and every comment.
+    pattern = re.compile(r'^(\s*)%s:(?!\S)' % re.escape(key))
+    for i, line in enumerate(lines):
+        match = pattern.match(line)
+        if match:
+            lines[i] = '%s%s: "%s"\n' % (match.group(1), key, value)
+            return True
+    return False
+
+
 def _update_trt_params(wts_path, engine_path):
     with open(TRT_PARAMS_FILE) as f:
-        params = yaml.safe_load(f)
+        lines = f.readlines()
     shutil.copy2(TRT_PARAMS_FILE, TRT_PARAMS_FILE + ".bak")
-    ros_params = params.setdefault("yolov8_trt", {}).setdefault("ros__parameters", {})
-    ros_params["wts_name"] = wts_path
-    ros_params["engine_name"] = engine_path
+    if not _set_yaml_scalar(lines, "wts_name", wts_path):
+        raise ValueError("wts_name key not found in %s" % TRT_PARAMS_FILE)
+    if not _set_yaml_scalar(lines, "engine_name", engine_path):
+        raise ValueError("engine_name key not found in %s" % TRT_PARAMS_FILE)
     with open(TRT_PARAMS_FILE, "w") as f:
-        yaml.safe_dump(params, f, default_flow_style=False, sort_keys=False)
+        f.writelines(lines)
 
 
 @app.route("/api/models/build_engine", methods=["POST"])
@@ -1006,7 +1021,7 @@ def build_engine():
     engine_path = f"{WEIGHTS_DIR}/{engine_filename}"
     try:
         _update_trt_params(wts_path, engine_path)
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, ValueError) as exc:
         return jsonify({"success": False, "message": "could not update trt_params.yaml: %s" % exc}), 500
     return jsonify({
         "success": True,
