@@ -31,6 +31,7 @@ from flask_sock import Sock
 
 # Configuration
 SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
+WEIGHTS_DIR = os.environ.get("WEIGHTS_DIR", "/weights")
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
@@ -50,6 +51,7 @@ if not math.isfinite(DIRECTION_STALE_TIMEOUT) or DIRECTION_STALE_TIMEOUT <= 0:
     raise ValueError("DIRECTION_STALE_TIMEOUT must be a finite number greater than zero")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
+os.makedirs(WEIGHTS_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(HISTORY_DB) or ".", exist_ok=True)
 
 
@@ -941,6 +943,40 @@ def save_frame():
             jpeg, snapshot["latitude"], snapshot["longitude"]
         )
     return jsonify({"success": True, "filename": filename})
+
+
+@app.route("/api/models/upload", methods=["POST"])
+def upload_model():
+    if "model" not in request.files:
+        return jsonify({"success": False, "message": "no file uploaded"}), 400
+    file = request.files["model"]
+    filename = Path(file.filename or "").name  # strip any path components
+    if not filename.lower().endswith(".pt"):
+        return jsonify({"success": False, "message": "only .pt files are accepted"}), 400
+    if filename in ("", ".pt"):
+        return jsonify({"success": False, "message": "invalid filename"}), 400
+    dest_path = Path(WEIGHTS_DIR) / filename
+    with storage_lock:
+        file.save(str(dest_path))
+    return jsonify({
+        "success": True,
+        "message": "model uploaded",
+        "filename": filename,
+        "size": dest_path.stat().st_size,
+    })
+
+
+@app.route("/api/models")
+def list_models():
+    files = sorted(Path(WEIGHTS_DIR).glob("*.pt"), reverse=True)
+    return jsonify([
+        {
+            "filename": item.name,
+            "size": item.stat().st_size,
+            "time": datetime.datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+        }
+        for item in files
+    ])
 
 
 @app.route("/api/images")

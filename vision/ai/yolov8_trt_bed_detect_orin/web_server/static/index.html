@@ -162,6 +162,19 @@
       </section>
       <section class="card">
         <div class="card-head">
+          <h2>Model weights (.pt)</h2>
+          <button class="link" onclick="loadModels()">Refresh</button>
+        </div>
+        <div class="row">
+          <input id="model-file-input" type="file" accept=".pt">
+          <button id="upload-model-btn" onclick="uploadModel()">⭱ Upload</button>
+        </div>
+        <div id="model-list" class="label-list" style="margin-top:10px">
+          <span class="muted">No models uploaded yet.</span>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head">
           <h2>Saved frames</h2>
           <div class="row">
             <button id="download-images-btn" class="link" onclick="downloadAllImages()" disabled>Download All Images</button>
@@ -554,7 +567,39 @@
   async function deleteImage(name) { try{await api(`/api/images/${encodeURIComponent(name)}`,{method:'DELETE'});loadImages();}catch(error){toast(error.message,true);} }
   function openImage(url) { document.getElementById('lightbox-image').src=url;document.getElementById('lightbox').classList.add('open'); }
 
-  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();
+  async function uploadModel() {
+    const input=document.getElementById('model-file-input');
+    const file=input.files[0];
+    if(!file){toast('Choose a .pt file first.',true);return;}
+    if(!file.name.toLowerCase().endsWith('.pt')){toast('Only .pt files are accepted.',true);return;}
+    const formData=new FormData();
+    formData.append('model',file);
+    const btn=document.getElementById('upload-model-btn');
+    btn.disabled=true;
+    try {
+      const data=await api('/api/models/upload',{method:'POST',body:formData});
+      toast(`Uploaded ${data.filename}`);
+      input.value='';
+      loadModels();
+    } catch(error) {
+      toast(error.message,true);
+    } finally {
+      btn.disabled=false;
+    }
+  }
+  async function loadModels() {
+    const el=document.getElementById('model-list');
+    try {
+      const models=await api('/api/models');
+      el.innerHTML=models.length
+        ?models.map(m=>`<div class="label-row"><span class="name-val">${escapeHtml(m.filename)}</span><span class="muted">${(m.size/1e6).toFixed(1)} MB</span></div>`).join('')
+        :'<span class="muted">No models uploaded yet.</span>';
+    } catch(error) {
+      el.innerHTML='<span class="muted">Could not load model list.</span>';
+    }
+  }
+
+  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();
   setInterval(()=>loadStatus().catch(()=>{}),3000);
   window.addEventListener('resize',()=>drawChart(chartItems));
 </script>

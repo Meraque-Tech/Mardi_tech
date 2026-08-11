@@ -8,7 +8,8 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
-      - ./yolov8/weights:/weights
+      # - ./yolov8/weights:/weights
+      - ${HOME}/yolov8/weights:/weights
     runtime: nvidia
     restart: "no"
     command: >
