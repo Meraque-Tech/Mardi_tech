@@ -21,8 +21,12 @@ RUN apt-get update && apt-get install -y \
 # Verify toolchain
 RUN nvcc --version
 RUN pkg-config --modversion opencv4
+# RUN find /usr/include /usr -maxdepth 4 -iname "NvInfer.h" | grep -q . \
+#     || (echo "NvInfer.h not found" && exit 1)
+
 RUN ls /usr/include/x86_64-linux-gnu/ | grep -E "NvInfer" || \
     ls /usr/include/ | grep -E "NvInfer"
+
 
 # -----------------------------
 # Add ROS 2 apt repository

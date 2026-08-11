@@ -610,21 +610,25 @@
   let convertPollTimer=null;
 
   async function convertModel(filename) {
+    const el=document.getElementById('convert-status');
     try {
       await api('/api/models/convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename})});
       toast(`Converting ${filename}…`);
-      document.getElementById('convert-status').textContent=`Converting ${filename}…`;
+      el.textContent=`Converting ${filename}…`;
       clearInterval(convertPollTimer);
       convertPollTimer=setInterval(pollConvertStatus,2000);
+      pollConvertStatus();
     } catch(error) {
+      el.textContent=`Failed to start: ${error.message}`;
       toast(error.message,true);
     }
   }
 
   async function pollConvertStatus() {
-    let data;
-    try { data=await api('/api/models/convert/status'); } catch(_error) { return; }
     const el=document.getElementById('convert-status');
+    let data;
+    try { data=await api('/api/models/convert/status'); }
+    catch(error) { clearInterval(convertPollTimer);convertPollTimer=null;el.textContent=`Status check failed: ${error.message}`;return; }
     if(data.running){el.textContent=`Converting ${data.pt_filename}…`;return;}
     clearInterval(convertPollTimer);
     convertPollTimer=null;
