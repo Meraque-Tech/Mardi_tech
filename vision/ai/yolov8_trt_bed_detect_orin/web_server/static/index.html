@@ -722,7 +722,6 @@
     try {
       const data=await api('/api/models/select_engine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename,num_class:numClass})});
       toast(data.message);
-      await deserializeModel();
     } catch(error) {
       toast(error.message,true);
     }
@@ -733,8 +732,6 @@
   let launchPollTimer=null;
 
   function applyLaunchStatusUi() {
-    const deserializeBtn=document.getElementById('deserialize-btn');
-    if(deserializeBtn)deserializeBtn.disabled=launchJobState.running;
     const logStatus=document.getElementById('launch-log-status');
     logStatus.textContent=launchJobState.running?`Running: ${launchJobState.mode}…`:(launchJobState.message||'');
   }
