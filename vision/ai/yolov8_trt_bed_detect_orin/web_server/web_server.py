@@ -896,6 +896,22 @@ def list_models():
     })
 
 
+_MODEL_KIND_DIRS = {"pt": PT_DIR, "wts": WTS_DIR, "engine": ENGINE_DIR}
+
+
+@app.route("/api/models/<kind>/<filename>/download")
+def download_model(kind, filename):
+    directory = _MODEL_KIND_DIRS.get(kind)
+    if directory is None:
+        return jsonify({"success": False, "message": "unknown file type"}), 400
+    if Path(filename).name != filename or not filename.lower().endswith("." + kind):
+        return jsonify({"success": False, "message": "invalid filename"}), 400
+    path = Path(directory) / filename
+    if not path.is_file():
+        return jsonify({"success": False, "message": "file not found"}), 404
+    return send_file(str(path), as_attachment=True, download_name=filename)
+
+
 def _run_conversion(pt_filename):
     # Mirrors engine_file_build.sh's Step 1 exactly: docker run against the
     # ultralytics image, mounting the *host* yolov8/ source dir (for
