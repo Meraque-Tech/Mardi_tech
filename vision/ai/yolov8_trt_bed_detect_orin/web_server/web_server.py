@@ -1055,6 +1055,35 @@ _LAUNCH_FILES = {
 }
 
 
+def _read_engine_path():
+    try:
+        with open(TRT_PARAMS_FILE) as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    pattern = re.compile(r'^\s*engine_name:\s*"?([^"\s]+)"?\s*$')
+    for line in lines:
+        if line.lstrip().startswith("#"):
+            continue
+        match = pattern.match(line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _stop_launch_process(timeout=10.0):
+    """Stop the running launch process, if any. Caller must hold launch_job_lock."""
+    process = launch_process
+    if process is None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=timeout)
+
+
 def _run_launch(mode):
     global launch_process
     launch_file = _LAUNCH_FILES[mode]
@@ -1073,21 +1102,27 @@ def _run_launch(mode):
 
     output, _ = process.communicate()
     ok = process.returncode == 0
-    message = "%s complete" % mode if ok else (
-        "%s failed (exit %d): %s" % (mode, process.returncode, output[-2000:] if output else "")
-    )
+    stopped = process.returncode < 0
+    if stopped:
+        message = "%s stopped" % mode
+    elif ok:
+        message = "%s complete" % mode
+    else:
+        message = "%s failed (exit %d): %s" % (mode, process.returncode, output[-2000:] if output else "")
     with launch_job_lock:
         launch_process = None
-        launch_job.update(running=False, message=message, ok=ok)
+        launch_job.update(running=False, message=message, ok=(None if stopped else ok))
 
 
 def _start_launch(mode):
     with launch_job_lock:
         if launch_job["running"]:
-            return jsonify({
-                "success": False,
-                "message": "a %s launch is already running" % launch_job["mode"],
-            }), 409
+            if launch_job["mode"] == mode:
+                return jsonify({
+                    "success": False,
+                    "message": "a %s launch is already running" % mode,
+                }), 409
+            _stop_launch_process()
         launch_job.update(running=True, mode=mode, message=None, ok=None)
     threading.Thread(target=_run_launch, args=(mode,), daemon=True).start()
     return jsonify({"success": True, "message": "%s started" % mode})
@@ -1095,6 +1130,17 @@ def _start_launch(mode):
 
 @app.route("/api/serialize/model", methods=["POST"])
 def serialize_model():
+    engine_path = _read_engine_path()
+    if engine_path and os.path.isfile(engine_path):
+        with launch_job_lock:
+            already_running = launch_job["running"] and launch_job["mode"] == "serialize"
+        if not already_running:
+            return jsonify({
+                "success": True,
+                "message": "engine already exists at %s, skipping serialize" % engine_path,
+                "engine_name": engine_path,
+                "skipped": True,
+            })
     return _start_launch("serialize")
 
 
