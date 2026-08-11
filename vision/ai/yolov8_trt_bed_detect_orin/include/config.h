@@ -3,7 +3,6 @@
 
 const static char *kInputTensorName = "images";
 const static char *kOutputTensorName = "output";
-const static int kNumClass = 80;
 // The shared YoloLayerPlugin (plugin/yololayer.*) also serves pose models in
 // its reference implementation; bed_detect never sets is_pose=true, but the
 // symbol must exist for addYoLoLayer()/block.cpp to compile against it.
@@ -16,6 +15,7 @@ const static int kGpuId = 0;
 // CLI mode overrides these before building the engine. See main_fun.cpp.
 extern int kInputH;
 extern int kInputW;
+extern int kNumClass;
 const static float kNmsThresh = 0.45f;
 const static float kConfThresh = 0.5f;
 const static int kMaxInputImageSize = 3000 * 3000;

@@ -1000,22 +1000,23 @@ def convert_status():
         return jsonify(dict(convert_job))
 
 
-def _set_yaml_scalar(lines, key, value):
+def _set_yaml_scalar(lines, key, value, quote=True):
     # Surgical line replacement instead of yaml.safe_load/safe_dump: this
     # file is hand-maintained with extensive comments and commented-out
     # alternatives (see trt_prams_main.yaml) that a full YAML parse/dump
     # round-trip would silently discard. Only the first *uncommented*
     # "key: ..." line is replaced, preserving indentation and every comment.
     pattern = re.compile(r'^(\s*)%s:(?!\S)' % re.escape(key))
+    formatted = '"%s"' % value if quote else str(value)
     for i, line in enumerate(lines):
         match = pattern.match(line)
         if match:
-            lines[i] = '%s%s: "%s"\n' % (match.group(1), key, value)
+            lines[i] = '%s%s: %s\n' % (match.group(1), key, formatted)
             return True
     return False
 
 
-def _update_trt_params(wts_path, engine_path):
+def _update_trt_params(wts_path, engine_path, num_class):
     with open(TRT_PARAMS_FILE) as f:
         lines = f.readlines()
     shutil.copy2(TRT_PARAMS_FILE, TRT_PARAMS_FILE + ".bak")
@@ -1023,6 +1024,8 @@ def _update_trt_params(wts_path, engine_path):
         raise ValueError("wts_name key not found in %s" % TRT_PARAMS_FILE)
     if not _set_yaml_scalar(lines, "engine_name", engine_path):
         raise ValueError("engine_name key not found in %s" % TRT_PARAMS_FILE)
+    if not _set_yaml_scalar(lines, "num_class", num_class, quote=False):
+        raise ValueError("num_class key not found in %s" % TRT_PARAMS_FILE)
     with open(TRT_PARAMS_FILE, "w") as f:
         f.writelines(lines)
 
@@ -1035,12 +1038,18 @@ def build_engine():
         return jsonify({"success": False, "message": "filename must be a .wts file"}), 400
     if not (Path(WEIGHTS_DIR) / wts_filename).is_file():
         return jsonify({"success": False, "message": "file not found"}), 404
+    try:
+        num_class = int(data.get("num_class"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "num_class must be a positive integer"}), 400
+    if num_class <= 0:
+        return jsonify({"success": False, "message": "num_class must be a positive integer"}), 400
     stem = Path(wts_filename).stem
     engine_filename = f"{stem}_{SYSTEM_TYPE}.engine"
     wts_path = f"{WEIGHTS_DIR}/{wts_filename}"
     engine_path = f"{WEIGHTS_DIR}/{engine_filename}"
     try:
-        _update_trt_params(wts_path, engine_path)
+        _update_trt_params(wts_path, engine_path, num_class)
     except (OSError, ValueError) as exc:
         return jsonify({"success": False, "message": "could not update trt_params.yaml: %s" % exc}), 500
     return jsonify({
@@ -1049,6 +1058,7 @@ def build_engine():
         "engine_filename": engine_filename,
         "wts_name": wts_path,
         "engine_name": engine_path,
+        "num_class": num_class,
     })
 
 

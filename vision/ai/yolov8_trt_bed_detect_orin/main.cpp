@@ -27,6 +27,7 @@ struct TrtParams {
     std::string model_type;
     int         input_h;
     int         input_w;
+    int         num_class;
     std::string precision;
     std::string cuda_post_process;
     float       conf_thresh;
@@ -46,6 +47,7 @@ TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
     p.model_type        = n->declare_parameter<std::string>("model_type",        "n");
     p.input_h           = n->declare_parameter<int>        ("input_h",           416);
     p.input_w           = n->declare_parameter<int>        ("input_w",           416);
+    p.num_class         = n->declare_parameter<int>        ("num_class",         80);
     p.precision         = n->declare_parameter<std::string>("precision",         "fp16");
     p.cuda_post_process = n->declare_parameter<std::string>("cuda_post_process", "g");
     p.conf_thresh       = n->declare_parameter<double>     ("conf_thresh",       0.5);
@@ -206,7 +208,7 @@ int main(int argc, char *argv[]) {
     TrtParams p = declare_and_get_params(node);
 
     // Serialize mode: launch with a bare -s flag (see serialize_engine.launch.py).
-    // All inputs -- wts_name, engine_name, model_type, input_h, input_w --
+    // All inputs -- wts_name, engine_name, model_type, input_h, input_w, num_class --
     // come from ROS params (trt_params.yaml), not positional CLI argv.
     bool serialize_mode = false;
     for (int i = 1; i < argc; ++i) {
@@ -215,8 +217,9 @@ int main(int argc, char *argv[]) {
     if (serialize_mode) {
         kInputH = p.input_h;
         kInputW = p.input_w;
-        RCLCPP_INFO(node->get_logger(), "serializing engine: %s -> %s  type: %s  res: %dx%d",
-            p.wts_name.c_str(), p.engine_name.c_str(), p.model_type.c_str(), kInputW, kInputH);
+        kNumClass = p.num_class;
+        RCLCPP_INFO(node->get_logger(), "serializing engine: %s -> %s  type: %s  res: %dx%d  classes: %d",
+            p.wts_name.c_str(), p.engine_name.c_str(), p.model_type.c_str(), kInputW, kInputH, kNumClass);
         serialize_engine(p.wts_name, p.engine_name, p.model_type);
         node.reset();
         rclcpp::shutdown();

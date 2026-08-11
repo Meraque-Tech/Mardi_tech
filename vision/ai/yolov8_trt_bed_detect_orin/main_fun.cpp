@@ -17,6 +17,7 @@ const int kOutputSize = kMaxNumOutputBbox * sizeof(Detection) / sizeof(float) + 
 
 int kInputH = 512;
 int kInputW = 512;
+int kNumClass = 80;
 
 void serialize_engine(std::string &wts_name, std::string &engine_name, std::string &sub_type) {
     IBuilder *builder = createInferBuilder(gLogger);

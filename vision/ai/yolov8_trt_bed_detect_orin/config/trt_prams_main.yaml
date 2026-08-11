@@ -16,6 +16,7 @@ yolov8_trt:
     # path and build resolution.
     wts_name: "/weights/yolov8n.wts"
     model_type: "n"
+    num_class: 80         # number of classes the .wts was trained on; must match the model
 
     # ── Input resolution (must match engine build) ───────────────────────────
     # 640 → 416 saves ~34% compute | 320 saves ~61%

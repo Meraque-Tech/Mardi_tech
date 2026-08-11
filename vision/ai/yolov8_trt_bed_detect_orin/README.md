@@ -283,9 +283,9 @@ The dashboard is self-contained and does not require internet access or CDN scri
 
 ### Serialize / deserialize from the dashboard
 
-- **Convert to .engine** (in the *Model weights* card, next to a `.wts` file) updates `trt_params.yaml` and then calls `POST /api/serialize/model`, which runs `serialize_engine.launch.py` in the background.
-- **Start detection** calls `POST /api/deserialize/model` (running `bed_detect.launch.py`) before calling `POST /api/start`, so the detection node is (re)launched with the current engine before the start service is triggered.
-- **Start detection is disabled** in the UI while a serialize launch is in progress, and `POST /api/start` itself returns `409` if called during serialization — the engine file isn't safe to load until serialization finishes.
+- **Convert to .engine** (in the *Model weights* card, next to a `.wts` file) requires a **# classes** value entered in the field beside the button — the number of classes that `.wts` was trained on. The button updates `trt_params.yaml` (`wts_name`, `engine_name`, and `num_class`) and then calls `POST /api/serialize/model`, which runs `serialize_engine.launch.py` in the background. The number of classes is not guessed or defaulted; the request is rejected client-side and server-side (`400`) if it's missing or not a positive integer, since serializing with the wrong class count silently produces a broken engine.
+- **Deserialize model** (in the *Controls* card) calls `POST /api/deserialize/model`, which runs `bed_detect.launch.py` in the background to (re)load the current `.engine` and start the detection node.
+- **Start detection** / **Stop detection** call `POST /api/start` / `POST /api/stop` directly (the ROS `Trigger` services) — unchanged, and independent of the serialize/deserialize launch jobs.
 - Live `ros2 launch` output for the current or most recent serialize/deserialize job streams into the **Serialize / detect log** panel underneath the model file lists, polled from `GET /api/models/launch/log`.
 
 ### REST API reference
@@ -296,7 +296,7 @@ Base URL: `http://<host-ip>:8090`
 |---|---|---|---|---|
 | `GET` | `/api/status` | None | Live state object plus `mjpeg_port` | Read detection, object-result, confidence, counts, and tracking state |
 | `GET` | `/api/counts` | None | `{"0":2,"1":1}` | Read the latest live per-class count |
-| `POST` | `/api/start` | None | `{"success":true,"message":"bed detection started"}` | Start inference through ROS. Returns `409` if a serialize launch is in progress |
+| `POST` | `/api/start` | None | `{"success":true,"message":"bed detection started"}` | Start inference through ROS |
 | `POST` | `/api/stop` | None | `{"success":true,"message":"bed detection stopped"}` | Stop inference through ROS |
 | `POST` | `/api/set_track` | JSON: `{"enabled":true}` | `{"success":true,"message":"...","is_track":true}` | Select unique-object or per-frame counting |
 | `POST` | `/api/reset_tracker` | None | `{"success":true,"message":"tracker reset requested"}` | Clear cumulative unique-object counts |
@@ -308,7 +308,8 @@ Base URL: `http://<host-ip>:8090`
 | `DELETE` | `/api/images/{filename}` | Filename in URL | `{"success":true}` | Delete one saved JPEG frame |
 | `DELETE` | `/api/data` | None | Numbers of deleted records and images | Disable auto-save and permanently clear all count history and JPEG frames |
 | `GET` | `/saved/{filename}` | Filename in URL | JPEG bytes | Display or download a saved frame |
-| `POST` | `/api/serialize/model` | None | `{"success":true,"message":"serialize started"}` | Launch `serialize_engine.launch.py` in the background to build the `.engine` from the configured `.wts`. Stops a running deserialize first. Skipped (`"skipped":true`) if the configured `.engine` file already exists |
+| `POST` | `/api/models/build_engine` | JSON: `{"filename":"model.wts","num_class":80}` | `{"success":true,"message":"...","engine_filename":"...","num_class":80}` | Write `wts_name`, `engine_name`, and `num_class` into `trt_params.yaml` for the next serialize. `num_class` is required — `400` if missing or not a positive integer |
+| `POST` | `/api/serialize/model` | None | `{"success":true,"message":"serialize started"}` | Launch `serialize_engine.launch.py` in the background to build the `.engine` from the configured `.wts` (and `num_class`). Stops a running deserialize first. Skipped (`"skipped":true`) if the configured `.engine` file already exists |
 | `POST` | `/api/deserialize/model` | None | `{"success":true,"message":"deserialize started"}` | Launch `bed_detect.launch.py` in the background to load the `.engine` and run detection. Stops a running serialize first |
 | `GET` | `/api/models/launch/status` | None | `{"running":bool,"mode":"serialize"\|"deserialize"\|null,"message":str\|null,"ok":bool\|null}` | Poll the status of the most recent serialize/deserialize launch. `ok` is `null` while running or if the launch was stopped by the other mode |
 | `GET` | `/api/models/launch/log` | None | `{"lines":["...","..."]}` | Tail of the most recent serialize/deserialize `ros2 launch` output (last 500 lines, oldest first) |
@@ -408,6 +409,11 @@ curl -X POST http://<host-ip>:8090/api/set_track \
 
 # list saved frames
 curl http://<host-ip>:8090/api/images
+
+# point trt_params.yaml at a .wts and its class count before serializing
+curl -X POST http://<host-ip>:8090/api/models/build_engine \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "yolov8n.wts", "num_class": 80}'
 
 # serialize the .wts into a TensorRT .engine (runs serialize_engine.launch.py)
 curl -X POST http://<host-ip>:8090/api/serialize/model
