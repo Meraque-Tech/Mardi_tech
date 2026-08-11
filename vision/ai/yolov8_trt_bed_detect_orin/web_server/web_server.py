@@ -49,6 +49,13 @@ TRT_PARAMS_FILE = os.environ.get(
     "TRT_PARAMS_FILE",
     "/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config/trt_params.yaml",
 )
+# Same host-path requirement as HOST_WEIGHTS_DIR/HOST_YOLOV8_DIR: `docker
+# compose -f ...` below talks to the host daemon via the mounted docker.sock,
+# so it needs the compose file's *host* path, and the one-shot serialize
+# service name differs per target (see docker-compose.yolov8-trt-bed-detect-
+# orin-nano.yml / -x86.ros2.jazzy.yml).
+HOST_COMPOSE_FILE = os.environ.get("HOST_COMPOSE_FILE")
+SERIALIZE_SERVICE_NAME = os.environ.get("SERIALIZE_SERVICE_NAME")
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
@@ -99,6 +106,12 @@ ws_lock = threading.Lock()
 
 convert_job = {"running": False, "pt_filename": None, "message": None, "ok": None}
 convert_job_lock = threading.Lock()
+
+engine_build_job = {
+    "running": False, "wts_filename": None, "engine_filename": None,
+    "message": None, "ok": None,
+}
+engine_build_job_lock = threading.Lock()
 
 
 # Persistent count history
