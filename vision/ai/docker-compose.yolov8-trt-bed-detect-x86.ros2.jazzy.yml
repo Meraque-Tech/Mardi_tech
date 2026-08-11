@@ -16,7 +16,7 @@ services:
     runtime: nvidia
     restart: "no"
     command: >
-      bash -c "source /opt/ros/humble/setup.bash &&
+      bash -c "source /opt/ros/jazzy/setup.bash &&
                source /ros2_ws/install/setup.bash &&
                ros2 launch yolov8_trt_bed_detect_orin serialize_engine.launch.py"
 
