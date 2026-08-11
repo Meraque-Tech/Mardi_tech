@@ -8,6 +8,7 @@ import json
 import math
 import os
 import platform
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -17,6 +18,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from typing import List, Optional
+
+import yaml
 
 import rclpy
 from rclpy.node import Node
@@ -42,6 +45,11 @@ HOST_YOLOV8_DIR = os.environ.get("HOST_YOLOV8_DIR")
 # build) -- docker run rejects it with a platform-mismatch error on Jetson.
 # Gate the .pt -> .wts conversion feature to x86 hosts only.
 CONVERSION_SUPPORTED = platform.machine() in ("x86_64", "AMD64")
+SYSTEM_TYPE = platform.machine() or "unknown"
+TRT_PARAMS_FILE = os.environ.get(
+    "TRT_PARAMS_FILE",
+    "/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config/trt_params.yaml",
+)
 MJPEG_PORT = int(os.environ.get("MJPEG_PORT", "8080"))
 API_PORT = int(os.environ.get("API_PORT", "8090"))
 HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.db"))
@@ -971,6 +979,42 @@ def convert_model():
 def convert_status():
     with convert_job_lock:
         return jsonify(dict(convert_job))
+
+
+def _update_trt_params(wts_path, engine_path):
+    with open(TRT_PARAMS_FILE) as f:
+        params = yaml.safe_load(f)
+    shutil.copy2(TRT_PARAMS_FILE, TRT_PARAMS_FILE + ".bak")
+    ros_params = params.setdefault("yolov8_trt", {}).setdefault("ros__parameters", {})
+    ros_params["wts_name"] = wts_path
+    ros_params["engine_name"] = engine_path
+    with open(TRT_PARAMS_FILE, "w") as f:
+        yaml.safe_dump(params, f, default_flow_style=False, sort_keys=False)
+
+
+@app.route("/api/models/build_engine", methods=["POST"])
+def build_engine():
+    data = request.get_json(silent=True) or {}
+    wts_filename = Path(data.get("filename", "")).name
+    if not wts_filename.lower().endswith(".wts"):
+        return jsonify({"success": False, "message": "filename must be a .wts file"}), 400
+    if not (Path(WEIGHTS_DIR) / wts_filename).is_file():
+        return jsonify({"success": False, "message": "file not found"}), 404
+    stem = Path(wts_filename).stem
+    engine_filename = f"{stem}_{SYSTEM_TYPE}.engine"
+    wts_path = f"{WEIGHTS_DIR}/{wts_filename}"
+    engine_path = f"{WEIGHTS_DIR}/{engine_filename}"
+    try:
+        _update_trt_params(wts_path, engine_path)
+    except (OSError, yaml.YAMLError) as exc:
+        return jsonify({"success": False, "message": "could not update trt_params.yaml: %s" % exc}), 500
+    return jsonify({
+        "success": True,
+        "message": "trt_params.yaml updated — restart the detection service to build %s" % engine_filename,
+        "engine_filename": engine_filename,
+        "wts_name": wts_path,
+        "engine_name": engine_path,
+    })
 
 
 @app.route("/api/images")

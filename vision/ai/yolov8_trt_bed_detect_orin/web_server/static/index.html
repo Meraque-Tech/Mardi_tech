@@ -179,6 +179,7 @@
         <div id="pt-list" class="label-list"><span class="muted">No .pt files yet.</span></div>
 
         <h3 style="font-size:12px;color:var(--muted);margin:14px 0 6px">.wts files</h3>
+        <div id="engine-build-status" class="sub" style="margin:0 0 6px"></div>
         <div id="wts-list" class="label-list"><span class="muted">No .wts files yet.</span></div>
 
         <h3 style="font-size:12px;color:var(--muted);margin:14px 0 6px">.engine files</h3>
@@ -600,8 +601,9 @@
     const emptyLabel=(opts&&opts.emptyLabel)||'files';
     const kind=opts&&opts.kind;
     const showConvert=opts&&opts.convertible&&opts.conversionSupported;
+    const showBuildEngine=opts&&opts.buildEngine;
     el.innerHTML=files.length
-      ?files.map(f=>`<div class="label-row"><span class="name-val">${escapeHtml(f.filename)}</span><span class="muted">${(f.size/1e6).toFixed(1)} MB</span>${showConvert?`<button class="link" onclick="convertModel('${escapeHtml(f.filename)}')">Convert to .wts</button>`:''}<a class="link" href="/api/models/${kind}/${encodeURIComponent(f.filename)}/download" download>Download</a></div>`).join('')
+      ?files.map(f=>`<div class="label-row"><span class="name-val">${escapeHtml(f.filename)}</span><span class="muted">${(f.size/1e6).toFixed(1)} MB</span>${showConvert?`<button class="link" onclick="convertModel('${escapeHtml(f.filename)}')">Convert to .wts</button>`:''}${showBuildEngine?`<button class="link" onclick="buildEngine('${escapeHtml(f.filename)}')">Convert to .engine</button>`:''}<a class="link" href="/api/models/${kind}/${encodeURIComponent(f.filename)}/download" download>Download</a></div>`).join('')
       :`<span class="muted">No ${emptyLabel} yet.</span>`;
   }
 
@@ -609,7 +611,7 @@
     try {
       const data=await api('/api/models');
       renderFileList('pt-list',data.pt,{kind:'pt',convertible:true,conversionSupported:data.conversion_supported,emptyLabel:'.pt files'});
-      renderFileList('wts-list',data.wts,{kind:'wts',emptyLabel:'.wts files'});
+      renderFileList('wts-list',data.wts,{kind:'wts',buildEngine:true,emptyLabel:'.wts files'});
       renderFileList('engine-list',data.engine,{kind:'engine',emptyLabel:'.engine files'});
       const convertNote=document.getElementById('convert-status');
       if(!data.conversion_supported&&!convertNote.textContent){
@@ -660,6 +662,18 @@
         convertPollTimer=setInterval(pollConvertStatus,2000);
       }
     } catch(_error) { /* no job in progress or endpoint unreachable — ignore */ }
+  }
+
+  async function buildEngine(filename) {
+    const el=document.getElementById('engine-build-status');
+    try {
+      const data=await api('/api/models/build_engine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename})});
+      el.textContent=data.message;
+      toast(data.message);
+    } catch(error) {
+      el.textContent=`Failed: ${error.message}`;
+      toast(error.message,true);
+    }
   }
 
   loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();initConvertPoll();
