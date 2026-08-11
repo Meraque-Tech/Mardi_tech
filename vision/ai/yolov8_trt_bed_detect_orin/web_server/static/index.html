@@ -619,8 +619,14 @@
     const showConvert=opts&&opts.convertible&&opts.conversionSupported;
     const showBuildEngine=opts&&opts.buildEngine;
     el.innerHTML=files.length
-      ?files.map(f=>`<div class="label-row"><span class="name-val">${escapeHtml(f.filename)}</span><span class="muted">${(f.size/1e6).toFixed(1)} MB</span>${showConvert?`<button class="link" onclick="convertModel('${escapeHtml(f.filename)}')">Convert to .wts</button>`:''}${showBuildEngine?`<input id="${numClassInputId(f.filename)}" type="number" min="1" placeholder="# classes" title="Number of classes this .wts was trained on" style="width:88px;background:#1b202c;border:1px solid var(--line);border-radius:7px;padding:5px 8px;color:var(--text)"><button class="link" onclick="buildEngine('${escapeHtml(f.filename)}')">Convert to .engine</button>`:''}<a class="link" href="/api/models/${kind}/${encodeURIComponent(f.filename)}/download" download>Download</a></div>`).join('')
+      ?files.map(f=>`<div class="label-row"><span class="name-val">${escapeHtml(f.filename)}</span><span class="muted">${(f.size/1e6).toFixed(1)} MB</span>${showConvert?`<button class="link" onclick="convertModel('${escapeHtml(f.filename)}')">Convert to .wts</button>`:''}${showBuildEngine?`<input id="${numClassInputId(f.filename)}" type="number" min="1" placeholder="# classes" title="Number of classes this .wts was trained on" style="width:88px;background:#1b202c;border:1px solid var(--line);border-radius:7px;padding:5px 8px;color:var(--text)"><button class="link" onclick="buildEngine('${escapeHtml(f.filename)}')">Convert to .engine</button>`:''}<a class="link" href="/api/models/${kind}/${encodeURIComponent(f.filename)}/download" download>Download</a><button class="link" style="color:#ff8f8f" onclick="deleteModel('${kind}','${escapeHtml(f.filename)}')">Delete</button></div>`).join('')
       :`<span class="muted">No ${emptyLabel} yet.</span>`;
+  }
+
+  async function deleteModel(kind,filename) {
+    if(!window.confirm(`Delete ${filename}? This cannot be undone.`))return;
+    try { await api(`/api/models/${kind}/${encodeURIComponent(filename)}`,{method:'DELETE'});toast(`Deleted ${filename}`);loadModels(); }
+    catch(error){toast(error.message,true);}
   }
 
   async function loadModels() {

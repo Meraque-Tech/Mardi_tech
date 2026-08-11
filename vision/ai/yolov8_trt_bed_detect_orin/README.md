@@ -309,6 +309,7 @@ Base URL: `http://<host-ip>:8090`
 | `DELETE` | `/api/data` | None | Numbers of deleted records and images | Disable auto-save and permanently clear all count history and JPEG frames |
 | `GET` | `/saved/{filename}` | Filename in URL | JPEG bytes | Display or download a saved frame |
 | `POST` | `/api/models/build_engine` | JSON: `{"filename":"model.wts","num_class":80}` | `{"success":true,"message":"...","engine_filename":"...","num_class":80}` | Write `wts_name`, `engine_name`, and `num_class` into `trt_params.yaml` for the next serialize. `num_class` is required — `400` if missing or not a positive integer |
+| `DELETE` | `/api/models/{kind}/{filename}` | `kind` (`pt`\|`wts`\|`engine`) and filename in URL | `{"success":true}` | Permanently delete one `.pt`, `.wts`, or `.engine` file from the weights directory |
 | `POST` | `/api/serialize/model` | None | `{"success":true,"message":"serialize started"}` | Launch `serialize_engine.launch.py` in the background to build the `.engine` from the configured `.wts` (and `num_class`). Stops a running deserialize first. Skipped (`"skipped":true`) if the configured `.engine` file already exists |
 | `POST` | `/api/deserialize/model` | None | `{"success":true,"message":"deserialize started"}` | Launch `bed_detect.launch.py` in the background to load the `.engine` and run detection. Stops a running serialize first |
 | `GET` | `/api/models/launch/status` | None | `{"running":bool,"mode":"serialize"\|"deserialize"\|null,"message":str\|null,"ok":bool\|null}` | Poll the status of the most recent serialize/deserialize launch. `ok` is `null` while running or if the launch was stopped by the other mode |
@@ -426,6 +427,9 @@ curl http://<host-ip>:8090/api/models/launch/status
 
 # tail the ros2 launch output for the current/last serialize or deserialize job
 curl http://<host-ip>:8090/api/models/launch/log
+
+# permanently delete a weights file (.pt, .wts, or .engine)
+curl -X DELETE http://<host-ip>:8090/api/models/wts/yolov8n.wts
 ```
 
 ---

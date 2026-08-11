@@ -934,6 +934,20 @@ def download_model(kind, filename):
     return send_file(str(path), as_attachment=True, download_name=filename)
 
 
+@app.route("/api/models/<kind>/<filename>", methods=["DELETE"])
+def delete_model(kind, filename):
+    if kind not in _MODEL_KIND_EXTENSIONS:
+        return jsonify({"success": False, "message": "unknown file type"}), 400
+    if Path(filename).name != filename or not filename.lower().endswith("." + kind):
+        return jsonify({"success": False, "message": "invalid filename"}), 400
+    path = Path(WEIGHTS_DIR) / filename
+    with storage_lock:
+        if not path.is_file():
+            return jsonify({"success": False, "message": "file not found"}), 404
+        path.unlink()
+    return jsonify({"success": True})
+
+
 def _run_conversion(pt_filename):
     # Mirrors engine_file_build.sh's Step 1 exactly: docker run against the
     # ultralytics image, mounting the *host* yolov8/ source dir (for
