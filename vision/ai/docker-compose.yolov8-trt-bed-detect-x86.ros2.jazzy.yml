@@ -55,8 +55,9 @@ services:
     command: >
       bash -c "source /opt/ros/jazzy/setup.bash &&
                source /ros2_ws/install/setup.bash &&
-               ros2 launch yolov8_trt_bed_detect_orin yolov8_trt.launch.py mode:=inference"
+               ros2 launch yolov8_trt_bed_detect_orin yolov8_web.launch.py"
 
+# ros2 launch yolov8_trt_bed_detect_orin yolov8_trt.launch.py mode:=inference
 # Usage:
 #   mkdir -p saved_frames
 #   docker compose -f docker-compose.yolov8-trt-bed-detect-x86.ros2.jazzy.yml build
