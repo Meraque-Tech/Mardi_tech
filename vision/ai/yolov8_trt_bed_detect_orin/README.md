@@ -281,6 +281,13 @@ Live counts update continuously in the dashboard. They are persisted when `POST 
 
 The dashboard is self-contained and does not require internet access or CDN scripts.
 
+### Serialize / deserialize from the dashboard
+
+- **Convert to .engine** (in the *Model weights* card, next to a `.wts` file) updates `trt_params.yaml` and then calls `POST /api/serialize/model`, which runs `serialize_engine.launch.py` in the background.
+- **Start detection** calls `POST /api/deserialize/model` (running `bed_detect.launch.py`) before calling `POST /api/start`, so the detection node is (re)launched with the current engine before the start service is triggered.
+- **Start detection is disabled** in the UI while a serialize launch is in progress, and `POST /api/start` itself returns `409` if called during serialization — the engine file isn't safe to load until serialization finishes.
+- Live `ros2 launch` output for the current or most recent serialize/deserialize job streams into the **Serialize / detect log** panel underneath the model file lists, polled from `GET /api/models/launch/log`.
+
 ### REST API reference
 
 Base URL: `http://<host-ip>:8090`
@@ -289,7 +296,7 @@ Base URL: `http://<host-ip>:8090`
 |---|---|---|---|---|
 | `GET` | `/api/status` | None | Live state object plus `mjpeg_port` | Read detection, object-result, confidence, counts, and tracking state |
 | `GET` | `/api/counts` | None | `{"0":2,"1":1}` | Read the latest live per-class count |
-| `POST` | `/api/start` | None | `{"success":true,"message":"bed detection started"}` | Start inference through ROS |
+| `POST` | `/api/start` | None | `{"success":true,"message":"bed detection started"}` | Start inference through ROS. Returns `409` if a serialize launch is in progress |
 | `POST` | `/api/stop` | None | `{"success":true,"message":"bed detection stopped"}` | Stop inference through ROS |
 | `POST` | `/api/set_track` | JSON: `{"enabled":true}` | `{"success":true,"message":"...","is_track":true}` | Select unique-object or per-frame counting |
 | `POST` | `/api/reset_tracker` | None | `{"success":true,"message":"tracker reset requested"}` | Clear cumulative unique-object counts |
@@ -304,6 +311,7 @@ Base URL: `http://<host-ip>:8090`
 | `POST` | `/api/serialize/model` | None | `{"success":true,"message":"serialize started"}` | Launch `serialize_engine.launch.py` in the background to build the `.engine` from the configured `.wts`. Stops a running deserialize first. Skipped (`"skipped":true`) if the configured `.engine` file already exists |
 | `POST` | `/api/deserialize/model` | None | `{"success":true,"message":"deserialize started"}` | Launch `bed_detect.launch.py` in the background to load the `.engine` and run detection. Stops a running serialize first |
 | `GET` | `/api/models/launch/status` | None | `{"running":bool,"mode":"serialize"\|"deserialize"\|null,"message":str\|null,"ok":bool\|null}` | Poll the status of the most recent serialize/deserialize launch. `ok` is `null` while running or if the launch was stopped by the other mode |
+| `GET` | `/api/models/launch/log` | None | `{"lines":["...","..."]}` | Tail of the most recent serialize/deserialize `ros2 launch` output (last 500 lines, oldest first) |
 
 #### Live state object
 
@@ -409,6 +417,9 @@ curl -X POST http://<host-ip>:8090/api/deserialize/model
 
 # poll the serialize/deserialize launch status
 curl http://<host-ip>:8090/api/models/launch/status
+
+# tail the ros2 launch output for the current/last serialize or deserialize job
+curl http://<host-ip>:8090/api/models/launch/log
 ```
 
 ---

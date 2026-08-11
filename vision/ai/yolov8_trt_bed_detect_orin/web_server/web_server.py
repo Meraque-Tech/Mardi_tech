@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """YOLOv8 TRT bed detection dashboard, REST API, and ROS 2 bridge."""
 
+import collections
 import csv
 import datetime
 import io
@@ -116,6 +117,8 @@ engine_build_job_lock = threading.Lock()
 launch_job = {"running": False, "mode": None, "message": None, "ok": None}
 launch_job_lock = threading.Lock()
 launch_process = None
+launch_log = collections.deque(maxlen=500)
+launch_log_lock = threading.Lock()
 
 
 # Persistent count history
@@ -1084,15 +1087,24 @@ def _stop_launch_process(timeout=10.0):
         process.wait(timeout=timeout)
 
 
+def _log_line(line):
+    with launch_log_lock:
+        launch_log.append(line.rstrip("\n"))
+
+
 def _run_launch(mode):
     global launch_process
     launch_file = _LAUNCH_FILES[mode]
+    with launch_log_lock:
+        launch_log.clear()
+    _log_line("$ ros2 launch yolov8_trt_bed_detect_orin %s" % launch_file)
     try:
         process = subprocess.Popen(
             ["ros2", "launch", "yolov8_trt_bed_detect_orin", launch_file],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
         )
     except OSError as exc:
+        _log_line("could not start ros2 launch: %s" % exc)
         with launch_job_lock:
             launch_job.update(running=False, message="could not start ros2 launch: %s" % exc, ok=False)
         return
@@ -1100,7 +1112,10 @@ def _run_launch(mode):
     with launch_job_lock:
         launch_process = process
 
-    output, _ = process.communicate()
+    for line in process.stdout:
+        _log_line(line)
+    process.wait()
+
     ok = process.returncode == 0
     stopped = process.returncode < 0
     if stopped:
@@ -1108,7 +1123,8 @@ def _run_launch(mode):
     elif ok:
         message = "%s complete" % mode
     else:
-        message = "%s failed (exit %d): %s" % (mode, process.returncode, output[-2000:] if output else "")
+        message = "%s failed (exit %d) — see log" % (mode, process.returncode)
+    _log_line(message)
     with launch_job_lock:
         launch_process = None
         launch_job.update(running=False, message=message, ok=(None if stopped else ok))
@@ -1153,6 +1169,12 @@ def deserialize_model():
 def launch_status():
     with launch_job_lock:
         return jsonify(dict(launch_job))
+
+
+@app.route("/api/models/launch/log")
+def launch_log_route():
+    with launch_log_lock:
+        return jsonify({"lines": list(launch_log)})
 
 
 @app.route("/api/images")
