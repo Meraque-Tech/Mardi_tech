@@ -1,11 +1,24 @@
 #!/bin/bash
-# xhost +local:
-# xhost +local:
-# docker rm -f $(docker ps -aq)
-# docker compose down
-# docker compose -f docker-compose.rviz2.yaml down
 
-# sudo chown -R $USER:$USER ${HOME}/ZED_BAG
-# sudo chown -R $USER:$USER ${HOME}/yolo_models
-docker compose down
-# docker compose -f docker-compose.prime.yaml down
+ARCH=$(uname -m)
+
+case "$ARCH" in
+  x86_64)
+    docker compose down imu_gnss_raw yolov8-trt-bed-detect-x86-jazzy
+    
+    ;;
+  aarch64)
+    docker compose down imu_gnss_raw yolov8-trt-bed-detect-orin
+    
+    ;;
+  *)
+    echo "Unsupported architecture: $ARCH"
+    exit 1
+    ;;
+esac
+
+
+# ros2 daemon stop
+# ros2 daemon start
+# ros2 node list
+# docker compose config --quiet
