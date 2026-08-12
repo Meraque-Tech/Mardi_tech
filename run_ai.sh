@@ -7,7 +7,7 @@ case "$ARCH" in
     docker compose up -d yolov8-trt-bed-detect-x86-jazzy
     ;;
   aarch64)
-    docker compose up -d bwt901ble_imu yolov8-trt-bed-detect-orin
+    docker compose up -d imu_gnss_raw yolov8-trt-bed-detect-orin
     ;;
   *)
     echo "Unsupported architecture: $ARCH"
