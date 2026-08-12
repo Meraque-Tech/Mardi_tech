@@ -63,6 +63,7 @@ services:
     pid: host
     privileged: true
     runtime: nvidia
+    restart: always
     # depends_on:
     #   yolov8-trt-serialize-orin-nano:
     #     condition: service_completed_successfully
@@ -103,6 +104,7 @@ services:
     privileged: true
     # privileged: false
     runtime: nvidia
+    restart: always
     # depends_on:
     #   yolov8-trt-serialize-x86-jazzy:
     #     condition: service_completed_successfully
