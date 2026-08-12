@@ -7,8 +7,14 @@ case "$ARCH" in
     ./kill_server.sh
     docker compose build yolov8-trt-bed-detect-x86-jazzy
     docker compose up -d yolov8-trt-bed-detect-x86-jazzy
+    docker compose logs -f yolov8-trt-bed-detect-x86-jazzy
+
+    docker compose build imu_gnss_raw
     docker compose up -d imu_gnss_raw
     docker compose logs -f imu_gnss_raw
+
+    # docker compose up -d yolov8-trt-bed-detect-x86-jazzy imu_gnss_raw
+
     ;;
   aarch64)
     docker compose up -d imu_gnss_raw yolov8-trt-bed-detect-orin
@@ -19,3 +25,9 @@ case "$ARCH" in
     exit 1
     ;;
 esac
+
+
+# ros2 daemon stop
+# ros2 daemon start
+# ros2 node list
+# docker compose config --quiet

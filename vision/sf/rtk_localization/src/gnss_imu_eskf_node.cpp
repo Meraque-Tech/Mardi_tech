@@ -65,6 +65,9 @@ GnssImuEskfNode::GnssImuEskfNode()
     "/gnss/pvt", rclcpp::SystemDefaultsQoS(),
     std::bind(&GnssImuEskfNode::pvtCallback, this, std::placeholders::_1));
 
+  fix_pub_ = create_publisher<sensor_msgs::msg::NavSatFix>(
+    "/receiver/fix", rclcpp::SystemDefaultsQoS());
+
   rtk_status_sub_ = create_subscription<std_msgs::msg::Bool>(
     "/gnss/rtk_status", rclcpp::SystemDefaultsQoS(),
     [this](const std_msgs::msg::Bool::SharedPtr msg) {
@@ -236,12 +239,6 @@ void GnssImuEskfNode::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg)
 /* ================= GNSS PVT Callback (update) ================= */
 void GnssImuEskfNode::pvtCallback(const std_msgs::msg::String::SharedPtr msg)
 {
-  if (!imu_initialized_) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
-      "Waiting for IMU stationary init before consuming GNSS");
-    return;
-  }
-
   nlohmann::json j;
   try {
     j = nlohmann::json::parse(msg->data);
@@ -273,6 +270,43 @@ void GnssImuEskfNode::pvtCallback(const std_msgs::msg::String::SharedPtr msg)
   {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
       "/gnss/pvt has invalid lat/lon/alt (%.7f, %.7f, %.3f), skipping", lat, lon, alt);
+    return;
+  }
+
+  const rclcpp::Time pvt_stamp = this->now();
+  sensor_msgs::msg::NavSatFix fix_msg;
+  fix_msg.header.stamp = pvt_stamp;
+  fix_msg.header.frame_id = "gps";
+  fix_msg.latitude = lat;
+  fix_msg.longitude = lon;
+  fix_msg.altitude = alt;
+  fix_msg.status.status =
+    (fix >= 2 && fix <= 4) ?
+    sensor_msgs::msg::NavSatStatus::STATUS_FIX :
+    sensor_msgs::msg::NavSatStatus::STATUS_NO_FIX;
+  fix_msg.status.service = sensor_msgs::msg::NavSatStatus::SERVICE_GPS;
+
+  const bool has_hacc =
+    j.contains("hacc") && j["hacc"].is_number() &&
+    std::isfinite(hacc) && hacc >= 0.0;
+  const bool has_vacc =
+    j.contains("vacc") && j["vacc"].is_number() &&
+    std::isfinite(vacc) && vacc >= 0.0;
+  if (has_hacc && has_vacc) {
+    fix_msg.position_covariance[0] = hacc * hacc;
+    fix_msg.position_covariance[4] = hacc * hacc;
+    fix_msg.position_covariance[8] = vacc * vacc;
+    fix_msg.position_covariance_type =
+      sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
+  } else {
+    fix_msg.position_covariance_type =
+      sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
+  }
+  fix_pub_->publish(fix_msg);
+
+  if (!imu_initialized_) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+      "Waiting for IMU stationary init before consuming GNSS");
     return;
   }
 
@@ -311,7 +345,7 @@ void GnssImuEskfNode::pvtCallback(const std_msgs::msg::String::SharedPtr msg)
   // RViz can be used to visually compare it against the IMU-smoothed
   // /gnss_imu_eskf/path -- large marker/path divergence indicates the IMU
   // prediction is doing meaningful work compensating GNSS noise/gaps.
-  const rclcpp::Time gnss_stamp = this->now();
+  const rclcpp::Time gnss_stamp = pvt_stamp;
   publishGnssMarker(pos_meas, gnss_stamp);
   publishGnssOnlyPath(pos_meas, gnss_stamp);
 

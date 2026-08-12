@@ -1,5 +1,3 @@
-version: "3.3"
-
 services:
   imu_gnss_raw:
     image: meraquetech/race_nav:sf.humble.v3
