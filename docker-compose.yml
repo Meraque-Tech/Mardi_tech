@@ -6,7 +6,7 @@ services:
     container_name: imu_gnss_raw
     build:
       context: ./vision/sf
-      dockerfile: Dockerfile.imu_gnss_sf
+      dockerfile: Dockerfile.sf
     command: >
       ros2 launch rtk_localization imu_gps_raw.launch.py
     tty: true

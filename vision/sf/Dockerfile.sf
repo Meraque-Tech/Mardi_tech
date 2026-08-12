@@ -1,4 +1,4 @@
-FROM meraquetech/race_nav:humble.imu.dep_jetson AS base
+FROM meraquetech/race_nav:humble.sensors.dep_jetson AS base
 
 SHELL ["/bin/bash", "-c"]
 
@@ -7,18 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     AGV_WS=/opt/agv_ws \
     DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        bluez \
-        dbus \
-        python3-pip \
-        python3-pymap3d \
-        python3-serial \
-        nlohmann-json3-dev \
-        ros-${ROS_DISTRO}-nav-msgs \
-        ros-${ROS_DISTRO}-robot-localization \
-        ros-${ROS_DISTRO}-tf2-ros \
-    && python3 -m pip install --no-cache-dir 'bleak>=0.20' \
-    && rm -rf /var/lib/apt/lists/*
+
 
 WORKDIR ${AGV_WS}
 COPY ./bwt901ble_imu src/bwt901ble_imu
