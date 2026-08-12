@@ -8,7 +8,8 @@ services:
       context: ./vision/sf
       dockerfile: Dockerfile.sf.humble
     command: >
-      ros2 launch rtk_localization imu_gps_raw.launch.py
+      ros2 launch rtk_localization gnss_imu_eskf.launch.py
+    # ros2 launch rtk_localization imu_gps_raw.launch.py
     tty: true
     hostname: imu_gnss_raw
     user: "0:0"

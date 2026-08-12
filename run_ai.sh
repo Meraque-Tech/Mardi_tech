@@ -9,6 +9,7 @@ case "$ARCH" in
     ;;
   aarch64)
     docker compose up -d imu_gnss_raw yolov8-trt-bed-detect-orin
+    docker compose up imu_gnss_raw
     ;;
   *)
     echo "Unsupported architecture: $ARCH"
