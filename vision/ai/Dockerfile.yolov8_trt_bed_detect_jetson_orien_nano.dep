@@ -1,0 +1,95 @@
+# syntax=docker/dockerfile:1
+# Jetson Orin Nano — JetPack 6.x, L4T r36.4.0 (CUDA/TensorRT preinstalled, no ROS)
+FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV OPENBLAS_CORETYPE=ARMV8
+ENV ROS_DISTRO=humble
+# ENV CUDA_HOME=/usr/local/cuda
+# ENV CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda
+# Select bash as default shell
+SHELL ["/bin/bash", "-c"]
+
+# All apt/pip steps below use BuildKit cache mounts for /var/cache/apt,
+# /var/lib/apt/lists, and pip's cache: package downloads persist across
+# rebuilds (meaningful on this base image and over a Jetson's network) without
+# bloating the final image -- cache-mounted paths are never committed to a
+# layer, so there's nothing to `rm -rf` afterward like a non-cached RUN needs.
+
+# -----------------------------
+# 1) Locale setup (UTF-8)
+# -----------------------------
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    locales \
+ && locale-gen en_US en_US.UTF-8 \
+ && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# -----------------------------
+# 2) Add ROS 2 apt repository
+# -----------------------------
+# (No blanket `apt-get upgrade -y` here: on an NVIDIA L4T base image that can
+# pull in generic Ubuntu package versions over the ones JetPack tuned/patched
+# for this board -- CUDA/cuDNN/TensorRT compatibility isn't worth risking for
+# an unrelated ROS 2 repo add.)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg2 \
+    lsb-release \
+    software-properties-common \
+ && add-apt-repository universe \
+ && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+      -o /usr/share/keyrings/ros-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+    http://packages.ros.org/ros2/ubuntu \
+    $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+    > /etc/apt/sources.list.d/ros2.list
+
+# -----------------------------
+# 3) Install ROS 2 Humble base + dev tools
+# -----------------------------
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-ros-base \
+    ros-humble-sensor-msgs \
+    ros-dev-tools \
+    ros-humble-rmw-cyclonedds-cpp
+
+# -----------------------------
+# 4) ROS environment
+# -----------------------------
+
+
+# Source ROS setup for all interactive shells inside container
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc
+
+# -----------------------------
+# 5) OpenCV + web server dependencies
+# -----------------------------
+# CMakeLists.txt does find_package(OpenCV REQUIRED). l4t-jetpack images *may*
+# already ship an OpenCV build, but that's not guaranteed across tags/variants
+# and find_package(OpenCV) would otherwise fail at cmake-configure time with
+# no earlier warning -- installing it explicitly makes the build reproducible.
+# This is the standard apt OpenCV (no CUDA-accelerated cv::cuda module) --
+# fine here since this package only uses basic cv::Mat/VideoCapture-level
+# APIs for pre/post-processing; the actual GPU work goes through TensorRT
+# directly.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    libopencv-dev \
+    docker.io
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --ignore-installed flask flask-sock
+
+# docker build -f Dockerfile.yolov8_trt_bed_detect_jetson_orien_nano.dep -t meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.dep .
+# docker push meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.dep
