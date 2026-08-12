@@ -41,6 +41,8 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - GNSS_FIX_TOPIC=/receiver/fix
+      - FORWARD_TOPIC=/gnss/is_forward
+      - BACKWARD_TOPIC=/gnss/is_backward
       - GNSS_STALE_TIMEOUT=3.0
       - HOST_WEIGHTS_DIR=${HOME}/yolov8/weights
       - HOST_YOLOV8_DIR=${PWD}/yolov8
@@ -81,6 +83,8 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - GNSS_FIX_TOPIC=/receiver/fix
+      - FORWARD_TOPIC=/gnss/is_forward
+      - BACKWARD_TOPIC=/gnss/is_backward
       - GNSS_STALE_TIMEOUT=3.0
       - HOST_WEIGHTS_DIR=${HOME}/yolov8/weights
       - HOST_YOLOV8_DIR=${PWD}/yolov8
