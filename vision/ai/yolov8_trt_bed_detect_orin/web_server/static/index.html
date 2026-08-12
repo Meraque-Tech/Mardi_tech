@@ -257,6 +257,16 @@
           </div>
           <label class="switch"><input id="auto-save-toggle" type="checkbox" onchange="setAutoSave(this.checked)"><span class="slider"></span></label>
         </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <strong>Min. save distance</strong>
+            <div class="sub">Skip auto-save until the robot has moved this far (metres)</div>
+          </div>
+          <div class="label-input-row" style="margin-top:0">
+            <input id="auto-save-distance" type="number" min="0" step="0.1" value="0.3"
+                   onchange="setAutoSaveDistance(this.value)" title="Minimum distance (m) between auto-saves">
+          </div>
+        </div>
       </section>
 
       <!-- Class labels -->
@@ -319,6 +329,7 @@
   const HISTORY_PAGE=50;
   let historyOffset=0, historyTotal=0, chartItems=[], refreshTimer=0, wsRetries=0;
   let streamPort=8080, streamRetries=0, streamRetryTimer=0;
+  let lastAutoSaveDistance=0.3, autoSaveDistanceSynced=false;
 
   // Class label mapping — stored in localStorage
   let classLabels = {};
@@ -369,10 +380,16 @@
   function applyAutoSaveStatus(data,running) {
     const enabled=Boolean(data.auto_save), desc=document.getElementById('auto-save-desc');
     document.getElementById('auto-save-toggle').checked=enabled;
+    if(typeof data.auto_save_min_distance_m==='number'){
+      lastAutoSaveDistance=data.auto_save_min_distance_m;
+      const distInput=document.getElementById('auto-save-distance');
+      if(!autoSaveDistanceSynced&&document.activeElement!==distInput){distInput.value=lastAutoSaveDistance;autoSaveDistanceSynced=true;}
+    }
     if(!enabled)desc.textContent='Off — turn on to save while moving forward';
     else if(!running)desc.textContent='On — waiting for detection to start';
     else if(!data.direction_valid)desc.textContent='On — waiting for direction data';
     else if(!data.auto_save_direction_eligible)desc.textContent='On — waiting for forward movement';
+    else if(data.auto_save_distance_eligible===false)desc.textContent=`On — waiting to move ${Number(lastAutoSaveDistance).toFixed(2)} m since last save`;
     else desc.textContent='Saving frame and count every 0.5 seconds';
   }
 
@@ -462,6 +479,13 @@
   async function setAutoSave(enabled) {
     try { const result=await api('/api/auto_save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});document.getElementById('auto-save-toggle').checked=enabled;toast(result.message); }
     catch(error){document.getElementById('auto-save-toggle').checked=!enabled;toast(error.message,true);}
+  }
+
+  async function setAutoSaveDistance(value) {
+    const input=document.getElementById('auto-save-distance'), min_distance_m=Number(value);
+    if(!Number.isFinite(min_distance_m)||min_distance_m<0){toast('Enter a distance of 0 or more metres',true);input.value=lastAutoSaveDistance;return;}
+    try { const result=await api('/api/auto_save_distance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({min_distance_m})});lastAutoSaveDistance=result.auto_save_min_distance_m;input.value=lastAutoSaveDistance;toast(result.message); }
+    catch(error){input.value=lastAutoSaveDistance;toast(error.message,true);}
   }
 
   async function resetTracker() {

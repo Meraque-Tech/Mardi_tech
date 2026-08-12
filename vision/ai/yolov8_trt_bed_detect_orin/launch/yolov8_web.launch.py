@@ -35,8 +35,12 @@ def generate_launch_description():
             'API_PORT': '8090',
             'HISTORY_DB': '/saved_frames/count_history.db',
             'AUTO_SAVE_INTERVAL': '0.5',
-            'FORWARD_TOPIC': os.environ.get('FORWARD_TOPIC', '/gnss/is_forward'),
-            'BACKWARD_TOPIC': os.environ.get('BACKWARD_TOPIC', '/gnss/is_backward'),
+            'AUTO_SAVE_MIN_DISTANCE_M': os.environ.get(
+                'AUTO_SAVE_MIN_DISTANCE_M', '0.3'
+            ),
+            'MOTION_STATE_TOPIC': os.environ.get(
+                'MOTION_STATE_TOPIC', '/gnss_imu_eskf/motion_state_raw_gnss'
+            ),
             'DIRECTION_STALE_TIMEOUT': os.environ.get(
                 'DIRECTION_STALE_TIMEOUT', '3.0'
             ),

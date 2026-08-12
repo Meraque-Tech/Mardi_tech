@@ -42,6 +42,7 @@ services:
       - GNSS_FIX_TOPIC=/receiver/fix
       - MOTION_STATE_TOPIC=/gnss_imu_eskf/motion_state_raw_gnss
       - GNSS_STALE_TIMEOUT=3.0
+      - AUTO_SAVE_MIN_DISTANCE_M=0.3
       - HOST_WEIGHTS_DIR=${HOME}/yolov8/weights
       - HOST_YOLOV8_DIR=${PWD}/yolov8
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
@@ -83,6 +84,7 @@ services:
       - GNSS_FIX_TOPIC=/receiver/fix
       - MOTION_STATE_TOPIC=/gnss_imu_eskf/motion_state_raw_gnss
       - GNSS_STALE_TIMEOUT=3.0
+      - AUTO_SAVE_MIN_DISTANCE_M=0.3
       - HOST_WEIGHTS_DIR=${HOME}/yolov8/weights
       - HOST_YOLOV8_DIR=${PWD}/yolov8
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
