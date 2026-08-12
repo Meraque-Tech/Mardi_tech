@@ -198,6 +198,7 @@
           <h2>Saved frames</h2>
           <div class="row">
             <button id="download-images-btn" class="link" onclick="downloadAllImages()" disabled>Download All Images</button>
+            <button id="generate-report-btn" class="link" onclick="generateReport()" disabled>Generate Report</button>
             <button class="link" onclick="loadImages()">Refresh</button>
           </div>
         </div>
@@ -290,8 +291,14 @@
 
       <!-- GNSS path -->
       <section class="card">
-        <div class="card-head" style="margin-bottom:10px"><h2>Path</h2><span style="font-size:11px;color:var(--muted)">● = frame captured</span></div>
-        <canvas id="path-canvas" style="height:160px"></canvas>
+        <div class="card-head" style="margin-bottom:10px">
+          <h2>Path</h2>
+          <span style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:8px">
+            ● = frame captured
+            <button class="link" style="font-size:11px" onclick="resetPathView()">Reset view</button>
+          </span>
+        </div>
+        <canvas id="path-canvas" style="height:160px;cursor:grab;touch-action:none"></canvas>
       </section>
 
     </aside>
@@ -607,6 +614,13 @@
   }
 
   let pathPoints=[];
+  // zoom: multiplier on the auto-fit scale (1 = fully zoomed out to fit all
+  // points). panX/panY: extra screen-space offset from dragging, applied
+  // after zoom so panning always feels like moving under the cursor.
+  let pathZoom=1, pathPanX=0, pathPanY=0;
+  let pathDragging=false, pathDragStartX=0, pathDragStartY=0, pathPanStartX=0, pathPanStartY=0;
+
+  function resetPathView() { pathZoom=1;pathPanX=0;pathPanY=0;drawPath(pathPoints); }
 
   function drawPath(points) {
     const canvas=document.getElementById('path-canvas'), rect=canvas.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
@@ -623,12 +637,19 @@
     const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
     // Equal X/Y scale so the plotted path isn't spatially distorted --
     // fit the larger of the two extents (with a floor so a near-stationary
-    // robot doesn't divide by ~0) and center the smaller axis.
+    // robot doesn't divide by ~0) and center the smaller axis. pathZoom then
+    // multiplies this fit-to-view scale, and pathPanX/Y (screen-space,
+    // accumulated while dragging) shift the view on top of that.
     const spanX=Math.max(maxX-minX,0.5),spanY=Math.max(maxY-minY,0.5),span=Math.max(spanX,spanY);
-    const scale=Math.min(plotW,plotH)/span;
+    const scale=(Math.min(plotW,plotH)/span)*pathZoom;
     const midX=(minX+maxX)/2,midY=(minY+maxY)/2;
     // Screen Y grows downward; ENU Y (north) grows upward, so flip it.
-    const toScreen=(x,y)=>[width/2+(x-midX)*scale, height/2-(y-midY)*scale];
+    const toScreen=(x,y)=>[
+      width/2+(x-midX)*scale+pathPanX,
+      height/2-(y-midY)*scale+pathPanY,
+    ];
+    ctx.save();
+    ctx.beginPath();ctx.rect(0,0,width,height);ctx.clip();
     ctx.strokeStyle='#6d72f6';ctx.lineWidth=1.5;ctx.beginPath();
     points.forEach((p,i)=>{const [sx,sy]=toScreen(p.x,p.y);i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy);});
     ctx.stroke();
@@ -639,11 +660,37 @@
     });
     const [lastX,lastY]=toScreen(points[points.length-1].x,points[points.length-1].y);
     ctx.fillStyle='#4ade80';ctx.beginPath();ctx.arc(lastX,lastY,3.5,0,Math.PI*2);ctx.fill();
+    ctx.restore();
   }
 
   async function loadPath() {
     try { const data=await api('/api/path');pathPoints=data.points||[];drawPath(pathPoints); }
     catch(_error){ /* keep last-drawn path on transient failure */ }
+  }
+
+  function initPathInteraction() {
+    const canvas=document.getElementById('path-canvas');
+    canvas.addEventListener('wheel',event=>{
+      event.preventDefault();
+      const factor=event.deltaY<0?1.15:1/1.15;
+      pathZoom=Math.min(50,Math.max(1,pathZoom*factor));
+      drawPath(pathPoints);
+    },{passive:false});
+    canvas.addEventListener('pointerdown',event=>{
+      pathDragging=true;canvas.setPointerCapture(event.pointerId);canvas.style.cursor='grabbing';
+      pathDragStartX=event.clientX;pathDragStartY=event.clientY;
+      pathPanStartX=pathPanX;pathPanStartY=pathPanY;
+    });
+    canvas.addEventListener('pointermove',event=>{
+      if(!pathDragging)return;
+      pathPanX=pathPanStartX+(event.clientX-pathDragStartX);
+      pathPanY=pathPanStartY+(event.clientY-pathDragStartY);
+      drawPath(pathPoints);
+    });
+    const endDrag=()=>{pathDragging=false;canvas.style.cursor='grab';};
+    canvas.addEventListener('pointerup',endDrag);
+    canvas.addEventListener('pointercancel',endDrag);
+    canvas.addEventListener('dblclick',resetPathView);
   }
 
   function connectStream(immediate=false) {
@@ -672,8 +719,9 @@
     try { const result=await api('/api/shutdown',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'shutdown'})});toast(result.message); }
     catch(error){toast(error.message,true);}
   }
-  async function loadImages() { try{const images=await api('/api/images');const gallery=document.getElementById('gallery');document.getElementById('download-images-btn').disabled=!images.length;gallery.innerHTML=images.length?images.map(item=>`<div class="thumb"><img src="${item.url}" alt="${escapeHtml(item.filename)}" onclick="openImage('${item.url}')"><button onclick="deleteImage('${escapeHtml(item.filename)}')">×</button><small>${escapeHtml(formatTime(item.time))}</small></div>`).join(''):'<span class="muted">No saved frames yet.</span>';}catch(error){document.getElementById('download-images-btn').disabled=true;toast(error.message,true);} }
+  async function loadImages() { try{const images=await api('/api/images');const gallery=document.getElementById('gallery');document.getElementById('download-images-btn').disabled=!images.length;document.getElementById('generate-report-btn').disabled=!images.length;gallery.innerHTML=images.length?images.map(item=>`<div class="thumb"><img src="${item.url}" alt="${escapeHtml(item.filename)}" onclick="openImage('${item.url}')"><button onclick="deleteImage('${escapeHtml(item.filename)}')">×</button><small>${escapeHtml(formatTime(item.time))}</small></div>`).join(''):'<span class="muted">No saved frames yet.</span>';}catch(error){document.getElementById('download-images-btn').disabled=true;document.getElementById('generate-report-btn').disabled=true;toast(error.message,true);} }
   function downloadAllImages() { if(!document.getElementById('download-images-btn').disabled)window.location.assign('/api/images/download'); }
+  function generateReport() { if(!document.getElementById('generate-report-btn').disabled)window.location.assign('/api/report'); }
   async function deleteImage(name) { try{await api(`/api/images/${encodeURIComponent(name)}`,{method:'DELETE'});loadImages();}catch(error){toast(error.message,true);} }
   function openImage(url) { document.getElementById('lightbox-image').src=url;document.getElementById('lightbox').classList.add('open'); }
 
@@ -866,7 +914,7 @@
     } catch(_error) { /* no job in progress or endpoint unreachable — ignore */ }
   }
 
-  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();initConvertPoll();initLaunchPoll();loadPath();
+  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();initConvertPoll();initLaunchPoll();loadPath();initPathInteraction();
   setInterval(()=>loadStatus().catch(()=>{}),3000);
   setInterval(loadPath,2000);
   window.addEventListener('resize',()=>drawChart(chartItems));

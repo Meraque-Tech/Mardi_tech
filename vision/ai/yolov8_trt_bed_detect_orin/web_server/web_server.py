@@ -74,6 +74,14 @@ MOTION_POS_DEADBAND_TOPIC = os.environ.get(
     "MOTION_POS_DEADBAND_TOPIC", "/gnss_imu_eskf/motion_pos_deadband"
 )
 MOTION_POS_DEADBAND_M = float(os.environ.get("MOTION_POS_DEADBAND_M", "0.3"))
+# QA report thresholds (see get_report() near the bottom of this file).
+REPORT_LOW_CONFIDENCE = float(os.environ.get("REPORT_LOW_CONFIDENCE", "0.5"))
+REPORT_NEAR_DUPLICATE_M = float(
+    os.environ.get("REPORT_NEAR_DUPLICATE_M", str(MOTION_POS_DEADBAND_M))
+)
+REPORT_NO_DETECTION_RUN_LENGTH = int(
+    os.environ.get("REPORT_NO_DETECTION_RUN_LENGTH", "3")
+)
 # Local ENU position of the raw GNSS fix (nav_msgs/Odometry.pose.pose.position)
 # -- the auto-save minimum-distance gate and the "distance from previous frame"
 # history column are both computed from this rather than lat/lon, since it's
@@ -280,6 +288,25 @@ def _image_history_rows():
     for row in rows:
         history_by_filename.setdefault(row["frame_filename"], row)
     return history_by_filename
+
+
+def _report_rows():
+    """All saved-frame rows in capture order (oldest first), for QA report
+    generation -- distinct from _image_history_rows() (which keys by
+    filename for the ZIP manifest) and _history_rows() (which paginates for
+    the live UI table).
+    """
+    with db_lock, _db_connect() as db:
+        rows = db.execute(
+            """
+            SELECT id, recorded_at, counts_json, total, bed_status, confidence,
+                   frame_filename, latitude, longitude, distance_from_prev_m
+            FROM count_history
+            WHERE frame_filename IS NOT NULL
+            ORDER BY id ASC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def broadcast(payload: str):
@@ -1425,6 +1452,189 @@ def list_images():
         }
         for item in files
     ])
+
+
+def _build_qa_report(rows):
+    """Flag data-quality issues across all saved-frame rows (oldest first).
+
+    Four checks, each answering "what should the operator double-check or
+    re-survey": low-confidence detections, frames saved without a GNSS fix,
+    near-duplicate captures (little/no travel since the previous save --
+    likely redundant), and runs of consecutive frames with zero detections
+    (possible coverage gap or missed object).
+    """
+    low_confidence = [
+        row for row in rows
+        if row["confidence"] is not None and row["confidence"] < REPORT_LOW_CONFIDENCE
+    ]
+    missing_gnss = [
+        row for row in rows
+        if row["latitude"] is None or row["longitude"] is None
+    ]
+    near_duplicates = [
+        row for row in rows
+        if row["distance_from_prev_m"] is not None
+        and row["distance_from_prev_m"] < REPORT_NEAR_DUPLICATE_M
+    ]
+
+    no_detection_runs = []
+    current_run = []
+    for row in rows:
+        if row["total"] == 0:
+            current_run.append(row)
+            continue
+        if len(current_run) >= REPORT_NO_DETECTION_RUN_LENGTH:
+            no_detection_runs.append(current_run)
+        current_run = []
+    if len(current_run) >= REPORT_NO_DETECTION_RUN_LENGTH:
+        no_detection_runs.append(current_run)
+
+    return {
+        "low_confidence": low_confidence,
+        "missing_gnss": missing_gnss,
+        "near_duplicates": near_duplicates,
+        "no_detection_runs": no_detection_runs,
+    }
+
+
+def _report_html(rows, flags):
+    def esc(value):
+        return (
+            str(value)
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
+
+    def row_line(row, extra=""):
+        gnss = (
+            "%.6f, %.6f" % (row["latitude"], row["longitude"])
+            if row["latitude"] is not None and row["longitude"] is not None
+            else "no fix"
+        )
+        return (
+            "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+            % (
+                esc(row["frame_filename"]), esc(row["recorded_at"]),
+                esc("%.3f" % row["confidence"] if row["confidence"] is not None else "—"),
+                esc(gnss), esc(extra),
+            )
+        )
+
+    def section(title, description, table_rows):
+        if not table_rows:
+            return (
+                "<h2>%s</h2><p class='desc'>%s</p><p class='ok'>None found.</p>"
+                % (esc(title), esc(description))
+            )
+        return (
+            "<h2>%s <span class='count'>(%d)</span></h2>"
+            "<p class='desc'>%s</p>"
+            "<table><thead><tr><th>Frame</th><th>Captured</th>"
+            "<th>Confidence</th><th>GNSS</th><th>Note</th></tr></thead>"
+            "<tbody>%s</tbody></table>"
+            % (esc(title), len(table_rows), esc(description), "".join(table_rows))
+        )
+
+    total_frames = len(rows)
+    generated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    low_conf_section = section(
+        "Low-confidence detections",
+        "Confidence below %.2f -- verify these against the saved frame." % REPORT_LOW_CONFIDENCE,
+        [row_line(row) for row in flags["low_confidence"]],
+    )
+    missing_gnss_section = section(
+        "Frames saved without a GNSS fix",
+        "No latitude/longitude recorded -- location can't be traced back for these.",
+        [row_line(row) for row in flags["missing_gnss"]],
+    )
+    near_dup_section = section(
+        "Near-duplicate captures",
+        "Less than %.2f m of travel since the previous save -- likely redundant." % REPORT_NEAR_DUPLICATE_M,
+        [
+            row_line(row, "%.3f m from previous" % row["distance_from_prev_m"])
+            for row in flags["near_duplicates"]
+        ],
+    )
+    no_detection_lines = []
+    for run in flags["no_detection_runs"]:
+        no_detection_lines.append(
+            "<tr><td colspan='5' class='run-header'>Run of %d consecutive frames with no detections "
+            "(%s → %s)</td></tr>"
+            % (len(run), esc(run[0]["recorded_at"]), esc(run[-1]["recorded_at"]))
+        )
+        no_detection_lines.extend(row_line(row) for row in run)
+    no_detection_section = (
+        "<h2>No-detection stretches <span class='count'>(%d runs)</span></h2>"
+        "<p class='desc'>%d or more consecutive saved frames with zero objects detected -- "
+        "possible coverage gap or missed target.</p>"
+        % (len(flags["no_detection_runs"]), REPORT_NO_DETECTION_RUN_LENGTH)
+    )
+    if flags["no_detection_runs"]:
+        no_detection_section += (
+            "<table><thead><tr><th>Frame</th><th>Captured</th>"
+            "<th>Confidence</th><th>GNSS</th><th>Note</th></tr></thead>"
+            "<tbody>%s</tbody></table>" % "".join(no_detection_lines)
+        )
+    else:
+        no_detection_section += "<p class='ok'>None found.</p>"
+
+    return """<!doctype html>
+<html><head><meta charset="utf-8"><title>Data Quality Report</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:960px;margin:32px auto;padding:0 16px;color:#1a1d24;background:#fff}
+h1{margin-bottom:4px}
+.meta{color:#666;font-size:13px;margin-bottom:28px}
+.summary{display:flex;gap:16px;margin-bottom:32px;flex-wrap:wrap}
+.stat{border:1px solid #ddd;border-radius:8px;padding:10px 16px;min-width:140px}
+.stat .n{font-size:22px;font-weight:700}
+.stat .l{font-size:12px;color:#666}
+h2{margin-top:36px;border-top:1px solid #eee;padding-top:20px}
+.count{color:#c0392b;font-weight:600}
+.desc{color:#555;font-size:13px;margin:4px 0 12px}
+.ok{color:#1e8e4e;font-weight:600}
+table{width:100%%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:5px 8px;border-bottom:1px solid #eee}
+th{color:#666;font-weight:600}
+.run-header{background:#fff6e5;font-weight:600;color:#8a5a00}
+</style></head>
+<body>
+<h1>Data Quality Report</h1>
+<div class="meta">Generated %s &middot; %d saved frames analyzed</div>
+<div class="summary">
+  <div class="stat"><div class="n">%d</div><div class="l">Low-confidence</div></div>
+  <div class="stat"><div class="n">%d</div><div class="l">Missing GNSS</div></div>
+  <div class="stat"><div class="n">%d</div><div class="l">Near-duplicates</div></div>
+  <div class="stat"><div class="n">%d</div><div class="l">No-detection runs</div></div>
+</div>
+%s
+%s
+%s
+%s
+</body></html>""" % (
+        esc(generated_at), total_frames,
+        len(flags["low_confidence"]), len(flags["missing_gnss"]),
+        len(flags["near_duplicates"]), len(flags["no_detection_runs"]),
+        low_conf_section, missing_gnss_section, near_dup_section, no_detection_section,
+    )
+
+
+@app.route("/api/report")
+def get_report():
+    rows = _report_rows()
+    if not rows:
+        return jsonify({
+            "success": False,
+            "message": "no saved frames are available to report on",
+        }), 404
+    flags = _build_qa_report(rows)
+    html = _report_html(rows, flags)
+    report_name = "quality_report_%s.html" % datetime.datetime.now().strftime(
+        "%Y%m%d_%H%M%S"
+    )
+    return app.response_class(
+        html, mimetype="text/html",
+        headers={"Content-Disposition": "attachment; filename=%s" % report_name},
+    )
 
 
 @app.route("/api/images/download")
