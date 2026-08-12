@@ -385,6 +385,9 @@ class BridgeNode(Node):
 
         latitude = float(msg.latitude)
         longitude = float(msg.longitude)
+        
+        print("GNSS fix received: lat=%f, lon=%f, status=%d" % (latitude, longitude, msg.status.status))
+
         valid = (
             msg.status.status >= 0
             and math.isfinite(latitude)
