@@ -1,10 +1,28 @@
+# docker compose build
+# docker compose push
+# docker login -u  meraquetech
+# password: marq@8222
+# docker compose pull
+# docker compose create
+
+# jenkins user ID -->
+# meraque
+# password -->
+# marq@8222
+
+# docker compose -f docker-compose.prime.yaml build racenav_rtk_firm
+
 services:
   imu_gnss_raw:
     image: meraquetech/race_nav:sf.humble.v3
     container_name: imu_gnss_raw
     build:
-      context: ./vision/sf
+      context: ./vision/sf/
       dockerfile: Dockerfile.sf.humble
+      # Same reasoning as yolov8-trt-bed-detect-x86-jazzy below: use the
+      # local humble.sensors.dep_jetson image as-is instead of checking the
+      # registry for a newer digest on every `docker compose build`.
+      # pull_policy: never
     command: >
       ros2 launch rtk_localization gnss_imu_eskf.launch.py
     # ros2 launch rtk_localization imu_gps_raw.launch.py
@@ -35,7 +53,7 @@ services:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v5
     container_name: yolov8-trt-bed-detect-orin-nano
     build:
-      context: ./vision/ai
+      context: ./vision/ai/
       dockerfile: Dockerfile.yolov8_trt_bed_detect_jetson_orien_nano
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -77,8 +95,13 @@ services:
     image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v8
     container_name: yolov8-trt-bed-detect-x86-jazzy
     build:
-      context: ./vision/ai
+      context: ./vision/ai/
       dockerfile: Dockerfile.yolov8_trt_x86.ros2.jazzy
+      # Use the local yolov8-trt-x86.dep image as-is instead of checking the
+      # registry for a newer digest on every `docker compose build` -- that
+      # registry check is what was re-pulling several GB of the CUDA/
+      # TensorRT base layers on every build even with no source changes.
+      # pull_policy: never
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - GNSS_FIX_TOPIC=/receiver/fix
