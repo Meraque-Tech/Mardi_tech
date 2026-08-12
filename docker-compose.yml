@@ -10,7 +10,7 @@ services:
     command: >
       ros2 launch rtk_localization imu_gps_raw.launch.py
     tty: true
-    hostname: bwt901ble_imu
+    hostname: imu_gnss_raw
     user: "0:0"
     privileged: true
     group_add:
@@ -121,7 +121,7 @@ services:
     image: meraquetech/race_nav:bwt901ble_imu.humble.jetson.v2
     container_name: rosbag_recorder
     depends_on:
-      - bwt901ble_imu
+      - imu_gnss_raw
     network_mode: host
     ipc: host
     restart: always
