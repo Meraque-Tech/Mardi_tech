@@ -6,12 +6,12 @@ docker rm -f $(docker ps -aq)
 
 # case "$ARCH" in
 #   x86_64)
-#     docker compose down imu_gnss_raw yolov8-trt-bed-detect-x86-jazzy
-    
+#     docker compose down imu_gnss_raw-x86 yolov8-trt-bed-detect-x86-jazzy
+
 #     ;;
 #   aarch64)
-#     docker compose down imu_gnss_raw yolov8-trt-bed-detect-orin
-    
+#     docker compose down imu_gnss_raw-aarch64 yolov8-trt-bed-detect-orin
+
 #     ;;
 #   *)
 #     echo "Unsupported architecture: $ARCH"
