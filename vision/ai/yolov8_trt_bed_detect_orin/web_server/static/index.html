@@ -420,6 +420,10 @@
     if(data.last_updated)document.getElementById('last-update').textContent=formatTime(data.last_updated);
     document.getElementById('camera-index').textContent=(data.camera_index===null||data.camera_index===undefined)?'—':`/dev/video${data.camera_index}`;
     document.getElementById('infer-ms').textContent=data.infer_ms?`${Number(data.infer_ms).toFixed(2)} ms`:'— ms';
+    const gnssEl=document.getElementById('gnss-coords');
+    const lat=Number(data.latitude),lon=Number(data.longitude);
+    gnssEl.textContent=(data.gnss_valid&&Number.isFinite(lat)&&Number.isFinite(lon))
+      ?`${lat.toFixed(6)}, ${lon.toFixed(6)}`:'—';
     applyMotionPosDeadband(data);
     applyDirectionBadge('forward-badge',data.is_forward,Boolean(data.direction_valid));
     applyDirectionBadge('backward-badge',data.is_backward,Boolean(data.direction_valid));
