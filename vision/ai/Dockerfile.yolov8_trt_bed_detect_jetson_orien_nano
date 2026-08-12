@@ -58,8 +58,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-ros-base \
     ros-humble-sensor-msgs \
-    ros-dev-tools
-
+    ros-dev-tools \
+    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp
+    
 # -----------------------------
 # 4) ROS environment
 # -----------------------------
