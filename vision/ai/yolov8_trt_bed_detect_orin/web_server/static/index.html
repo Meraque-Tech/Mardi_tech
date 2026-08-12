@@ -721,7 +721,11 @@
   }
   async function loadImages() { try{const images=await api('/api/images');const gallery=document.getElementById('gallery');document.getElementById('download-images-btn').disabled=!images.length;document.getElementById('generate-report-btn').disabled=!images.length;gallery.innerHTML=images.length?images.map(item=>`<div class="thumb"><img src="${item.url}" alt="${escapeHtml(item.filename)}" onclick="openImage('${item.url}')"><button onclick="deleteImage('${escapeHtml(item.filename)}')">×</button><small>${escapeHtml(formatTime(item.time))}</small></div>`).join(''):'<span class="muted">No saved frames yet.</span>';}catch(error){document.getElementById('download-images-btn').disabled=true;document.getElementById('generate-report-btn').disabled=true;toast(error.message,true);} }
   function downloadAllImages() { if(!document.getElementById('download-images-btn').disabled)window.location.assign('/api/images/download'); }
-  function generateReport() { if(!document.getElementById('generate-report-btn').disabled)window.location.assign('/api/report'); }
+  function generateReport() {
+    if(document.getElementById('generate-report-btn').disabled)return;
+    const labels=encodeURIComponent(JSON.stringify(classLabels));
+    window.location.assign(`/api/report?labels=${labels}`);
+  }
   async function deleteImage(name) { try{await api(`/api/images/${encodeURIComponent(name)}`,{method:'DELETE'});loadImages();}catch(error){toast(error.message,true);} }
   function openImage(url) { document.getElementById('lightbox-image').src=url;document.getElementById('lightbox').classList.add('open'); }
 

@@ -1530,12 +1530,18 @@ def _build_qa_report(rows):
     }
 
 
-def _report_html(rows, flags):
+def _report_html(rows, flags, class_labels=None):
+    class_labels = class_labels or {}
+
     def esc(value):
         return (
             str(value)
             .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         )
+
+    def class_label(class_id):
+        name = class_labels.get(str(class_id))
+        return "%s (%s)" % (name, class_id) if name else "Class %s" % class_id
 
     def row_line(row, extra=""):
         gnss = (
@@ -1573,7 +1579,7 @@ def _report_html(rows, flags):
     class_totals, class_grand_total = _class_totals(rows)
     if class_totals:
         class_total_rows = "".join(
-            "<tr><td>Class %s</td><td>%d</td></tr>" % (esc(class_id), count)
+            "<tr><td>%s</td><td>%d</td></tr>" % (esc(class_label(class_id)), count)
             for class_id, count in class_totals.items()
         )
         class_totals_section = (
@@ -1687,8 +1693,20 @@ def get_report():
             "success": False,
             "message": "no saved frames are available to report on",
         }), 404
+
+    # Class ID -> human name is only known client-side (the dashboard's
+    # "Class Labels" list, stored in localStorage) -- the frontend passes its
+    # current mapping along so the report can show names instead of raw IDs.
+    class_labels = {}
+    try:
+        parsed = json.loads(request.args.get("labels", "{}"))
+        if isinstance(parsed, dict):
+            class_labels = {str(k): str(v) for k, v in parsed.items()}
+    except (TypeError, ValueError):
+        class_labels = {}
+
     flags = _build_qa_report(rows)
-    html = _report_html(rows, flags)
+    html = _report_html(rows, flags, class_labels)
     report_name = "quality_report_%s.html" % datetime.datetime.now().strftime(
         "%Y%m%d_%H%M%S"
     )
