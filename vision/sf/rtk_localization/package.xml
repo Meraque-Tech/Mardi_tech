@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rtk_localization</name>
+  <version>0.0.1</version>
+  <description>GPS to UTM conversion utilities and nodes</description>
+
+  <maintainer email="debanik@meraque.ai">Debanik</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>std_msgs</depend>
+  <depend>prime_msgs</depend>
+  <depend>nlohmann_json</depend>
+
+  <!-- System dependency for GeographicLib -->
+  <build_depend>GeographicLib</build_depend>
+  <exec_depend>GeographicLib</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

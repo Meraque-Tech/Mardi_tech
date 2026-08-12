@@ -1,0 +1,37 @@
+robot_localization_ekf:
+  ros__parameters:
+
+    frequency: 50.0
+    sensor_timeout: 0.1
+    two_d_mode: true
+
+    publish_tf: false
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # ---------- LIO ODOM ----------
+    odom0: /odom/lio/offset
+    odom0_config: [true, true, false,
+                   false, false, true,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom0_queue_size: 5
+    odom0_differential: false
+    odom0_relative: false
+
+    # ---------- RTK ODOM ----------
+    odom1: /rtk/mid/odom
+    odom1_config: [true, true, false,
+                   false, false, true,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom1_queue_size: 10
+    odom1_differential: false
+    odom1_relative: false
+
+    # Output
+    publish_acceleration: false

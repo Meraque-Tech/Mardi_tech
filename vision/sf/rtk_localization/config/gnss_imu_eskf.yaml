@@ -1,0 +1,58 @@
+gnss_imu_eskf_node:
+  ros__parameters:
+    # Interfaces and frames
+    imu_topic: /imu/data
+    pvt_topic: /gnss/pvt
+    rtk_status_topic: /gnss/rtk_status
+    odom_topic: /gnss_imu_eskf/odom
+    path_topic: /gnss_imu_eskf/path
+    map_frame: map
+    base_frame: gnss_base_link
+    publish_tf: true
+    publish_path: true
+
+    # IMU noise densities and bias random walks. Replace these values with an
+    # Allan-variance result for the exact sensor and configured output rate.
+    acc_noise_density: 0.05       # m/s^2/sqrt(Hz)
+    gyro_noise_density: 0.005     # rad/s/sqrt(Hz)
+    acc_bias_rw: 0.001            # m/s^3/sqrt(Hz)
+    gyro_bias_rw: 0.0001          # rad/s^2/sqrt(Hz)
+    min_imu_dt: 0.0001            # s
+    max_imu_dt: 0.1               # s; reset integration across larger gaps
+    max_accel_norm: 50.0          # m/s^2
+    max_gyro_norm: 10.0           # rad/s
+
+    # Startup must be stationary for this complete sliding window. The
+    # complementary-filter quaternion supplies initial attitude; the stationary
+    # data supplies gyro and accelerometer biases.
+    stationary_init_samples: 100
+    init_accel_norm_tolerance: 0.75  # m/s^2 around standard gravity
+    init_accel_std_max: 0.35         # m/s^2, vector RMS deviation
+    init_gyro_mean_max: 0.10         # rad/s
+    init_gyro_std_max: 0.02          # rad/s, vector RMS deviation
+    init_accel_bias_max: 2.0         # m/s^2; catches frame/orientation mismatch
+    initial_accel_bias_std: 0.10     # m/s^2
+    initial_gyro_bias_std: 0.01      # rad/s
+    initial_yaw_std_deg: 90.0        # loose until single-antenna course is observed
+
+    # RTK position admission and statistical outlier rejection.
+    min_fix_type: 3
+    min_carr_soln: 1               # 0=none, 1=RTK float, 2=RTK fixed only
+    default_hacc: 1.0              # m, used only when receiver field is absent
+    default_vacc: 2.0              # m, used only when receiver field is absent
+    max_hacc: 2.0                  # m
+    max_vacc: 5.0                  # m
+    position_nis_gate: 16.27       # chi-square 3 DoF, 99.9 percent
+
+    # Single-antenna course heading. The 0.1 value is metres of horizontal
+    # displacement, not time. Actual heading variance is computed from hacc and
+    # baseline length and must remain below gnss_heading_max_std_deg.
+    min_heading_dist: 0.1          # m
+    min_heading_speed: 0.2         # m/s; suppress stationary GNSS jitter
+    gnss_heading_std_deg: 3.0      # minimum 1-sigma floor
+    gnss_heading_max_std_deg: 45.0 # discard less observable course measurements
+    heading_nis_gate: 10.83        # chi-square 1 DoF, 99.9 percent
+    resolve_reverse_motion: true
+
+    # Antenna position relative to the filter body origin, expressed in base_frame.
+    gnss_lever_arm: [0.0, 0.0, 0.0]

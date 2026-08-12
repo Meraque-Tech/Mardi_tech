@@ -1,14 +1,14 @@
 version: "3.3"
 
 services:
-  bwt901ble_imu:
-    image: meraquetech/race_nav:bwt901ble_imu.humble.jetson.v2
-    container_name: bwt901ble_imu
+  imu_gnss_raw:
+    image: meraquetech/race_nav:imu_gnss_raw.humble.jetson.v2
+    container_name: imu_gnss_raw
     build:
       context: ./vision/sf
-      dockerfile: Dockerfile.bwt901ble_imu
+      dockerfile: Dockerfile.imu_gnss_sf
     command: >
-      ros2 launch bwt901ble_imu imu_gps_raw.launch.py
+      ros2 launch rtk_localization imu_gps_raw.launch.py
     tty: true
     hostname: bwt901ble_imu
     user: "0:0"
