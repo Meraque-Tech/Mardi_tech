@@ -60,6 +60,10 @@ def generate_launch_description():
             'MOTION_STATE_TOPIC': os.environ.get(
                 'MOTION_STATE_TOPIC', '/gnss_imu_eskf/motion_state_raw_gnss'
             ),
+            'MOTION_POS_DEADBAND_TOPIC': os.environ.get(
+                'MOTION_POS_DEADBAND_TOPIC', '/gnss_imu_eskf/motion_pos_deadband'
+            ),
+            'MOTION_POS_DEADBAND_M': os.environ.get('MOTION_POS_DEADBAND_M', '0.3'),
             'DIRECTION_STALE_TIMEOUT': os.environ.get(
                 'DIRECTION_STALE_TIMEOUT', '3.0'
             ),

@@ -20,6 +20,8 @@ GnssImuEskfNode::GnssImuEskfNode()
   this->declare_parameter<double>("default_vacc", 2.0);
   this->declare_parameter<double>("min_heading_dist", 0.1);
   this->declare_parameter<double>("gnss_heading_std_deg", 15.0);
+  this->declare_parameter<std::string>(
+    "motion_pos_deadband_topic", "/gnss_imu_eskf/motion_pos_deadband");
   this->declare_parameter<double>("motion_pos_deadband", 0.3);       // m
   this->declare_parameter<double>("motion_idle_hold_sec", 1.0);      // s
 
@@ -37,7 +39,15 @@ GnssImuEskfNode::GnssImuEskfNode()
     1e-3, this->get_parameter("min_heading_dist").as_double());
   gnss_heading_std_rad_ = std::max(
     1e-3, this->get_parameter("gnss_heading_std_deg").as_double() * M_PI / 180.0);
+  motion_pos_deadband_topic_ =
+    this->get_parameter("motion_pos_deadband_topic").as_string();
   motion_pos_deadband_ = this->get_parameter("motion_pos_deadband").as_double();
+  if (!std::isfinite(motion_pos_deadband_) || motion_pos_deadband_ <= 0.0) {
+    RCLCPP_WARN(get_logger(),
+      "motion_pos_deadband must be finite and greater than zero; using 0.3 m");
+    motion_pos_deadband_ = 0.3;
+    this->set_parameter(rclcpp::Parameter("motion_pos_deadband", motion_pos_deadband_));
+  }
   motion_idle_hold_sec_ = this->get_parameter("motion_idle_hold_sec").as_double();
 
   const auto lever_arm = this->get_parameter("gnss_lever_arm").as_double_array();
@@ -74,6 +84,12 @@ GnssImuEskfNode::GnssImuEskfNode()
       rtk_corrections_active_ = msg->data;
     });
 
+  motion_pos_deadband_sub_ = create_subscription<std_msgs::msg::Float32>(
+    motion_pos_deadband_topic_, rclcpp::QoS(10),
+    std::bind(
+      &GnssImuEskfNode::motionPosDeadbandCallback,
+      this, std::placeholders::_1));
+
   odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
     "/gnss_imu_eskf/odom", rclcpp::SystemDefaultsQoS());
   path_pub_ = create_publisher<nav_msgs::msg::Path>("/gnss_imu_eskf/path", 10);
@@ -98,9 +114,41 @@ GnssImuEskfNode::GnssImuEskfNode()
   imu_only_path_msg_.header.frame_id = map_frame_;
 
   RCLCPP_INFO(get_logger(),
-    "GNSS+IMU ESKF node started (map_frame='%s', base_frame='%s', lever_arm=[%.3f,%.3f,%.3f])",
+    "GNSS+IMU ESKF node started (map_frame='%s', base_frame='%s', lever_arm=[%.3f,%.3f,%.3f], "
+    "motion_pos_deadband=%.3f m, update_topic='%s')",
     map_frame_.c_str(), base_frame_.c_str(),
-    gnss_lever_arm_.x(), gnss_lever_arm_.y(), gnss_lever_arm_.z());
+    gnss_lever_arm_.x(), gnss_lever_arm_.y(), gnss_lever_arm_.z(),
+    motion_pos_deadband_, motion_pos_deadband_topic_.c_str());
+}
+
+/* ================= Runtime motion deadband update ================= */
+void GnssImuEskfNode::motionPosDeadbandCallback(
+  const std_msgs::msg::Float32::SharedPtr msg)
+{
+  const double requested_deadband = static_cast<double>(msg->data);
+  if (!std::isfinite(requested_deadband) || requested_deadband <= 0.0) {
+    RCLCPP_WARN(get_logger(),
+      "Ignoring motion_pos_deadband update %.6f: value must be finite and greater than zero",
+      requested_deadband);
+    return;
+  }
+
+  const double previous_deadband = motion_pos_deadband_;
+  motion_pos_deadband_ = requested_deadband;
+  this->set_parameter(rclcpp::Parameter("motion_pos_deadband", motion_pos_deadband_));
+
+  // Re-anchor both classifiers on their next position sample. A threshold
+  // change must not reuse displacement accumulated under the old threshold.
+  motion_anchor_set_ = false;
+  motion_is_moving_ = false;
+  last_motion_state_.clear();
+  motion_raw_anchor_set_ = false;
+  motion_raw_is_moving_ = false;
+  last_motion_raw_state_.clear();
+
+  RCLCPP_INFO(get_logger(),
+    "motion_pos_deadband updated from %.3f m to %.3f m via %s",
+    previous_deadband, motion_pos_deadband_, motion_pos_deadband_topic_.c_str());
 }
 
 /* ================= Stationary init accumulation ================= */

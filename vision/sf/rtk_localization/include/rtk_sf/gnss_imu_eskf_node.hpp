@@ -3,6 +3,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <sensor_msgs/msg/nav_sat_status.hpp>
@@ -64,6 +65,7 @@ private:
 
   void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
   void pvtCallback(const std_msgs::msg::String::SharedPtr msg);
+  void motionPosDeadbandCallback(const std_msgs::msg::Float32::SharedPtr msg);
 
   bool accumulateStationaryInit(const sensor_msgs::msg::Imu::SharedPtr msg);
 
@@ -91,6 +93,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr pvt_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr rtk_status_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr motion_pos_deadband_sub_;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr fix_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
@@ -122,6 +125,7 @@ private:
   double default_vacc_;
   double min_heading_dist_;
   double gnss_heading_std_rad_;
+  std::string motion_pos_deadband_topic_;
   double motion_pos_deadband_;
   double motion_idle_hold_sec_;
 

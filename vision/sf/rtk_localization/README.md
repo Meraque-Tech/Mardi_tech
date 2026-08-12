@@ -89,6 +89,7 @@ ENU origin is latched on the **first fix** with `fix >= min_fix_type` (default `
 | `/imu/data` | `sensor_msgs/Imu` | Sub | Raw IMU (linear acceleration + angular velocity), used for high-rate strapdown prediction |
 | `/gnss/pvt` | `std_msgs/String` (JSON) | Sub | Same PVT payload as `gnss_pvt_enu_odom`; consumed as a position update |
 | `/gnss/rtk_status` | `std_msgs/Bool` | Sub | `true` while base-station corrections are being received (logged only) |
+| `/gnss_imu_eskf/motion_pos_deadband` | `std_msgs/Float32` | Sub | Runtime motion-classification deadband update in metres; must be finite and greater than zero |
 | `/gnss_imu_eskf/odom` | `nav_msgs/Odometry` | Pub | Fused ENU odometry, frame `map`, child `gnss_base_link` |
 | `/gnss_imu_eskf/path` | `nav_msgs/Path` | Pub | Trail of fused poses in `map` frame |
 | TF `map → gnss_base_link` | — | Pub | Dynamic transform broadcast each IMU tick (once origin is set) |
@@ -271,6 +272,8 @@ AER tgt = gps.enu_to_aer(p);
 | `gnss_lever_arm` | `[0.0, 0.0, 0.0]` | GNSS antenna position in the body frame (IMU origin), meters `[x, y, z]`. Compensated for both static offset and rotation-induced displacement during turns. |
 | `default_hacc` | `1.0` m | Fallback horizontal accuracy (1σ) if `/gnss/pvt` omits `hacc` |
 | `default_vacc` | `2.0` m | Fallback vertical accuracy (1σ) if `/gnss/pvt` omits `vacc` |
+| `motion_pos_deadband` | `0.3` m | Displacement threshold used by fused and raw-GNSS motion classification |
+| `motion_pos_deadband_topic` | `/gnss_imu_eskf/motion_pos_deadband` | Runtime `std_msgs/Float32` update topic |
 
 Tune `acc_noise_density` / `gyro_noise_density` / `*_bias_rw` against your IMU's datasheet noise specs before field use. **Measure and set `gnss_lever_arm`** if the GNSS antenna is not co-located with the IMU — otherwise turns will inject position error proportional to the offset.
 

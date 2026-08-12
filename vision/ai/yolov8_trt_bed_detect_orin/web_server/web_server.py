@@ -69,6 +69,10 @@ GNSS_STALE_TIMEOUT = float(os.environ.get("GNSS_STALE_TIMEOUT", "3.0"))
 MOTION_STATE_TOPIC = os.environ.get(
     "MOTION_STATE_TOPIC", "/gnss_imu_eskf/motion_state_raw_gnss"
 )
+MOTION_POS_DEADBAND_TOPIC = os.environ.get(
+    "MOTION_POS_DEADBAND_TOPIC", "/gnss_imu_eskf/motion_pos_deadband"
+)
+MOTION_POS_DEADBAND_M = float(os.environ.get("MOTION_POS_DEADBAND_M", "0.3"))
 DIRECTION_STALE_TIMEOUT = float(os.environ.get("DIRECTION_STALE_TIMEOUT", "3.0"))
 AUTO_SAVE_MIN_DISTANCE_M = max(
     0.0, float(os.environ.get("AUTO_SAVE_MIN_DISTANCE_M", "0.3"))
@@ -79,6 +83,8 @@ if not math.isfinite(GNSS_STALE_TIMEOUT) or GNSS_STALE_TIMEOUT <= 0:
     raise ValueError("GNSS_STALE_TIMEOUT must be a finite number greater than zero")
 if not math.isfinite(DIRECTION_STALE_TIMEOUT) or DIRECTION_STALE_TIMEOUT <= 0:
     raise ValueError("DIRECTION_STALE_TIMEOUT must be a finite number greater than zero")
+if not math.isfinite(MOTION_POS_DEADBAND_M) or MOTION_POS_DEADBAND_M <= 0:
+    raise ValueError("MOTION_POS_DEADBAND_M must be a finite number greater than zero")
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
@@ -94,6 +100,7 @@ state = {
     "is_track": False,
     "auto_save": False,
     "auto_save_min_distance_m": AUTO_SAVE_MIN_DISTANCE_M,
+    "motion_pos_deadband_m": MOTION_POS_DEADBAND_M,
     "last_updated": None,
     "camera_index": None,
     "infer_ms": 0.0,
@@ -335,6 +342,9 @@ class BridgeNode(Node):
         self.create_subscription(Float32, "/infer_ms", self._infer_ms_cb, 10)
         self.create_subscription(NavSatFix, GNSS_FIX_TOPIC, self._gnss_fix_cb, 10)
         self.create_subscription(String, MOTION_STATE_TOPIC, self._motion_state_cb, 10)
+        self._motion_pos_deadband_pub = self.create_publisher(
+            Float32, MOTION_POS_DEADBAND_TOPIC, 10
+        )
 
         self._start_cli = self.create_client(Trigger, "/bed_detection")
         self._stop_cli = self.create_client(Trigger, "/bed_detection_stop")
@@ -349,6 +359,9 @@ class BridgeNode(Node):
         self.get_logger().info(
             "Listening for motion state on %s (stale after %.1f s)"
             % (MOTION_STATE_TOPIC, DIRECTION_STALE_TIMEOUT)
+        )
+        self.get_logger().info(
+            "Publishing motion deadband updates on %s" % MOTION_POS_DEADBAND_TOPIC
         )
 
     def _counts_cb(self, msg):
@@ -515,6 +528,16 @@ class BridgeNode(Node):
                 state["is_track"] = bool(enabled)
             broadcast_state("status")
         return ok, detail
+
+    def set_motion_pos_deadband(self, value):
+        message = Float32()
+        message.data = float(value)
+        with self._control_lock:
+            self._motion_pos_deadband_pub.publish(message)
+        with state_lock:
+            state["motion_pos_deadband_m"] = float(value)
+        broadcast_state("status")
+        self.get_logger().info("Motion position deadband set to %.3f m" % value)
 
 
 ros_node = None
@@ -813,6 +836,33 @@ def set_auto_save_distance():
         "success": True,
         "message": "minimum auto-save distance set to %.2f m" % min_distance_m,
         "auto_save_min_distance_m": min_distance_m,
+    })
+
+
+@app.route("/api/motion_pos_deadband", methods=["POST"])
+def set_motion_pos_deadband():
+    data = request.get_json(silent=True) or {}
+    try:
+        deadband_m = float(data.get("deadband_m"))
+    except (TypeError, ValueError):
+        return jsonify({
+            "success": False, "message": "deadband_m must be a number",
+        }), 400
+    if not math.isfinite(deadband_m) or deadband_m <= 0:
+        return jsonify({
+            "success": False,
+            "message": "deadband_m must be a finite number greater than zero",
+        }), 400
+
+    bridge = ros_node
+    if bridge is None:
+        return jsonify({"success": False, "message": "ROS bridge is not ready"}), 503
+    bridge.set_motion_pos_deadband(deadband_m)
+    return jsonify({
+        "success": True,
+        "message": "motion deadband set to %.3f m" % deadband_m,
+        "motion_pos_deadband_m": deadband_m,
+        "topic": MOTION_POS_DEADBAND_TOPIC,
     })
 
 

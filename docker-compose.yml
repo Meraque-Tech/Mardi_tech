@@ -59,6 +59,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - GNSS_FIX_TOPIC=/receiver/fix
       - MOTION_STATE_TOPIC=/gnss_imu_eskf/motion_state_raw_gnss
+      - MOTION_POS_DEADBAND_TOPIC=/gnss_imu_eskf/motion_pos_deadband
+      - MOTION_POS_DEADBAND_M=0.3
       - GNSS_STALE_TIMEOUT=3.0
       - AUTO_SAVE_MIN_DISTANCE_M=0.3
       - HOST_WEIGHTS_DIR=${HOME}/yolov8/weights
@@ -106,6 +108,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - GNSS_FIX_TOPIC=/receiver/fix
       - MOTION_STATE_TOPIC=/gnss_imu_eskf/motion_state_raw_gnss
+      - MOTION_POS_DEADBAND_TOPIC=/gnss_imu_eskf/motion_pos_deadband
+      - MOTION_POS_DEADBAND_M=0.3
       - GNSS_STALE_TIMEOUT=3.0
       - AUTO_SAVE_MIN_DISTANCE_M=0.3
       - HOST_WEIGHTS_DIR=${HOME}/yolov8/weights

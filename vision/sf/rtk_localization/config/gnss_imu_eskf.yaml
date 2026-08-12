@@ -54,5 +54,10 @@ gnss_imu_eskf_node:
     heading_nis_gate: 10.83        # chi-square 1 DoF, 99.9 percent
     resolve_reverse_motion: true
 
+    # Motion-classification hysteresis. The topic accepts std_msgs/Float32
+    # values greater than zero and applies updates without restarting the node.
+    motion_pos_deadband: 0.3       # m
+    motion_pos_deadband_topic: /gnss_imu_eskf/motion_pos_deadband
+
     # Antenna position relative to the filter body origin, expressed in base_frame.
     gnss_lever_arm: [0.0, 0.0, 0.0]

@@ -267,6 +267,16 @@
                    onchange="setAutoSaveDistance(this.value)" title="Minimum distance (m) between auto-saves">
           </div>
         </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <strong>Motion deadband</strong>
+            <div class="sub">Distance required to classify motion (metres)</div>
+          </div>
+          <div class="label-input-row" style="margin-top:0">
+            <input id="motion-pos-deadband" type="number" min="0.001" step="0.05" value="0.3"
+                   onchange="setMotionPosDeadband(this.value)" title="Motion classification deadband (m)">
+          </div>
+        </div>
       </section>
 
       <!-- Class labels -->
@@ -330,6 +340,7 @@
   let historyOffset=0, historyTotal=0, chartItems=[], refreshTimer=0, wsRetries=0;
   let streamPort=8080, streamRetries=0, streamRetryTimer=0;
   let lastAutoSaveDistance=0.3, autoSaveDistanceSynced=false;
+  let lastMotionPosDeadband=0.3, motionPosDeadbandSynced=false;
 
   // Class label mapping — stored in localStorage
   let classLabels = {};
@@ -393,6 +404,16 @@
     else desc.textContent='Saving frame and count every 0.5 seconds';
   }
 
+  function applyMotionPosDeadband(data) {
+    if(typeof data.motion_pos_deadband_m!=='number')return;
+    lastMotionPosDeadband=data.motion_pos_deadband_m;
+    const input=document.getElementById('motion-pos-deadband');
+    if(!motionPosDeadbandSynced&&document.activeElement!==input){
+      input.value=lastMotionPosDeadband;
+      motionPosDeadbandSynced=true;
+    }
+  }
+
   function applySnapshot(data) {
     const running=Boolean(data.detecting), bed=Boolean(data.bed_status);
     // Top status bar
@@ -413,6 +434,7 @@
     if(data.last_updated)document.getElementById('last-update').textContent=formatTime(data.last_updated);
     document.getElementById('camera-index').textContent=(data.camera_index===null||data.camera_index===undefined)?'—':`/dev/video${data.camera_index}`;
     document.getElementById('infer-ms').textContent=data.infer_ms?`${Number(data.infer_ms).toFixed(2)} ms`:'— ms';
+    applyMotionPosDeadband(data);
     applyDirectionBadge('forward-badge',data.is_forward,Boolean(data.direction_valid));
     applyDirectionBadge('backward-badge',data.is_backward,Boolean(data.direction_valid));
     renderCounts(data.counts||{});
@@ -486,6 +508,13 @@
     if(!Number.isFinite(min_distance_m)||min_distance_m<0){toast('Enter a distance of 0 or more metres',true);input.value=lastAutoSaveDistance;return;}
     try { const result=await api('/api/auto_save_distance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({min_distance_m})});lastAutoSaveDistance=result.auto_save_min_distance_m;input.value=lastAutoSaveDistance;toast(result.message); }
     catch(error){input.value=lastAutoSaveDistance;toast(error.message,true);}
+  }
+
+  async function setMotionPosDeadband(value) {
+    const input=document.getElementById('motion-pos-deadband'), deadband_m=Number(value);
+    if(!Number.isFinite(deadband_m)||deadband_m<=0){toast('Enter a motion deadband greater than 0 metres',true);input.value=lastMotionPosDeadband;return;}
+    try { const result=await api('/api/motion_pos_deadband',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deadband_m})});lastMotionPosDeadband=result.motion_pos_deadband_m;input.value=lastMotionPosDeadband;toast(result.message); }
+    catch(error){input.value=lastMotionPosDeadband;toast(error.message,true);}
   }
 
   async function resetTracker() {
