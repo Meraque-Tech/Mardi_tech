@@ -13,7 +13,7 @@ SHELL ["/bin/bash", "-c"]
 # Build yolov8_trt_bed_detect_orin
 # -----------------------------
 WORKDIR /ros2_ws/src
-COPY yolov8_trt_bed_detect_orin/ yolov8_trt_bed_detect_orin/
+COPY yolov8_trt_bed_detect_orin yolov8_trt_bed_detect_orin/
 
 WORKDIR /ros2_ws
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
