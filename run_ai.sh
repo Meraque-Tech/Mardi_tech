@@ -9,9 +9,6 @@ case "$ARCH" in
     docker compose up -d imu_gnss_raw yolov8-trt-bed-detect-x86-jazzy
     
     docker compose logs -f imu_gnss_raw
-    docker compose logs -f yolov8-trt-bed-detect-x86-jazzy
-
-    # docker compose up -d yolov8-trt-bed-detect-x86-jazzy imu_gnss_raw
 
     ;;
   aarch64)
