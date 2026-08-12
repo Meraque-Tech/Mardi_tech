@@ -1,21 +1,23 @@
 #!/bin/bash
 
-ARCH=$(uname -m)
+docker rm -f $(docker ps -aq)
 
-case "$ARCH" in
-  x86_64)
-    docker compose down imu_gnss_raw yolov8-trt-bed-detect-x86-jazzy
+# ARCH=$(uname -m)
+
+# case "$ARCH" in
+#   x86_64)
+#     docker compose down imu_gnss_raw yolov8-trt-bed-detect-x86-jazzy
     
-    ;;
-  aarch64)
-    docker compose down imu_gnss_raw yolov8-trt-bed-detect-orin
+#     ;;
+#   aarch64)
+#     docker compose down imu_gnss_raw yolov8-trt-bed-detect-orin
     
-    ;;
-  *)
-    echo "Unsupported architecture: $ARCH"
-    exit 1
-    ;;
-esac
+#     ;;
+#   *)
+#     echo "Unsupported architecture: $ARCH"
+#     exit 1
+#     ;;
+# esac
 
 
 # ros2 daemon stop
