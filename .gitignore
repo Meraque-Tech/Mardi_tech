@@ -5,3 +5,7 @@ logs.txt
 /rosbags
 /bags2
 /bags
+
+/build
+/install
+/log
