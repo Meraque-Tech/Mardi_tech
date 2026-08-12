@@ -25,7 +25,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import Bool, Float32, Int32, String, UInt8
+from std_msgs.msg import Float32, Int32, String, UInt8
 from std_srvs.srv import SetBool, Trigger
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
