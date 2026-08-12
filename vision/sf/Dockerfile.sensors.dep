@@ -75,3 +75,9 @@ RUN source /opt/ros/${ROS_DISTRO}/setup.sh \
 # sudo systemctl restart bluetooth
 # docker build -f Dockerfile.sensors.dep -t meraquetech/race_nav:humble.sensors.dep_jetson .
 # docker push meraquetech/race_nav:humble.sensors.dep_jetson
+
+# docker buildx build --platform linux/amd64,linux/arm64 \
+#     -f Dockerfile.sensors.dep \
+#     -t meraquetech/race_nav:humble.sensors.dep_jetson \
+#     --push \
+#     .

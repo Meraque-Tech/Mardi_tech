@@ -97,6 +97,12 @@ docker buildx build \
   --push \
   .
 
+docker buildx build --platform linux/amd64,linux/arm64 \
+    -f Dockerfile.sensors.dep \
+    -t meraquetech/race_nav:humble.sensors.dep_jetson \
+    --push \
+    .
+
 
 docker buildx imagetools inspect meraquetech/race_nav:humble-ros-core.x
 
