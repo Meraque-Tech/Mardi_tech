@@ -66,8 +66,9 @@ HISTORY_DB = os.environ.get("HISTORY_DB", os.path.join(SAVE_DIR, "count_history.
 AUTO_SAVE_INTERVAL = max(0.5, float(os.environ.get("AUTO_SAVE_INTERVAL", "0.5")))
 GNSS_FIX_TOPIC = os.environ.get("GNSS_FIX_TOPIC", "/receiver/fix")
 GNSS_STALE_TIMEOUT = float(os.environ.get("GNSS_STALE_TIMEOUT", "3.0"))
-FORWARD_TOPIC = os.environ.get("FORWARD_TOPIC", "/gnss/is_forward")
-BACKWARD_TOPIC = os.environ.get("BACKWARD_TOPIC", "/gnss/is_backward")
+MOTION_STATE_TOPIC = os.environ.get(
+    "MOTION_STATE_TOPIC", "/gnss_imu_eskf/motion_state_raw_gnss"
+)
 DIRECTION_STALE_TIMEOUT = float(os.environ.get("DIRECTION_STALE_TIMEOUT", "3.0"))
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -102,8 +103,7 @@ state = {
 }
 state_lock = threading.Lock()
 gnss_last_monotonic = None
-forward_last_monotonic = None
-backward_last_monotonic = None
+motion_state_last_monotonic = None
 auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
@@ -267,10 +267,8 @@ def _state_snapshot():
             and now_monotonic - gnss_last_monotonic <= GNSS_STALE_TIMEOUT
         )
         direction_is_fresh = (
-            forward_last_monotonic is not None
-            and backward_last_monotonic is not None
-            and now_monotonic - forward_last_monotonic <= DIRECTION_STALE_TIMEOUT
-            and now_monotonic - backward_last_monotonic <= DIRECTION_STALE_TIMEOUT
+            motion_state_last_monotonic is not None
+            and now_monotonic - motion_state_last_monotonic <= DIRECTION_STALE_TIMEOUT
         )
 
     if not gnss_is_fresh:
@@ -328,8 +326,7 @@ class BridgeNode(Node):
         self.create_subscription(Int32, "/camera_index", self._camera_index_cb, state_qos)
         self.create_subscription(Float32, "/infer_ms", self._infer_ms_cb, 10)
         self.create_subscription(NavSatFix, GNSS_FIX_TOPIC, self._gnss_fix_cb, 10)
-        self.create_subscription(Bool, FORWARD_TOPIC, self._forward_cb, 10)
-        self.create_subscription(Bool, BACKWARD_TOPIC, self._backward_cb, 10)
+        self.create_subscription(String, MOTION_STATE_TOPIC, self._motion_state_cb, 10)
 
         self._start_cli = self.create_client(Trigger, "/bed_detection")
         self._stop_cli = self.create_client(Trigger, "/bed_detection_stop")
@@ -342,8 +339,8 @@ class BridgeNode(Node):
             % (GNSS_FIX_TOPIC, GNSS_STALE_TIMEOUT)
         )
         self.get_logger().info(
-            "Listening for direction flags on %s and %s (stale after %.1f s)"
-            % (FORWARD_TOPIC, BACKWARD_TOPIC, DIRECTION_STALE_TIMEOUT)
+            "Listening for motion state on %s (stale after %.1f s)"
+            % (MOTION_STATE_TOPIC, DIRECTION_STALE_TIMEOUT)
         )
 
     def _counts_cb(self, msg):
@@ -412,25 +409,23 @@ class BridgeNode(Node):
                 state["gnss_received_at"] = None
                 gnss_last_monotonic = None
 
-    def _forward_cb(self, msg):
-        self._direction_cb("is_forward", bool(msg.data))
+    def _motion_state_cb(self, msg):
+        global motion_state_last_monotonic
 
-    def _backward_cb(self, msg):
-        self._direction_cb("is_backward", bool(msg.data))
-
-    def _direction_cb(self, state_key, value):
-        global forward_last_monotonic, backward_last_monotonic
+        # /gnss_imu_eskf/motion_state_raw_gnss publishes one of:
+        # "idle", "forward", "backward".
+        motion_state = (msg.data or "").strip()
+        is_forward = motion_state == "forward"
+        is_backward = motion_state == "backward"
 
         now_monotonic = time.monotonic()
         with state_lock:
-            state[state_key] = value
+            state["is_forward"] = is_forward
+            state["is_backward"] = is_backward
             state["direction_received_at"] = datetime.datetime.now(
                 datetime.timezone.utc
             ).isoformat()
-            if state_key == "is_forward":
-                forward_last_monotonic = now_monotonic
-            else:
-                backward_last_monotonic = now_monotonic
+            motion_state_last_monotonic = now_monotonic
 
         snapshot = _state_snapshot()
         direction_state = (
