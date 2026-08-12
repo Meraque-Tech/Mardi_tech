@@ -24,6 +24,7 @@ from typing import List, Optional
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, Int32, String, UInt8
 from std_srvs.srv import SetBool, Trigger
@@ -73,10 +74,15 @@ MOTION_POS_DEADBAND_TOPIC = os.environ.get(
     "MOTION_POS_DEADBAND_TOPIC", "/gnss_imu_eskf/motion_pos_deadband"
 )
 MOTION_POS_DEADBAND_M = float(os.environ.get("MOTION_POS_DEADBAND_M", "0.3"))
-DIRECTION_STALE_TIMEOUT = float(os.environ.get("DIRECTION_STALE_TIMEOUT", "3.0"))
-AUTO_SAVE_MIN_DISTANCE_M = max(
-    0.0, float(os.environ.get("AUTO_SAVE_MIN_DISTANCE_M", "0.3"))
+# Local ENU position of the raw GNSS fix (nav_msgs/Odometry.pose.pose.position)
+# -- the auto-save minimum-distance gate and the "distance from previous frame"
+# history column are both computed from this rather than lat/lon, since it's
+# the same flat-Earth frame gnss_imu_eskf_node itself uses for its motion
+# classification (no haversine/earth-radius approximation needed).
+GNSS_ONLY_ODOM_TOPIC = os.environ.get(
+    "GNSS_ONLY_ODOM_TOPIC", "/gnss_imu_eskf/gnss_only_odom"
 )
+DIRECTION_STALE_TIMEOUT = float(os.environ.get("DIRECTION_STALE_TIMEOUT", "3.0"))
 STATIC_DIR = Path(__file__).parent / "static"
 
 if not math.isfinite(GNSS_STALE_TIMEOUT) or GNSS_STALE_TIMEOUT <= 0:
@@ -99,7 +105,6 @@ state = {
     "detecting": False,
     "is_track": False,
     "auto_save": False,
-    "auto_save_min_distance_m": AUTO_SAVE_MIN_DISTANCE_M,
     "motion_pos_deadband_m": MOTION_POS_DEADBAND_M,
     "last_updated": None,
     "camera_index": None,
@@ -115,8 +120,12 @@ state = {
 state_lock = threading.Lock()
 gnss_last_monotonic = None
 motion_state_last_monotonic = None
-last_save_latitude = None
-last_save_longitude = None
+# Local ENU position from /gnss_imu_eskf/gnss_only_odom (see
+# GNSS_ONLY_ODOM_TOPIC above) -- None until the first odom message arrives.
+gnss_odom_x = None
+gnss_odom_y = None
+last_save_x = None
+last_save_y = None
 auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
@@ -165,7 +174,8 @@ def _init_db():
                 frame_filename TEXT,
                 latitude REAL,
                 longitude REAL,
-                gnss_recorded_at TEXT
+                gnss_recorded_at TEXT,
+                distance_from_prev_m REAL
             )
             """
         )
@@ -175,6 +185,7 @@ def _init_db():
             "latitude": "REAL",
             "longitude": "REAL",
             "gnss_recorded_at": "TEXT",
+            "distance_from_prev_m": "REAL",
         }
         for column, column_type in migrations.items():
             if column not in columns:
@@ -183,14 +194,15 @@ def _init_db():
                 )
 
 
-def _store_history(snapshot, frame_filename=None):
+def _store_history(snapshot, frame_filename=None, distance_from_prev_m=None):
     with db_lock, _db_connect() as db:
         cursor = db.execute(
             """
             INSERT INTO count_history
                 (recorded_at, counts_json, total, bed_status, confidence, tracking,
-                 frame_filename, latitude, longitude, gnss_recorded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 frame_filename, latitude, longitude, gnss_recorded_at,
+                 distance_from_prev_m)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 snapshot["last_updated"],
@@ -203,6 +215,7 @@ def _store_history(snapshot, frame_filename=None):
                 snapshot["latitude"],
                 snapshot["longitude"],
                 snapshot["gnss_received_at"],
+                distance_from_prev_m,
             ),
         )
         return cursor.lastrowid
@@ -214,7 +227,8 @@ def _history_rows(limit, offset):
         rows = db.execute(
             """
             SELECT id, recorded_at, counts_json, total, bed_status, confidence, tracking,
-                   frame_filename, latitude, longitude, gnss_recorded_at
+                   frame_filename, latitude, longitude, gnss_recorded_at,
+                   distance_from_prev_m
             FROM count_history ORDER BY id DESC LIMIT ? OFFSET ?
             """,
             (limit, offset),
@@ -232,6 +246,7 @@ def _history_rows(limit, offset):
             "latitude": row["latitude"],
             "longitude": row["longitude"],
             "gnss_time": row["gnss_recorded_at"],
+            "distance_from_prev_m": row["distance_from_prev_m"],
         }
         for row in rows
     ]
@@ -342,6 +357,9 @@ class BridgeNode(Node):
         self.create_subscription(Float32, "/infer_ms", self._infer_ms_cb, 10)
         self.create_subscription(NavSatFix, GNSS_FIX_TOPIC, self._gnss_fix_cb, 10)
         self.create_subscription(String, MOTION_STATE_TOPIC, self._motion_state_cb, 10)
+        self.create_subscription(
+            Odometry, GNSS_ONLY_ODOM_TOPIC, self._gnss_only_odom_cb, 10
+        )
         self._motion_pos_deadband_pub = self.create_publisher(
             Float32, MOTION_POS_DEADBAND_TOPIC, 10
         )
@@ -432,6 +450,16 @@ class BridgeNode(Node):
                 state["gnss_valid"] = False
                 state["gnss_received_at"] = None
                 gnss_last_monotonic = None
+
+    def _gnss_only_odom_cb(self, msg):
+        # Local ENU position of the raw GNSS fix, same frame
+        # gnss_imu_eskf_node uses internally -- source of truth for the
+        # auto-save minimum-distance gate and the history table's
+        # "distance from previous frame" column.
+        global gnss_odom_x, gnss_odom_y
+        with state_lock:
+            gnss_odom_x = msg.pose.pose.position.x
+            gnss_odom_y = msg.pose.pose.position.y
 
     def _motion_state_cb(self, msg):
         global motion_state_last_monotonic
@@ -588,16 +616,9 @@ def _coordinate_filename_token(value):
     return "%.8f" % coordinate
 
 
-def _haversine_distance_m(lat1, lon1, lat2, lon2):
-    earth_radius_m = 6371000.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    d_phi = math.radians(lat2 - lat1)
-    d_lambda = math.radians(lon2 - lon1)
-    a = (
-        math.sin(d_phi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
-    )
-    return earth_radius_m * 2 * math.asin(min(1.0, math.sqrt(a)))
+def _gnss_odom_xy():
+    with state_lock:
+        return gnss_odom_x, gnss_odom_y
 
 
 def _write_frame(jpeg, latitude=None, longitude=None):
@@ -627,30 +648,36 @@ def _write_frame(jpeg, latitude=None, longitude=None):
             sequence += 1
 
 
-def _below_min_save_distance(snapshot):
-    """True if a fresh GNSS fix exists but hasn't moved far enough to save yet.
+def _distance_since_last_save_m(snapshot):
+    """Euclidean distance (m) in the ESKF's local ENU frame from the last
+    saved position to the current /gnss_imu_eskf/gnss_only_odom position, or
+    None if either the current or last-saved position is unknown.
+    """
+    x, y = _gnss_odom_xy()
+    if x is None or y is None:
+        return None
+    if last_save_x is None or last_save_y is None:
+        return None
+    return math.hypot(x - last_save_x, y - last_save_y)
 
-    Distance is only enforced when the current fix and the last saved fix are
-    both known -- with no prior save, or no GNSS fix at all, the threshold
+
+def _below_min_save_distance(snapshot):
+    """True if an odom position exists but hasn't moved far enough to save yet.
+
+    Distance is only enforced when both the current and last-saved position
+    are known -- with no prior save, or no odom data at all, the threshold
     can't be evaluated, so auto-save falls back to the interval-only cadence.
     """
-    global last_save_latitude, last_save_longitude
-
-    if not snapshot["gnss_valid"]:
+    distance_m = _distance_since_last_save_m(snapshot)
+    if distance_m is None:
         return False
-    if last_save_latitude is None or last_save_longitude is None:
-        return False
-    distance_m = _haversine_distance_m(
-        last_save_latitude, last_save_longitude,
-        snapshot["latitude"], snapshot["longitude"],
-    )
-    return distance_m < snapshot["auto_save_min_distance_m"]
+    return distance_m < snapshot["motion_pos_deadband_m"]
 
 
 def _auto_save_loop():
     """Auto-save only while detection, fresh forward-only motion, and the
     minimum travel distance since the last save are all satisfied."""
-    global last_save_latitude, last_save_longitude
+    global last_save_x, last_save_y
 
     while True:
         auto_save_wakeup.wait(timeout=AUTO_SAVE_INTERVAL)
@@ -693,16 +720,18 @@ def _auto_save_loop():
                     or _below_min_save_distance(snapshot)
                 ):
                     continue
+                distance_from_prev_m = _distance_since_last_save_m(snapshot)
                 snapshot["last_updated"] = datetime.datetime.now(
                     datetime.timezone.utc
                 ).isoformat()
                 frame_filename, frame_path = _write_frame(
                     jpeg, snapshot["latitude"], snapshot["longitude"]
                 )
-                _store_history(snapshot, frame_filename)
-                if snapshot["gnss_valid"]:
-                    last_save_latitude = snapshot["latitude"]
-                    last_save_longitude = snapshot["longitude"]
+                _store_history(snapshot, frame_filename, distance_from_prev_m)
+                x, y = _gnss_odom_xy()
+                if x is not None and y is not None:
+                    last_save_x = x
+                    last_save_y = y
         except (OSError, sqlite3.Error) as exc:
             if frame_path and os.path.exists(frame_path):
                 os.unlink(frame_path)
@@ -759,6 +788,8 @@ def get_history():
 
 @app.route("/api/save_count", methods=["POST"])
 def save_count():
+    global last_save_x, last_save_y
+
     with state_lock:
         if state["last_updated"] is None:
             return jsonify({"success": False, "message": "no live count has been received yet"}), 409
@@ -768,7 +799,12 @@ def save_count():
     snapshot["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     try:
         with storage_lock:
-            record_id = _store_history(snapshot)
+            distance_from_prev_m = _distance_since_last_save_m(snapshot)
+            record_id = _store_history(snapshot, distance_from_prev_m=distance_from_prev_m)
+            x, y = _gnss_odom_xy()
+            if x is not None and y is not None:
+                last_save_x = x
+                last_save_y = y
     except sqlite3.Error as exc:
         return jsonify({"success": False, "message": "could not save count: %s" % exc}), 500
 
@@ -788,7 +824,7 @@ def save_count():
 
 @app.route("/api/auto_save", methods=["POST"])
 def set_auto_save():
-    global last_save_latitude, last_save_longitude
+    global last_save_x, last_save_y
 
     data = request.get_json(silent=True) or {}
     enabled = data.get("enabled")
@@ -797,8 +833,8 @@ def set_auto_save():
     with state_lock:
         state["auto_save"] = enabled
         if enabled:
-            last_save_latitude = None
-            last_save_longitude = None
+            last_save_x = None
+            last_save_y = None
     auto_save_wakeup.set()
     broadcast_state("status")
     return jsonify({
@@ -806,36 +842,6 @@ def set_auto_save():
         "message": "automatic saving enabled" if enabled else "automatic saving disabled",
         "auto_save": enabled,
         "interval_seconds": AUTO_SAVE_INTERVAL,
-    })
-
-
-@app.route("/api/auto_save_distance", methods=["POST"])
-def set_auto_save_distance():
-    global last_save_latitude, last_save_longitude
-
-    data = request.get_json(silent=True) or {}
-    try:
-        min_distance_m = float(data.get("min_distance_m"))
-    except (TypeError, ValueError):
-        return jsonify({
-            "success": False, "message": "min_distance_m must be a number",
-        }), 400
-    if not math.isfinite(min_distance_m) or min_distance_m < 0:
-        return jsonify({
-            "success": False,
-            "message": "min_distance_m must be a finite number >= 0",
-        }), 400
-    with state_lock:
-        state["auto_save_min_distance_m"] = min_distance_m
-        # Reset so the next fix after a threshold change isn't compared
-        # against a position saved under the old threshold.
-        last_save_latitude = None
-        last_save_longitude = None
-    broadcast_state("status")
-    return jsonify({
-        "success": True,
-        "message": "minimum auto-save distance set to %.2f m" % min_distance_m,
-        "auto_save_min_distance_m": min_distance_m,
     })
 
 

@@ -135,6 +135,7 @@
     <div class="status-item"><span class="muted">Obj result</span><strong><span id="bed-badge" class="badge clear">CLEAR</span></strong></div>
     <div class="status-item"><span class="muted">Forward</span><strong><span id="forward-badge" class="badge unavailable">—</span></strong></div>
     <div class="status-item"><span class="muted">Backward</span><strong><span id="backward-badge" class="badge unavailable">—</span></strong></div>
+    <div class="status-item"><span class="muted">GNSS</span><strong id="gnss-coords" style="font-family:ui-monospace,monospace;font-size:12px">—</strong></div>
     <div class="status-item"><span class="muted">Confidence</span><strong id="confidence">0.000</strong></div>
     <div class="status-item"><span class="muted">Current total</span><strong id="current-total">0</strong></div>
     <div class="status-item"><span class="muted">Camera port</span><strong id="camera-index">—</strong></div>
@@ -259,22 +260,12 @@
         </div>
         <div class="toggle-row">
           <div class="toggle-label">
-            <strong>Min. save distance</strong>
-            <div class="sub">Skip auto-save until the robot has moved this far (metres)</div>
-          </div>
-          <div class="label-input-row" style="margin-top:0">
-            <input id="auto-save-distance" type="number" min="0" step="0.1" value="0.3"
-                   onchange="setAutoSaveDistance(this.value)" title="Minimum distance (m) between auto-saves">
-          </div>
-        </div>
-        <div class="toggle-row">
-          <div class="toggle-label">
-            <strong>Motion deadband</strong>
-            <div class="sub">Distance required to classify motion (metres)</div>
+            <strong>Motion deadband / min. save distance</strong>
+            <div class="sub">Distance the robot must travel to register as moving and to trigger the next auto-save (metres)</div>
           </div>
           <div class="label-input-row" style="margin-top:0">
             <input id="motion-pos-deadband" type="number" min="0.001" step="0.05" value="0.3"
-                   onchange="setMotionPosDeadband(this.value)" title="Motion classification deadband (m)">
+                   onchange="setMotionPosDeadband(this.value)" title="Motion classification deadband + auto-save minimum distance (m)">
           </div>
         </div>
       </section>
@@ -310,6 +301,7 @@
             <tr>
               <th>Timestamp</th>
               <th>GNSS Coordinates</th>
+              <th>Dist. from prev.</th>
               <th>Detected Classes</th>
               <th style="text-align:center">Total</th>
               <th style="text-align:center">Object Status</th>
@@ -339,7 +331,6 @@
   const HISTORY_PAGE=50;
   let historyOffset=0, historyTotal=0, chartItems=[], refreshTimer=0, wsRetries=0;
   let streamPort=8080, streamRetries=0, streamRetryTimer=0;
-  let lastAutoSaveDistance=0.3, autoSaveDistanceSynced=false;
   let lastMotionPosDeadband=0.3, motionPosDeadbandSynced=false;
 
   // Class label mapping — stored in localStorage
@@ -391,16 +382,11 @@
   function applyAutoSaveStatus(data,running) {
     const enabled=Boolean(data.auto_save), desc=document.getElementById('auto-save-desc');
     document.getElementById('auto-save-toggle').checked=enabled;
-    if(typeof data.auto_save_min_distance_m==='number'){
-      lastAutoSaveDistance=data.auto_save_min_distance_m;
-      const distInput=document.getElementById('auto-save-distance');
-      if(!autoSaveDistanceSynced&&document.activeElement!==distInput){distInput.value=lastAutoSaveDistance;autoSaveDistanceSynced=true;}
-    }
     if(!enabled)desc.textContent='Off — turn on to save while moving forward';
     else if(!running)desc.textContent='On — waiting for detection to start';
     else if(!data.direction_valid)desc.textContent='On — waiting for direction data';
     else if(!data.auto_save_direction_eligible)desc.textContent='On — waiting for forward movement';
-    else if(data.auto_save_distance_eligible===false)desc.textContent=`On — waiting to move ${Number(lastAutoSaveDistance).toFixed(2)} m since last save`;
+    else if(data.auto_save_distance_eligible===false)desc.textContent=`On — waiting to move ${Number(lastMotionPosDeadband).toFixed(2)} m since last save`;
     else desc.textContent='Saving frame and count every 0.5 seconds';
   }
 
@@ -503,13 +489,6 @@
     catch(error){document.getElementById('auto-save-toggle').checked=!enabled;toast(error.message,true);}
   }
 
-  async function setAutoSaveDistance(value) {
-    const input=document.getElementById('auto-save-distance'), min_distance_m=Number(value);
-    if(!Number.isFinite(min_distance_m)||min_distance_m<0){toast('Enter a distance of 0 or more metres',true);input.value=lastAutoSaveDistance;return;}
-    try { const result=await api('/api/auto_save_distance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({min_distance_m})});lastAutoSaveDistance=result.auto_save_min_distance_m;input.value=lastAutoSaveDistance;toast(result.message); }
-    catch(error){input.value=lastAutoSaveDistance;toast(error.message,true);}
-  }
-
   async function setMotionPosDeadband(value) {
     const input=document.getElementById('motion-pos-deadband'), deadband_m=Number(value);
     if(!Number.isFinite(deadband_m)||deadband_m<=0){toast('Enter a motion deadband greater than 0 metres',true);input.value=lastMotionPosDeadband;return;}
@@ -570,6 +549,13 @@
     return `<div>Lat ${latitude.toFixed(8)}</div><div>Lon ${longitude.toFixed(8)}</div>`;
   }
 
+  function formatDistance(item) {
+    const distance=Number(item.distance_from_prev_m);
+    if(item.distance_from_prev_m===null||item.distance_from_prev_m===undefined||!Number.isFinite(distance))
+      return '<span style="color:var(--muted)">—</span>';
+    return `${distance.toFixed(2)} m`;
+  }
+
   async function loadHistory(offset=0) {
     try {
       const data=await api(`/api/history?limit=${HISTORY_PAGE}&offset=${offset}`);historyOffset=data.offset;historyTotal=data.total;
@@ -584,13 +570,14 @@
         return `<tr>
           <td class="ts">${formatTimestamp(item.time)}</td>
           <td class="gnss">${formatGnss(item)}</td>
+          <td class="gnss">${formatDistance(item)}</td>
           <td class="classes-cell">${renderClassPills(item.counts)}</td>
           <td class="total-cell" style="text-align:center">${item.total}</td>
           <td style="text-align:center">${objBadge}</td>
           <td>${renderConfBar(conf)}</td>
           <td>${frameCell}</td>
         </tr>`;
-      }).join(''):'<tr><td colspan="7" style="text-align:center;padding:28px;color:var(--muted)">No detection records yet. Save a count or enable automatic saving.</td></tr>';
+      }).join(''):'<tr><td colspan="8" style="text-align:center;padding:28px;color:var(--muted)">No detection records yet. Save a count or enable automatic saving.</td></tr>';
       if(offset===0){chartItems=data.items.slice().reverse();drawChart(chartItems);}
     } catch(error){document.getElementById('history-summary').textContent=error.message;}
   }
