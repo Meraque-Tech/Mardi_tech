@@ -103,6 +103,12 @@ docker buildx build --platform linux/amd64,linux/arm64 \
     --push \
     .
 
+docker buildx build --platform linux/amd64,linux/arm64 \
+    -f Dockerfile.sf.humble \
+    -t meraquetech/race_nav:sf.humble.v3 \
+    --push \
+    .
+
 
 docker buildx imagetools inspect meraquetech/race_nav:humble-ros-core.x
 

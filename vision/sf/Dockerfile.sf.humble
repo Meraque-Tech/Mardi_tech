@@ -10,7 +10,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 
 WORKDIR ${AGV_WS}
+
+
+
 COPY ./bwt901ble_imu src/bwt901ble_imu
+COPY ./prime_msgs src/prime_msgs
 COPY ./base_receiver src/base_receiver
 COPY ./rtk_localization src/rtk_localization
 
@@ -26,3 +30,10 @@ RUN chmod +x /amr_entrypoint.bash
 # Entrypoint
 ENTRYPOINT ["/amr_entrypoint.bash"]
 # CMD ["ros2", "launch", "rtk_localization", "imu_gps_raw.launch.py"]
+
+
+# docker buildx build --platform linux/amd64,linux/arm64 \
+#     -f Dockerfile.sf.humble \
+#     -t meraquetech/race_nav:sf.humble.v3 \
+#     --push \
+#     .
