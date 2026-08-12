@@ -86,6 +86,8 @@ GnssImuEskfNode::GnssImuEskfNode()
     "/gnss_imu_eskf/imu_only_odom", rclcpp::SystemDefaultsQoS());
   motion_state_pub_ = create_publisher<std_msgs::msg::String>(
     "/gnss_imu_eskf/motion_state", rclcpp::SystemDefaultsQoS());
+  motion_state_raw_gnss_pub_ = create_publisher<std_msgs::msg::String>(
+    "/gnss_imu_eskf/motion_state_raw_gnss", rclcpp::SystemDefaultsQoS());
   tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
 
   path_msg_.header.frame_id = map_frame_;
@@ -331,6 +333,7 @@ void GnssImuEskfNode::pvtCallback(const std_msgs::msg::String::SharedPtr msg)
     prev_gnss_pos_ = pos_meas;
   }
   publishGnssOnlyOdom(pos_meas, gnss_stamp);
+  publishMotionStateRawGnss(pos_meas, gnss_stamp);
 
   // "IMU-only" debug odom: position from the raw GNSS fix (same as above),
   // orientation from the IMU-only dead-reckoned attitude (q_imu_only_) --
@@ -669,6 +672,62 @@ void GnssImuEskfNode::publishMotionState(const Eigen::Vector3d & pos, const rclc
   std_msgs::msg::String msg;
   msg.data = state;
   motion_state_pub_->publish(msg);
+}
+
+/* ================= Publish motion-state classification (raw GNSS only) ================= */
+void GnssImuEskfNode::publishMotionStateRawGnss(
+  const Eigen::Vector3d & pos_meas, const rclcpp::Time & stamp)
+{
+  // Same deadband/hysteresis structure as publishMotionState(), but driven
+  // entirely by raw GNSS: position is the raw fix (pos_meas) and "facing
+  // direction" is gnss_only_orientation_ -- the fix-to-fix course heading
+  // computed just above in pvtCallback -- instead of the ESKF's fused q_.
+  // No IMU data is involved anywhere in this function.
+  if (!motion_raw_anchor_set_) {
+    motion_raw_anchor_pos_ = pos_meas;
+    motion_raw_anchor_set_ = true;
+    motion_raw_idle_ref_pos_ = pos_meas;
+    motion_raw_idle_ref_time_ = stamp;
+  }
+
+  std::string state;
+
+  if (!motion_raw_is_moving_) {
+    const double dist_since_anchor = (pos_meas - motion_raw_anchor_pos_).norm();
+    if (dist_since_anchor < motion_pos_deadband_) {
+      state = "idle";
+    } else {
+      motion_raw_is_moving_ = true;
+      motion_raw_idle_ref_pos_ = motion_raw_anchor_pos_;
+      motion_raw_idle_ref_time_ = stamp;
+    }
+  }
+
+  if (motion_raw_is_moving_) {
+    const Eigen::Vector3d displacement = pos_meas - motion_raw_idle_ref_pos_;
+    const double dist_from_idle_ref = displacement.norm();
+
+    if (dist_from_idle_ref >= motion_pos_deadband_) {
+      const Eigen::Vector3d course_axis_world =
+        gnss_only_orientation_.toRotationMatrix().col(0);
+      const double along_course = displacement.dot(course_axis_world);
+      state = (along_course >= 0.0) ? "forward" : "backward";
+      motion_raw_idle_ref_pos_ = pos_meas;
+      motion_raw_idle_ref_time_ = stamp;
+    } else if ((stamp - motion_raw_idle_ref_time_).seconds() >= motion_idle_hold_sec_) {
+      motion_raw_is_moving_ = false;
+      motion_raw_anchor_pos_ = pos_meas;
+      state = "idle";
+    } else {
+      state = last_motion_raw_state_.empty() ? "idle" : last_motion_raw_state_;
+    }
+  }
+
+  last_motion_raw_state_ = state;
+
+  std_msgs::msg::String msg;
+  msg.data = state;
+  motion_state_raw_gnss_pub_->publish(msg);
 }
 
 /* ================= Publish raw GNSS fix marker ================= */

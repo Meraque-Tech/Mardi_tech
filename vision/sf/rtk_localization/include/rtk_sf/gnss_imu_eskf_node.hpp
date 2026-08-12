@@ -78,6 +78,7 @@ private:
   void publishGnssOnlyOdom(const Eigen::Vector3d & pos_meas, const rclcpp::Time & stamp);
   void publishImuOnlyOdom(const Eigen::Vector3d & pos_meas, const rclcpp::Time & stamp);
   void publishMotionState(const Eigen::Vector3d & pos, const rclcpp::Time & stamp);
+  void publishMotionStateRawGnss(const Eigen::Vector3d & pos_meas, const rclcpp::Time & stamp);
 
   static bool rtkStateFromCarr(int carr, bool & is_fixed, bool & is_float);
   static double wrapAngle(double angle);
@@ -96,6 +97,7 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr gnss_only_odom_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr imu_only_odom_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr motion_state_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr motion_state_raw_gnss_pub_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   nav_msgs::msg::Path path_msg_;
@@ -149,6 +151,18 @@ private:
   Eigen::Vector3d motion_idle_ref_pos_{Eigen::Vector3d::Zero()};
   rclcpp::Time motion_idle_ref_time_;
   std::string last_motion_state_;
+
+  /* ===== Raw-GNSS-only motion-state hysteresis: same deadband/hold logic as
+   * above but driven entirely by raw GNSS fixes (pos_meas) -- position and
+   * course-heading direction both come from consecutive GNSS fixes, with no
+   * IMU/fused-state dependency at all. Independent state so it can diverge
+   * from the fused /gnss_imu_eskf/motion_state output. ===== */
+  Eigen::Vector3d motion_raw_anchor_pos_{Eigen::Vector3d::Zero()};
+  bool motion_raw_anchor_set_{false};
+  bool motion_raw_is_moving_{false};
+  Eigen::Vector3d motion_raw_idle_ref_pos_{Eigen::Vector3d::Zero()};
+  rclcpp::Time motion_raw_idle_ref_time_;
+  std::string last_motion_raw_state_;
 
   /* ===== Single-antenna GNSS course heading ===== */
   Eigen::Vector3d heading_anchor_enu_{Eigen::Vector3d::Zero()};
