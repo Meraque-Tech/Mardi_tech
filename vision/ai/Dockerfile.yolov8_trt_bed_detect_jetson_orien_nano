@@ -4,6 +4,7 @@ FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV OPENBLAS_CORETYPE=ARMV8
+ENV ROS_DISTRO=humble
 # ENV CUDA_HOME=/usr/local/cuda
 # ENV CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda
 # Select bash as default shell
@@ -64,7 +65,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # -----------------------------
 # 4) ROS environment
 # -----------------------------
-ENV ROS_DISTRO=humble
+
 
 # Source ROS setup for all interactive shells inside container
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc
