@@ -59,8 +59,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ros-humble-ros-base \
     ros-humble-sensor-msgs \
     ros-dev-tools \
-    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp
-    
+    ros-humble-rmw-cyclonedds-cpp
+
 # -----------------------------
 # 4) ROS environment
 # -----------------------------
