@@ -1454,6 +1454,39 @@ def list_images():
     ])
 
 
+def _class_totals(rows):
+    """Sum each class's count across all saved-frame rows.
+
+    Returns (totals, grand_total) where totals is a dict of
+    class_id -> summed count, ordered numerically where class IDs are
+    numeric (falling back to string order otherwise), and grand_total is
+    the sum across all classes.
+    """
+    totals = collections.defaultdict(int)
+    for row in rows:
+        try:
+            counts = json.loads(row["counts_json"])
+        except (TypeError, ValueError):
+            continue
+        for class_id, count in counts.items():
+            try:
+                totals[class_id] += int(count)
+            except (TypeError, ValueError):
+                continue
+
+    def _class_sort_key(class_id):
+        try:
+            return (0, int(class_id))
+        except ValueError:
+            return (1, class_id)
+
+    ordered = {
+        class_id: totals[class_id]
+        for class_id in sorted(totals, key=_class_sort_key)
+    }
+    return ordered, sum(ordered.values())
+
+
 def _build_qa_report(rows):
     """Flag data-quality issues across all saved-frame rows (oldest first).
 
@@ -1537,6 +1570,27 @@ def _report_html(rows, flags):
     total_frames = len(rows)
     generated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+    class_totals, class_grand_total = _class_totals(rows)
+    if class_totals:
+        class_total_rows = "".join(
+            "<tr><td>Class %s</td><td>%d</td></tr>" % (esc(class_id), count)
+            for class_id, count in class_totals.items()
+        )
+        class_totals_section = (
+            "<h2>Class totals <span class='count neutral'>(%d classes)</span></h2>"
+            "<p class='desc'>Summed detection count per class across all saved frames.</p>"
+            "<table><thead><tr><th>Class</th><th>Total count</th></tr></thead>"
+            "<tbody>%s<tr class='grand-total'><td>All classes</td><td>%d</td></tr></tbody>"
+            "</table>"
+            % (len(class_totals), class_total_rows, class_grand_total)
+        )
+    else:
+        class_totals_section = (
+            "<h2>Class totals <span class='count neutral'>(0 classes)</span></h2>"
+            "<p class='desc'>Summed detection count per class across all saved frames.</p>"
+            "<p class='ok'>No class counts recorded.</p>"
+        )
+
     low_conf_section = section(
         "Low-confidence detections",
         "Confidence below %.2f -- verify these against the saved frame." % REPORT_LOW_CONFIDENCE,
@@ -1590,17 +1644,21 @@ h1{margin-bottom:4px}
 .stat .l{font-size:12px;color:#666}
 h2{margin-top:36px;border-top:1px solid #eee;padding-top:20px}
 .count{color:#c0392b;font-weight:600}
+.count.neutral{color:#3a5fc9}
 .desc{color:#555;font-size:13px;margin:4px 0 12px}
 .ok{color:#1e8e4e;font-weight:600}
 table{width:100%%;border-collapse:collapse;font-size:12.5px}
 th,td{text-align:left;padding:5px 8px;border-bottom:1px solid #eee}
 th{color:#666;font-weight:600}
 .run-header{background:#fff6e5;font-weight:600;color:#8a5a00}
+.grand-total td{border-top:2px solid #ccc;font-weight:700}
 </style></head>
 <body>
 <h1>Data Quality Report</h1>
 <div class="meta">Generated %s &middot; %d saved frames analyzed</div>
 <div class="summary">
+  <div class="stat"><div class="n">%d</div><div class="l">Distinct classes</div></div>
+  <div class="stat"><div class="n">%d</div><div class="l">All-class total</div></div>
   <div class="stat"><div class="n">%d</div><div class="l">Low-confidence</div></div>
   <div class="stat"><div class="n">%d</div><div class="l">Missing GNSS</div></div>
   <div class="stat"><div class="n">%d</div><div class="l">Near-duplicates</div></div>
@@ -1610,11 +1668,14 @@ th{color:#666;font-weight:600}
 %s
 %s
 %s
+%s
 </body></html>""" % (
         esc(generated_at), total_frames,
+        len(class_totals), class_grand_total,
         len(flags["low_confidence"]), len(flags["missing_gnss"]),
         len(flags["near_duplicates"]), len(flags["no_detection_runs"]),
-        low_conf_section, missing_gnss_section, near_dup_section, no_detection_section,
+        class_totals_section, low_conf_section, missing_gnss_section,
+        near_dup_section, no_detection_section,
     )
 
 
