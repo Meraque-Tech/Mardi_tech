@@ -70,6 +70,9 @@ MOTION_STATE_TOPIC = os.environ.get(
     "MOTION_STATE_TOPIC", "/gnss_imu_eskf/motion_state_raw_gnss"
 )
 DIRECTION_STALE_TIMEOUT = float(os.environ.get("DIRECTION_STALE_TIMEOUT", "3.0"))
+AUTO_SAVE_MIN_DISTANCE_M = max(
+    0.0, float(os.environ.get("AUTO_SAVE_MIN_DISTANCE_M", "0.3"))
+)
 STATIC_DIR = Path(__file__).parent / "static"
 
 if not math.isfinite(GNSS_STALE_TIMEOUT) or GNSS_STALE_TIMEOUT <= 0:
@@ -90,6 +93,7 @@ state = {
     "detecting": False,
     "is_track": False,
     "auto_save": False,
+    "auto_save_min_distance_m": AUTO_SAVE_MIN_DISTANCE_M,
     "last_updated": None,
     "camera_index": None,
     "infer_ms": 0.0,
@@ -104,6 +108,8 @@ state = {
 state_lock = threading.Lock()
 gnss_last_monotonic = None
 motion_state_last_monotonic = None
+last_save_latitude = None
+last_save_longitude = None
 auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
@@ -295,10 +301,12 @@ def _direction_allows_auto_save(snapshot):
 def _snapshot_payload(message_type="snapshot"):
     snapshot = _state_snapshot()
     snapshot["auto_save_direction_eligible"] = _direction_allows_auto_save(snapshot)
+    snapshot["auto_save_distance_eligible"] = not _below_min_save_distance(snapshot)
     snapshot["auto_save_active"] = (
         snapshot["auto_save"]
         and snapshot["detecting"]
         and snapshot["auto_save_direction_eligible"]
+        and snapshot["auto_save_distance_eligible"]
     )
     snapshot["type"] = message_type
     return snapshot
@@ -557,6 +565,18 @@ def _coordinate_filename_token(value):
     return "%.8f" % coordinate
 
 
+def _haversine_distance_m(lat1, lon1, lat2, lon2):
+    earth_radius_m = 6371000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    return earth_radius_m * 2 * math.asin(min(1.0, math.sqrt(a)))
+
+
 def _write_frame(jpeg, latitude=None, longitude=None):
     gmt_plus_8 = datetime.timezone(datetime.timedelta(hours=8))
     timestamp_token = datetime.datetime.now(gmt_plus_8).strftime(
@@ -584,8 +604,31 @@ def _write_frame(jpeg, latitude=None, longitude=None):
             sequence += 1
 
 
+def _below_min_save_distance(snapshot):
+    """True if a fresh GNSS fix exists but hasn't moved far enough to save yet.
+
+    Distance is only enforced when the current fix and the last saved fix are
+    both known -- with no prior save, or no GNSS fix at all, the threshold
+    can't be evaluated, so auto-save falls back to the interval-only cadence.
+    """
+    global last_save_latitude, last_save_longitude
+
+    if not snapshot["gnss_valid"]:
+        return False
+    if last_save_latitude is None or last_save_longitude is None:
+        return False
+    distance_m = _haversine_distance_m(
+        last_save_latitude, last_save_longitude,
+        snapshot["latitude"], snapshot["longitude"],
+    )
+    return distance_m < snapshot["auto_save_min_distance_m"]
+
+
 def _auto_save_loop():
-    """Auto-save only while detection and fresh forward-only motion are active."""
+    """Auto-save only while detection, fresh forward-only motion, and the
+    minimum travel distance since the last save are all satisfied."""
+    global last_save_latitude, last_save_longitude
+
     while True:
         auto_save_wakeup.wait(timeout=AUTO_SAVE_INTERVAL)
         auto_save_wakeup.clear()
@@ -595,6 +638,7 @@ def _auto_save_loop():
             not snapshot["auto_save"]
             or not snapshot["detecting"]
             or not _direction_allows_auto_save(snapshot)
+            or _below_min_save_distance(snapshot)
         ):
             continue
 
@@ -610,6 +654,7 @@ def _auto_save_loop():
             or not snapshot["detecting"]
             or snapshot["last_updated"] is None
             or not _direction_allows_auto_save(snapshot)
+            or _below_min_save_distance(snapshot)
         ):
             continue
 
@@ -622,6 +667,7 @@ def _auto_save_loop():
                     or not snapshot["detecting"]
                     or snapshot["last_updated"] is None
                     or not _direction_allows_auto_save(snapshot)
+                    or _below_min_save_distance(snapshot)
                 ):
                     continue
                 snapshot["last_updated"] = datetime.datetime.now(
@@ -631,6 +677,9 @@ def _auto_save_loop():
                     jpeg, snapshot["latitude"], snapshot["longitude"]
                 )
                 _store_history(snapshot, frame_filename)
+                if snapshot["gnss_valid"]:
+                    last_save_latitude = snapshot["latitude"]
+                    last_save_longitude = snapshot["longitude"]
         except (OSError, sqlite3.Error) as exc:
             if frame_path and os.path.exists(frame_path):
                 os.unlink(frame_path)
@@ -716,12 +765,17 @@ def save_count():
 
 @app.route("/api/auto_save", methods=["POST"])
 def set_auto_save():
+    global last_save_latitude, last_save_longitude
+
     data = request.get_json(silent=True) or {}
     enabled = data.get("enabled")
     if not isinstance(enabled, bool):
         return jsonify({"success": False, "message": "enabled must be a boolean"}), 400
     with state_lock:
         state["auto_save"] = enabled
+        if enabled:
+            last_save_latitude = None
+            last_save_longitude = None
     auto_save_wakeup.set()
     broadcast_state("status")
     return jsonify({
@@ -729,6 +783,36 @@ def set_auto_save():
         "message": "automatic saving enabled" if enabled else "automatic saving disabled",
         "auto_save": enabled,
         "interval_seconds": AUTO_SAVE_INTERVAL,
+    })
+
+
+@app.route("/api/auto_save_distance", methods=["POST"])
+def set_auto_save_distance():
+    global last_save_latitude, last_save_longitude
+
+    data = request.get_json(silent=True) or {}
+    try:
+        min_distance_m = float(data.get("min_distance_m"))
+    except (TypeError, ValueError):
+        return jsonify({
+            "success": False, "message": "min_distance_m must be a number",
+        }), 400
+    if not math.isfinite(min_distance_m) or min_distance_m < 0:
+        return jsonify({
+            "success": False,
+            "message": "min_distance_m must be a finite number >= 0",
+        }), 400
+    with state_lock:
+        state["auto_save_min_distance_m"] = min_distance_m
+        # Reset so the next fix after a threshold change isn't compared
+        # against a position saved under the old threshold.
+        last_save_latitude = None
+        last_save_longitude = None
+    broadcast_state("status")
+    return jsonify({
+        "success": True,
+        "message": "minimum auto-save distance set to %.2f m" % min_distance_m,
+        "auto_save_min_distance_m": min_distance_m,
     })
 
 

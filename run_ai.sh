@@ -5,7 +5,7 @@ ARCH=$(uname -m)
 case "$ARCH" in
   x86_64)
     ./kill_server.sh
-    # docker compose build imu_gnss_raw yolov8-trt-bed-detect-x86-jazzy
+    docker compose build imu_gnss_raw yolov8-trt-bed-detect-x86-jazzy
     # docker compose push imu_gnss_raw yolov8-trt-bed-detect-x86-jazzy
     docker compose up -d imu_gnss_raw yolov8-trt-bed-detect-x86-jazzy
 
