@@ -77,6 +77,7 @@ services:
       - ./cyclone_dds_profile.xml:/dds_ws/cyclone_dds_profile.xml:ro
       - ./vision/ai/yolov8_trt_bed_detect_orin/config:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/config
       - ./vision/ai/yolov8_trt_bed_detect_orin/launch:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/launch
+      - ./vision/ai/yolov8_trt_bed_detect_orin/web_server:/ros2_ws/install/yolov8_trt_bed_detect_orin/share/yolov8_trt_bed_detect_orin/web_server
       - ${HOME}/saved_frames:/saved_frames
       - /var/run/docker.sock:/var/run/docker.sock
     network_mode: host
