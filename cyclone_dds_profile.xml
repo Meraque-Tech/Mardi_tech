@@ -2,7 +2,9 @@
   <Domain>
     <General>
       <DontRoute>true</DontRoute>
-      <NetworkInterfaceAddress>lo</NetworkInterfaceAddress>
+      <Interfaces>
+        <NetworkInterface name="lo" />
+      </Interfaces>
     </General>
     <Discovery>
       <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
