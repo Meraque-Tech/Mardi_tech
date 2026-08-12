@@ -126,6 +126,17 @@ gnss_odom_x = None
 gnss_odom_y = None
 last_save_x = None
 last_save_y = None
+# Bounded trace of recent ENU path points for the UI's small path plot, each
+# {"x", "y", "captured": bool} -- "captured" marks the point nearest a saved
+# frame. Path-only, not persisted: it exists to show recent motion, not as a
+# historical record (count_history/DB already covers that per saved frame).
+PATH_POINTS_MAXLEN = 2000
+# Only append a new path point once the robot has moved at least this far
+# from the last recorded point, so a stationary robot doesn't fill the trace
+# with a stack of overlapping points at native GNSS PVT rate.
+PATH_POINT_MIN_SPACING_M = 0.05
+path_points = collections.deque(maxlen=PATH_POINTS_MAXLEN)
+path_points_lock = threading.Lock()
 auto_save_wakeup = threading.Event()
 ws_clients = []  # type: List
 ws_lock = threading.Lock()
@@ -454,12 +465,23 @@ class BridgeNode(Node):
     def _gnss_only_odom_cb(self, msg):
         # Local ENU position of the raw GNSS fix, same frame
         # gnss_imu_eskf_node uses internally -- source of truth for the
-        # auto-save minimum-distance gate and the history table's
-        # "distance from previous frame" column.
+        # auto-save minimum-distance gate, the history table's "distance
+        # from previous frame" column, and the UI's path trace below.
         global gnss_odom_x, gnss_odom_y
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
         with state_lock:
-            gnss_odom_x = msg.pose.pose.position.x
-            gnss_odom_y = msg.pose.pose.position.y
+            gnss_odom_x = x
+            gnss_odom_y = y
+
+        with path_points_lock:
+            if (
+                not path_points
+                or math.hypot(
+                    x - path_points[-1]["x"], y - path_points[-1]["y"]
+                ) >= PATH_POINT_MIN_SPACING_M
+            ):
+                path_points.append({"x": x, "y": y, "captured": False})
 
     def _motion_state_cb(self, msg):
         global motion_state_last_monotonic
@@ -648,6 +670,12 @@ def _write_frame(jpeg, latitude=None, longitude=None):
             sequence += 1
 
 
+def _mark_last_path_point_captured():
+    with path_points_lock:
+        if path_points:
+            path_points[-1]["captured"] = True
+
+
 def _distance_since_last_save_m(snapshot):
     """Euclidean distance (m) in the ESKF's local ENU frame from the last
     saved position to the current /gnss_imu_eskf/gnss_only_odom position, or
@@ -732,6 +760,7 @@ def _auto_save_loop():
                 if x is not None and y is not None:
                     last_save_x = x
                     last_save_y = y
+                _mark_last_path_point_captured()
         except (OSError, sqlite3.Error) as exc:
             if frame_path and os.path.exists(frame_path):
                 os.unlink(frame_path)
@@ -786,6 +815,13 @@ def get_history():
     return jsonify({"total": total, "limit": limit, "offset": offset, "items": items})
 
 
+@app.route("/api/path")
+def get_path():
+    with path_points_lock:
+        points = list(path_points)
+    return jsonify({"points": points})
+
+
 @app.route("/api/save_count", methods=["POST"])
 def save_count():
     global last_save_x, last_save_y
@@ -805,6 +841,7 @@ def save_count():
             if x is not None and y is not None:
                 last_save_x = x
                 last_save_y = y
+            _mark_last_path_point_captured()
     except sqlite3.Error as exc:
         return jsonify({"success": False, "message": "could not save count: %s" % exc}), 500
 
@@ -1405,6 +1442,32 @@ def download_images():
                 }), 404
 
             history_by_filename = _image_history_rows()
+
+            # Parse each row's counts_json once up front so the CSV header can
+            # include every class that appears across all images (each image
+            # only has the classes it actually detected in its own JSON blob).
+            counts_by_filename = {}
+            all_class_ids = set()
+            for image_path in image_paths:
+                history = history_by_filename.get(image_path.name)
+                if not history or not history["counts_json"]:
+                    continue
+                try:
+                    counts = json.loads(history["counts_json"])
+                except (TypeError, ValueError):
+                    continue
+                counts_by_filename[image_path.name] = counts
+                all_class_ids.update(counts.keys())
+
+            def _class_sort_key(class_id):
+                try:
+                    return (0, int(class_id))
+                except ValueError:
+                    return (1, class_id)
+
+            sorted_class_ids = sorted(all_class_ids, key=_class_sort_key)
+            class_columns = ["class_%s" % class_id for class_id in sorted_class_ids]
+
             manifest_buffer = io.StringIO(newline="")
             fieldnames = [
                 "filename",
@@ -1413,6 +1476,7 @@ def download_images():
                 "history_id",
                 "detection_recorded_at",
                 "class_counts_json",
+                *class_columns,
                 "total_objects",
                 "object_detected",
                 "confidence",
@@ -1428,7 +1492,8 @@ def download_images():
                 for image_path in image_paths:
                     file_stat = image_path.stat()
                     history = history_by_filename.get(image_path.name)
-                    writer.writerow({
+                    counts = counts_by_filename.get(image_path.name, {})
+                    row = {
                         "filename": image_path.name,
                         "file_size_bytes": file_stat.st_size,
                         "captured_at": datetime.datetime.fromtimestamp(
@@ -1444,7 +1509,10 @@ def download_images():
                         "latitude": history["latitude"] if history else "",
                         "longitude": history["longitude"] if history else "",
                         "gnss_recorded_at": history["gnss_recorded_at"] if history else "",
-                    })
+                    }
+                    for class_id, column in zip(sorted_class_ids, class_columns):
+                        row[column] = counts.get(class_id, 0) if history else ""
+                    writer.writerow(row)
                     archive.write(
                         image_path,
                         arcname="images/%s" % image_path.name,

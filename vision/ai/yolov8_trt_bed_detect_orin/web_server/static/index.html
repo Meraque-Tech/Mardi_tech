@@ -288,6 +288,12 @@
         <div id="legend" class="legend"></div>
       </section>
 
+      <!-- GNSS path -->
+      <section class="card">
+        <div class="card-head" style="margin-bottom:10px"><h2>Path</h2><span style="font-size:11px;color:var(--muted)">● = frame captured</span></div>
+        <canvas id="path-canvas" style="height:160px"></canvas>
+      </section>
+
     </aside>
 
     <section class="card history-card">
@@ -600,6 +606,46 @@
     document.getElementById('legend').innerHTML=classes.map((name,index)=>`<span><i style="background:${COLORS[index%COLORS.length]}"></i>${escapeHtml(labelFor(name))}</span>`).join('')||'<span>No class data yet</span>';
   }
 
+  let pathPoints=[];
+
+  function drawPath(points) {
+    const canvas=document.getElementById('path-canvas'), rect=canvas.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+    const height=160;
+    canvas.width=Math.max(240,rect.width)*dpr;canvas.height=height*dpr;const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+    const width=canvas.width/dpr,pad=14,plotW=width-pad*2,plotH=height-pad*2;
+    ctx.clearRect(0,0,width,height);
+    if(!points.length){
+      ctx.fillStyle='#778197';ctx.font='11px system-ui';ctx.textAlign='center';
+      ctx.fillText('No GNSS path yet',width/2,height/2);
+      return;
+    }
+    const xs=points.map(p=>p.x),ys=points.map(p=>p.y);
+    const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+    // Equal X/Y scale so the plotted path isn't spatially distorted --
+    // fit the larger of the two extents (with a floor so a near-stationary
+    // robot doesn't divide by ~0) and center the smaller axis.
+    const spanX=Math.max(maxX-minX,0.5),spanY=Math.max(maxY-minY,0.5),span=Math.max(spanX,spanY);
+    const scale=Math.min(plotW,plotH)/span;
+    const midX=(minX+maxX)/2,midY=(minY+maxY)/2;
+    // Screen Y grows downward; ENU Y (north) grows upward, so flip it.
+    const toScreen=(x,y)=>[width/2+(x-midX)*scale, height/2-(y-midY)*scale];
+    ctx.strokeStyle='#6d72f6';ctx.lineWidth=1.5;ctx.beginPath();
+    points.forEach((p,i)=>{const [sx,sy]=toScreen(p.x,p.y);i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy);});
+    ctx.stroke();
+    points.forEach(p=>{
+      if(!p.captured)return;
+      const [sx,sy]=toScreen(p.x,p.y);
+      ctx.fillStyle='#f5a623';ctx.beginPath();ctx.arc(sx,sy,3,0,Math.PI*2);ctx.fill();
+    });
+    const [lastX,lastY]=toScreen(points[points.length-1].x,points[points.length-1].y);
+    ctx.fillStyle='#4ade80';ctx.beginPath();ctx.arc(lastX,lastY,3.5,0,Math.PI*2);ctx.fill();
+  }
+
+  async function loadPath() {
+    try { const data=await api('/api/path');pathPoints=data.points||[];drawPath(pathPoints); }
+    catch(_error){ /* keep last-drawn path on transient failure */ }
+  }
+
   function connectStream(immediate=false) {
     clearTimeout(streamRetryTimer);
     const delay=immediate?0:Math.min(5000,500*2**Math.min(streamRetries,4));
@@ -820,9 +866,11 @@
     } catch(_error) { /* no job in progress or endpoint unreachable — ignore */ }
   }
 
-  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();initConvertPoll();initLaunchPoll();
+  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();initConvertPoll();initLaunchPoll();loadPath();
   setInterval(()=>loadStatus().catch(()=>{}),3000);
+  setInterval(loadPath,2000);
   window.addEventListener('resize',()=>drawChart(chartItems));
+  window.addEventListener('resize',()=>drawPath(pathPoints));
 </script>
 </body>
 </html>
