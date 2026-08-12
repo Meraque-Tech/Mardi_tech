@@ -53,6 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-ros-base \
     ros-jazzy-sensor-msgs \
     ros-dev-tools \
+    ros-jazzy-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
 ENV ROS_DISTRO=jazzy
