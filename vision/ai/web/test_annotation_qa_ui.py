@@ -50,12 +50,28 @@ def test_annotation_qa_exposes_actionable_queues_and_filters():
         assert f'id="{control}"' in markup
 
 
+def test_annotation_qa_loads_pages_and_does_not_hide_json_failures():
+    script = APP_JS.read_text(encoding="utf-8")
+    app_source = APP_PY.read_text(encoding="utf-8")
+
+    assert "async function loadAnnotationQaIssuePage" in script
+    assert "/api/annotation-qa/issues/" in script
+    assert "The server returned an unreadable JSON response" in script
+    api_helper = script[script.index("async function apiJson"):script.index("function errorDetailText")]
+    assert "response.json().catch(() => ({}))" not in api_helper
+    assert '@app.get("/api/annotation-qa/issues/{job_id}")' in app_source
+    assert "annotation_qa_query_issues" in app_source
+    assert "StreamingResponse(json_rows()" in app_source
+
+
 def test_review_dialog_supports_fast_safe_decisions():
     markup = INDEX_HTML.read_text(encoding="utf-8")
     script = APP_JS.read_text(encoding="utf-8")
 
     assert "Keep original box" in markup
     assert "Use SAM suggestion" in markup
+    assert 'id="qa-review-override-sam"' in markup
+    assert "Use displayed SAM box anyway" in markup
     assert "Needs manual correction" in markup
     assert "triage label only" in markup
     assert 'id="qa-review-auto-advance"' in markup
@@ -68,6 +84,9 @@ def test_review_dialog_supports_fast_safe_decisions():
     assert "function decideAnnotationQaStatus" in script
     assert "function undoAnnotationQaDecision" in script
     assert "function setAnnotationQaZoom" in script
+    assert "function decideAnnotationQaSamOverride" in script
+    assert "human_override: humanOverride" in script
+    assert 'accepted_fix_source === "human_override"' in script
     assert 'event.key === "Tab"' in script
 
 

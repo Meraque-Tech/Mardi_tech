@@ -3,6 +3,7 @@
 
 import csv
 import hashlib
+import io
 import json
 import math
 import mimetypes
@@ -31,6 +32,21 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .dataset_provenance import roboflow_pre_augmentation_summary
+from .annotation_qa_store import (
+    DATABASE_FILE as ANNOTATION_QA_DATABASE_FILE,
+    IssueWriter as AnnotationQaIssueWriter,
+    filter_options as annotation_qa_filter_options,
+    get_issue as annotation_qa_get_issue,
+    import_issues as annotation_qa_import_issues,
+    iter_legacy_issues as iter_legacy_annotation_qa_issues,
+    issue_count as annotation_qa_store_count,
+    iter_issues as annotation_qa_iter_issues,
+    query_issues as annotation_qa_query_issues,
+    queue_counts as annotation_qa_queue_counts,
+    store_exists as annotation_qa_store_exists,
+    update_issue as annotation_qa_update_issue,
+    update_issues as annotation_qa_update_issues,
+)
 from .roboflow_sync import (
     ROBOFLOW_SYNC_LOG_FILE,
     ROBOFLOW_SYNC_PREVIEW_FILE,
@@ -324,6 +340,7 @@ inference_peers: dict[str, set] = {}
 inference_peers_lock = threading.Lock()
 annotation_qa_jobs: dict[str, dict] = {}
 annotation_qa_jobs_lock = threading.Lock()
+annotation_qa_store_import_lock = threading.Lock()
 gpu_status_cache: dict = {"checked_at": 0.0, "payload": None}
 gpu_status_lock = threading.Lock()
 
@@ -386,6 +403,7 @@ class AnnotationQaFixRequest(BaseModel):
     issue_id: str
     fix: str = "sam_box"
     class_id: Optional[int] = Field(default=None, ge=0)
+    human_override: bool = False
 
 
 class AnnotationQaRoboflowRequest(BaseModel):
@@ -3849,10 +3867,25 @@ def read_json_object(path: Path) -> dict:
 
 def write_json_object(path: Path, payload: dict):
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        write_json_object_atomic(path, payload)
     except OSError:
         pass
+
+
+def write_json_object_atomic(path: Path, payload: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as file:
+            json.dump(payload, file, indent=2)
+            file.flush()
+            os.fsync(file.fileno())
+        temporary.replace(path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def cached_dataset_summary(yaml_path: Path) -> dict:
@@ -4407,6 +4440,33 @@ def issue_is_safe_sam_replacement(issue: dict) -> bool:
     )
 
 
+def annotation_qa_bbox_is_valid(value) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return False
+    try:
+        left, top, right, bottom = (float(coordinate) for coordinate in value)
+    except (TypeError, ValueError):
+        return False
+    return (
+        all(math.isfinite(coordinate) for coordinate in (left, top, right, bottom))
+        and right > left
+        and bottom > top
+    )
+
+
+def issue_can_human_override_sam_replacement(issue: dict) -> bool:
+    return (
+        issue.get("issue_type") != "sam_mapping_error"
+        and annotation_qa_bbox_is_valid(issue.get("sam_bbox"))
+    )
+
+
+def annotation_qa_box_for_accepted_fix(issue: dict):
+    if issue.get("accepted_fix_source") == "human_override":
+        return issue.get("sam_bbox")
+    return issue.get("recommended_bbox")
+
+
 def mask_bbox(mask) -> Optional[tuple[int, int, int, int]]:
     import numpy as np
 
@@ -4483,13 +4543,17 @@ def draw_annotation_qa_preview(
         return
     height, width = image.shape[:2]
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    raw_path = output_path.with_name(f"{output_path.stem}.raw.jpg")
-    cv2.imwrite(str(raw_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+    image_key = hashlib.sha256(str(image_path.resolve()).encode("utf-8")).hexdigest()[:20]
+    raw_path = output_path.with_name(f"image-{image_key}.raw.jpg")
+    if not raw_path.is_file():
+        if not cv2.imwrite(str(raw_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 90]):
+            raise OSError(f"Could not write Annotation QA preview: {raw_path}")
     issue["raw_preview"] = f"previews/{raw_path.name}"
     if mask is not None:
         mask_array = mask_to_uint8(mask, width, height)
         mask_path = output_path.with_name(f"{output_path.stem}.mask.jpg")
-        cv2.imwrite(str(mask_path), mask_array * 255, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        if not cv2.imwrite(str(mask_path), mask_array * 255, [int(cv2.IMWRITE_JPEG_QUALITY), 95]):
+            raise OSError(f"Could not write Annotation QA mask preview: {mask_path}")
         issue["mask_preview"] = f"previews/{mask_path.name}"
         overlay = image.copy()
         overlay[mask_array > 0] = (255, 220, 70)
@@ -4505,11 +4569,12 @@ def draw_annotation_qa_preview(
     caption = f"{issue['severity'].upper()} {issue['issue_type']} {issue['score']:.2f}"
     cv2.rectangle(image, (8, 8), (min(width - 8, 16 + len(caption) * 9), 38), (20, 32, 40), -1)
     cv2.putText(image, caption, (14, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.imwrite(str(output_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 84])
+    if not cv2.imwrite(str(output_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 84]):
+        raise OSError(f"Could not write Annotation QA overlay preview: {output_path}")
 
 
 def annotation_qa_summary(
-    issues: list[dict],
+    issues,
     images_scanned: int,
     labels_checked: int,
     model: str,
@@ -4529,6 +4594,7 @@ def annotation_qa_summary(
     decision_counts: dict[str, int] = {"auto_keep_yolo": yolo_boxes_accepted}
     automatic_fixes_queued = 0
     audits_pending = 0
+    issue_total = 0
     calibration: dict[str, dict] = {
         str(class_id): {
             "labels": int(count),
@@ -4539,6 +4605,7 @@ def annotation_qa_summary(
         for class_id, count in (class_label_counts or {}).items()
     }
     for issue in issues:
+        issue_total += 1
         severity = issue.get("severity", "low")
         severity_counts[severity] = severity_counts.get(severity, 0) + 1
         issue_type = issue.get("issue_type", "unknown")
@@ -4590,7 +4657,7 @@ def annotation_qa_summary(
         "audits_pending": audits_pending,
         "auto_correction_policy": dict(policy or {}),
         "calibration_by_class": calibration,
-        "issues": len(issues),
+        "issues": issue_total,
         "high": severity_counts.get("high", 0),
         "medium": severity_counts.get("medium", 0),
         "low": severity_counts.get("low", 0),
@@ -4598,31 +4665,6 @@ def annotation_qa_summary(
         "difference_bands": difference_band_counts,
         "completed_at": datetime.now(MYT).isoformat(),
     }
-
-
-def write_annotation_qa_report(run_dir: Path, issues: list[dict], summary: dict):
-    write_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE, summary)
-    write_json_object(run_dir / ANNOTATION_QA_REPORT_JSON_FILE, {"summary": summary, "issues": issues})
-    write_json_object(run_dir / ANNOTATION_QA_REVIEW_FILE, {
-        issue["issue_id"]: issue.get("review_status", "unreviewed")
-        for issue in issues
-    })
-    csv_path = run_dir / ANNOTATION_QA_REPORT_CSV_FILE
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    fields = [
-        "issue_id", "image_name", "split", "class_id", "class_name", "issue_type",
-        "severity", "score", "message", "preview", "review_status", "accepted_fix",
-        "accepted_class_id", "accepted_class_name", "sam_prompt_index", "sam_confidence",
-        "box_tolerance_percent", "sam_max_difference_percent", "difference_band",
-        "quality_gate_passed", "auto_fix_eligible", "applied", "corrected_label_path",
-        "qa_decision", "decision_reasons", "automatic_fix_eligible", "accepted_fix_source",
-        "audit_required", "audit_status", "sam_selected_variant",
-    ]
-    with csv_path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fields)
-        writer.writeheader()
-        for issue in issues:
-            writer.writerow({field: issue.get(field, "") for field in fields})
 
 
 def annotation_qa_run_dir(job_id: str) -> Path:
@@ -4633,31 +4675,55 @@ def annotation_qa_run_dir(job_id: str) -> Path:
     return run_dir
 
 
-def load_annotation_qa_report(run_dir: Path) -> dict:
-    report = read_json_object(run_dir / ANNOTATION_QA_REPORT_JSON_FILE)
-    if not isinstance(report.get("issues"), list):
-        raise HTTPException(status_code=404, detail="Annotation QA results are not available.")
-    if not isinstance(report.get("summary"), dict):
-        report["summary"] = read_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE)
-    return report
+def ensure_annotation_qa_store(run_dir: Path) -> None:
+    if annotation_qa_store_exists(run_dir):
+        return
+    with annotation_qa_store_import_lock:
+        if annotation_qa_store_exists(run_dir):
+            return
+        report_path = run_dir / ANNOTATION_QA_REPORT_JSON_FILE
+        if not report_path.is_file():
+            raise HTTPException(status_code=404, detail="Annotation QA results are not available.")
+        try:
+            with tempfile.TemporaryDirectory(prefix=".qa-import-", dir=run_dir) as staging_value:
+                staging_dir = Path(staging_value)
+                annotation_qa_import_issues(
+                    staging_dir, iter_legacy_annotation_qa_issues(report_path), replace=True
+                )
+                (staging_dir / ANNOTATION_QA_DATABASE_FILE).replace(
+                    run_dir / ANNOTATION_QA_DATABASE_FILE
+                )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=500, detail=f"Could not import the legacy Annotation QA report: {exc}") from exc
 
 
-def set_annotation_qa_issue_fix(run_dir: Path, issue_id: str, fix: str, class_id: Optional[int] = None) -> dict:
-    report = load_annotation_qa_report(run_dir)
-    issue = next(
-        (item for item in report["issues"] if isinstance(item, dict) and item.get("issue_id") == issue_id),
-        None,
-    )
+def annotation_qa_run_summary(run_dir: Path) -> dict:
+    summary = read_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE)
+    if not summary:
+        report = read_json_object(run_dir / ANNOTATION_QA_REPORT_JSON_FILE)
+        summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    if not summary:
+        raise HTTPException(status_code=404, detail="Annotation QA summary is not available.")
+    return summary
+
+
+def set_annotation_qa_issue_fix(
+    run_dir: Path,
+    issue_id: str,
+    fix: str,
+    class_id: Optional[int] = None,
+    human_override: bool = False,
+) -> dict:
+    ensure_annotation_qa_store(run_dir)
+    summary = annotation_qa_run_summary(run_dir)
+    issue = annotation_qa_get_issue(run_dir, issue_id)
     if issue is None:
         raise HTTPException(status_code=404, detail="Annotation QA issue not found.")
 
     fix_value = str(fix or "").strip()
-    if fix_value in {"", "none", "clear"}:
-        issue["accepted_fix"] = ""
-        issue["accepted_class_id"] = None
-        issue["accepted_class_name"] = ""
-    elif fix_value == "sam_box":
-        report_version = int((report.get("summary") or {}).get("report_version", 1))
+    class_names: list[str] = []
+    if fix_value == "sam_box":
+        report_version = int(summary.get("report_version", 1))
         if report_version < ANNOTATION_QA_SAFE_MAPPING_VERSION:
             raise HTTPException(
                 status_code=409,
@@ -4668,34 +4734,67 @@ def set_annotation_qa_issue_fix(run_dir: Path, issue_id: str, fix: str, class_id
                 status_code=409,
                 detail="This QA report predates the maximum SAM-difference safety gate. Run QA again before accepting SAM box fixes.",
             )
-        if not issue_is_safe_sam_replacement(issue):
+        safe_replacement = issue_is_safe_sam_replacement(issue)
+        if human_override and not issue_can_human_override_sam_replacement(issue):
+            raise HTTPException(
+                status_code=400,
+                detail="This issue has no reliably mapped SAM box to use for a human override.",
+            )
+        if not human_override and not safe_replacement:
             raise HTTPException(
                 status_code=400,
                 detail="This SAM result is outside the safe correction band or is not reliable enough for replacement.",
             )
-        issue["accepted_fix"] = "sam_box"
-        issue["review_status"] = "fix_accepted"
-        if issue.get("audit_required"):
-            issue["audit_status"] = "passed"
-            issue["accepted_fix_source"] = "human_audited"
     elif fix_value == "class":
         if class_id is None:
             raise HTTPException(status_code=400, detail="Class fix requires a class id.")
-        summary = report.get("summary") or {}
         dataset_yaml = summary.get("dataset_yaml")
         if not dataset_yaml:
             raise HTTPException(status_code=400, detail="Annotation QA report is missing dataset class metadata.")
         class_names = read_yaml_class_names(Path(dataset_yaml))
         if class_id < 0 or class_id >= len(class_names):
             raise HTTPException(status_code=400, detail="Selected class is not in the dataset class list.")
-        issue["accepted_class_id"] = class_id
-        issue["accepted_class_name"] = class_names[class_id]
-        issue["review_status"] = "fix_accepted"
-    else:
+    elif fix_value not in {"", "none", "clear"}:
         raise HTTPException(status_code=400, detail="Unknown annotation QA fix.")
 
-    write_annotation_qa_report(run_dir, report["issues"], report.get("summary") or {})
-    return issue
+    def apply_fix(item: dict) -> None:
+        if fix_value in {"", "none", "clear"}:
+            item["accepted_fix"] = ""
+            item["accepted_class_id"] = None
+            item["accepted_class_name"] = ""
+            item["accepted_fix_source"] = ""
+            item.pop("sam_override", None)
+        elif fix_value == "sam_box":
+            item["accepted_fix"] = "sam_box"
+            item["review_status"] = "fix_accepted"
+            if human_override and not safe_replacement:
+                stability = (item.get("metrics") or {}).get("prompt_stability") or {}
+                item["accepted_fix_source"] = "human_override"
+                item["sam_override"] = {
+                    "accepted_at": datetime.now(MYT).isoformat(),
+                    "issue_type": item.get("issue_type", ""),
+                    "decision_reasons": list(item.get("decision_reasons") or []),
+                    "quality_gate_passed": item.get("quality_gate_passed") is True,
+                    "prompt_stability_passed": stability.get("passed") is True,
+                }
+                if item.get("audit_required"):
+                    item["audit_status"] = "passed"
+            elif item.get("audit_required"):
+                item["audit_status"] = "passed"
+                item["accepted_fix_source"] = "human_audited"
+                item.pop("sam_override", None)
+            else:
+                item["accepted_fix_source"] = "human"
+                item.pop("sam_override", None)
+        elif fix_value == "class":
+            item["accepted_class_id"] = class_id
+            item["accepted_class_name"] = class_names[class_id]
+            item["review_status"] = "fix_accepted"
+
+    updated = annotation_qa_update_issue(run_dir, issue_id, apply_fix)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Annotation QA issue not found.")
+    return updated
 
 
 def issue_label_path_in_copy(issue: dict, dataset_root: Path, corrected_root: Path) -> Path:
@@ -4722,8 +4821,16 @@ def apply_annotation_qa_fix(issue: dict, dataset_root: Path, corrected_root: Pat
     has_class_fix = issue.get("accepted_class_id") is not None
     if not has_box_fix and not has_class_fix:
         return {"applied": False, "reason": "No accepted fix."}
-    if has_box_fix and not issue_is_safe_sam_replacement(issue):
-        return {"applied": False, "reason": "Issue is outside the safe SAM correction band."}
+    accepted_box = annotation_qa_box_for_accepted_fix(issue) if has_box_fix else None
+    if has_box_fix:
+        is_human_override = issue.get("accepted_fix_source") == "human_override"
+        if is_human_override:
+            if not issue_can_human_override_sam_replacement(issue):
+                return {"applied": False, "reason": "Human override has no valid mapped SAM box."}
+        elif not issue_is_safe_sam_replacement(issue):
+            return {"applied": False, "reason": "Issue is outside the safe SAM correction band."}
+        if not annotation_qa_bbox_is_valid(accepted_box):
+            return {"applied": False, "reason": "Accepted SAM box is invalid."}
     label_row = issue.get("label_row")
     if not isinstance(label_row, int) or label_row < 1:
         return {"applied": False, "reason": "Issue has no label row reference."}
@@ -4757,7 +4864,7 @@ def apply_annotation_qa_fix(issue: dict, dataset_root: Path, corrected_root: Pat
     corrected_class_id = issue.get("accepted_class_id") if has_class_fix else issue.get("class_id")
     try:
         if has_box_fix:
-            corrected_row = yolo_bbox_from_pixels(corrected_class_id, issue["recommended_bbox"], width, height)
+            corrected_row = yolo_bbox_from_pixels(corrected_class_id, accepted_box, width, height)
         else:
             corrected_row = " ".join([str(int(float(corrected_class_id))), *original_fields[1:5]])
     except (TypeError, ValueError) as exc:
@@ -4776,23 +4883,17 @@ def apply_annotation_qa_fix(issue: dict, dataset_root: Path, corrected_root: Pat
 
 def apply_annotation_qa_fixes(job_id: str) -> dict:
     run_dir = annotation_qa_run_dir(job_id)
-    report = load_annotation_qa_report(run_dir)
-    summary = report.get("summary") or {}
-    has_legacy_sam_fix = any(
-        isinstance(item, dict) and item.get("accepted_fix") == "sam_box"
-        for item in report["issues"]
-    )
+    ensure_annotation_qa_store(run_dir)
+    summary = annotation_qa_run_summary(run_dir)
+    has_legacy_sam_fix = annotation_qa_store_count(run_dir, "accepted_fix = 'sam_box'") > 0
     report_version = int(summary.get("report_version", 1))
-    pending_audits = [
-        item for item in report["issues"]
-        if isinstance(item, dict)
-        and item.get("audit_required")
-        and item.get("audit_status") == "pending"
-    ]
+    pending_audits = annotation_qa_store_count(
+        run_dir, "audit_required = 1 AND audit_status = 'pending'"
+    )
     if pending_audits:
         raise HTTPException(
             status_code=409,
-            detail=f"Review the {len(pending_audits)} sampled automatic SAM correction(s) before creating the corrected dataset.",
+            detail=f"Review the {pending_audits} sampled automatic SAM correction(s) before creating the corrected dataset.",
         )
     if has_legacy_sam_fix and report_version < ANNOTATION_QA_SAFE_MAPPING_VERSION:
         raise HTTPException(
@@ -4824,21 +4925,31 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
     corrected_payload["path"] = "."
     corrected_yaml.write_text(yaml.safe_dump(corrected_payload, sort_keys=False), encoding="utf-8")
 
-    def issue_has_accepted_fix(item: dict) -> bool:
-        return item.get("accepted_fix") == "sam_box" or item.get("accepted_class_id") is not None
-
+    accepted_fix_count = annotation_qa_store_count(
+        run_dir, "accepted_fix = 'sam_box' OR accepted_class_id IS NOT NULL"
+    )
     applied = 0
+    skipped_count = 0
     skipped = []
-    for issue in report["issues"]:
-        if not isinstance(issue, dict) or not issue_has_accepted_fix(issue):
-            continue
+    updated_batch = []
+    for issue in annotation_qa_iter_issues(
+        run_dir, "accepted_fix = 'sam_box' OR accepted_class_id IS NOT NULL"
+    ):
         result = apply_annotation_qa_fix(issue, dataset_root, corrected_root)
         if result.get("applied"):
             applied += 1
         else:
             issue["applied"] = False
             issue["apply_error"] = result.get("reason", "Fix was not applied.")
-            skipped.append({"issue_id": issue.get("issue_id"), "reason": issue["apply_error"]})
+            skipped_count += 1
+            if len(skipped) < 100:
+                skipped.append({"issue_id": issue.get("issue_id"), "reason": issue["apply_error"]})
+        updated_batch.append(issue)
+        if len(updated_batch) >= 200:
+            annotation_qa_update_issues(run_dir, updated_batch)
+            updated_batch.clear()
+    if updated_batch:
+        annotation_qa_update_issues(run_dir, updated_batch)
 
     fix_summary = {
         "job_id": job_id,
@@ -4846,40 +4957,42 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
         "source_dataset_root": str(dataset_root),
         "corrected_dataset_yaml": str(corrected_yaml),
         "corrected_dataset_root": str(corrected_root),
-        "accepted_fixes": sum(1 for item in report["issues"] if isinstance(item, dict) and issue_has_accepted_fix(item)),
+        "accepted_fixes": accepted_fix_count,
         "applied_fixes": applied,
+        "skipped_fix_count": skipped_count,
         "skipped_fixes": skipped,
         "applied_at": datetime.now(MYT).isoformat(),
     }
     write_json_object(corrected_root / ANNOTATION_QA_FIX_SUMMARY_FILE, fix_summary)
     write_json_object(run_dir / ANNOTATION_QA_FIX_SUMMARY_FILE, fix_summary)
-    report["summary"]["corrected_dataset_yaml"] = str(corrected_yaml)
-    report["summary"]["corrected_dataset_root"] = str(corrected_root)
-    report["summary"]["applied_fixes"] = applied
+    summary["corrected_dataset_yaml"] = str(corrected_yaml)
+    summary["corrected_dataset_root"] = str(corrected_root)
+    summary["applied_fixes"] = applied
     corrected_provenance = load_roboflow_provenance(corrected_root)
     if corrected_provenance.get("provider") == "roboflow":
-        report["summary"]["roboflow_sync"] = {
+        summary["roboflow_sync"] = {
             "workspace": corrected_provenance.get("workspace", ""),
             "project": corrected_provenance.get("project", ""),
             "source_version": corrected_provenance.get("source_version", ""),
             **(corrected_provenance.get("mapping") or {}),
         }
-    write_annotation_qa_report(run_dir, report["issues"], report["summary"])
+    write_json_object_atomic(run_dir / ANNOTATION_QA_SUMMARY_FILE, summary)
 
     response = dataset_response(
         corrected_yaml,
         f"Applied {applied} accepted SAM fix{'es' if applied != 1 else ''}. Training will use the corrected dataset copy.",
     )
     response.update(fix_summary)
-    if report["summary"].get("roboflow_sync"):
-        response["roboflow_sync"] = report["summary"]["roboflow_sync"]
+    if summary.get("roboflow_sync"):
+        response["roboflow_sync"] = summary["roboflow_sync"]
     response["download_available"] = True
     return response
 
 
 def annotation_qa_roboflow_context(job_id: str) -> tuple[Path, dict, Path, dict, list[str]]:
     run_dir = annotation_qa_run_dir(job_id)
-    report = load_annotation_qa_report(run_dir)
+    ensure_annotation_qa_store(run_dir)
+    report = {"summary": annotation_qa_run_summary(run_dir)}
     fix_summary = read_json_object(run_dir / ANNOTATION_QA_FIX_SUMMARY_FILE)
     corrected_root_value = fix_summary.get("corrected_dataset_root")
     if not corrected_root_value:
@@ -4926,7 +5039,7 @@ def build_annotation_qa_roboflow_preview(job_id: str, api_key: str) -> dict:
     changed_images: dict[str, list[str]] = {}
     source_root_value = (report.get("summary") or {}).get("dataset_root")
     source_root = Path(str(source_root_value)).expanduser().resolve() if source_root_value else None
-    for issue in report.get("issues") or []:
+    for issue in annotation_qa_iter_issues(run_dir, "applied = 1"):
         if not isinstance(issue, dict) or not issue.get("applied"):
             continue
         image_value = issue.get("image")
@@ -5243,7 +5356,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
     run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
     ensure_annotation_qa_path(run_dir)
     preview_dir = run_dir / "previews"
-    issues: list[dict] = []
+    issue_writer: Optional[AnnotationQaIssueWriter] = None
     issue_index = 0
     labels_checked = 0
     images_scanned = 0
@@ -5253,6 +5366,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
     policy: dict = {}
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
+        issue_writer = AnnotationQaIssueWriter(run_dir)
         yaml_path, dataset_root, payload = prepared_dataset_yaml(request_payload["dataset_yaml"])
         class_names = normalize_yaml_names(payload.get("names"))
         split_names = annotation_qa_split_names(request_payload.get("scope", "val"), payload)
@@ -5328,6 +5442,11 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
         processed_limit = int(max_images) if max_images else None
         audited_classes: set[str] = set()
 
+        def record_issue(issue: dict) -> None:
+            if issue_writer is None:
+                raise RuntimeError("Annotation QA issue store is unavailable.")
+            issue_writer.append(issue)
+
         def should_audit_decision(
             image_name: str,
             class_id: Optional[int],
@@ -5385,7 +5504,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             })
             issue["preview"] = f"previews/{issue['issue_id']}.jpg"
             draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask)
-            issues.append(issue)
+            record_issue(issue)
 
         for split, _images_path, labels_path, images in split_contexts:
             for image_path in images:
@@ -5402,14 +5521,14 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                     detail=f"Scanning {images_scanned} of {total_images}: {image_path.name}",
                     images_scanned=images_scanned,
                     labels_checked=labels_checked,
-                    issues=len(issues),
+                    issues=issue_writer.count,
                 )
                 import cv2
 
                 image = cv2.imread(str(image_path))
                 if image is None:
                     issue_index += 1
-                    issues.append(annotation_issue(
+                    record_issue(annotation_issue(
                         job_id, issue_index, image_path, split, None, "",
                         "image_read_error", "high", 1.0, "Image could not be read.",
                     ))
@@ -5427,7 +5546,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         class_id = int(float(fields[0]))
                     except ValueError:
                         issue_index += 1
-                        issues.append(annotation_issue(
+                        record_issue(annotation_issue(
                             job_id, issue_index, image_path, split, None, "",
                             "invalid_label", "high", 1.0, f"Invalid class id on row {row_index}.",
                         ))
@@ -5435,7 +5554,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                     class_name = class_names[class_id] if 0 <= class_id < len(class_names) else f"class_{class_id}"
                     if len(fields) != 5:
                         issue_index += 1
-                        issues.append(annotation_issue(
+                        record_issue(annotation_issue(
                             job_id, issue_index, image_path, split, class_id, class_name,
                             "unsupported_annotation", "low", 0.2,
                             "V1 SAM QA checks YOLO detection boxes only.",
@@ -5444,7 +5563,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                     box = pixel_bbox_from_yolo(fields, width, height)
                     if box is None:
                         issue_index += 1
-                        issues.append(annotation_issue(
+                        record_issue(annotation_issue(
                             job_id, issue_index, image_path, split, class_id, class_name,
                             "invalid_label", "high", 1.0, f"Invalid YOLO bbox on row {row_index}.",
                         ))
@@ -5471,7 +5590,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                                 labels[left]["bbox"], labels[right]["bbox"], {"bbox_iou": overlap},
                                 label_row=labels[left].get("row_index"),
                             )
-                            issues.append(issue)
+                            record_issue(issue)
 
                 candidates_by_label = annotation_qa_candidates_for_image(
                     sam_runtime,
@@ -5484,7 +5603,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                 )
                 if candidates_by_label is None:
                     issue_index += 1
-                    issues.append(annotation_issue(
+                    record_issue(annotation_issue(
                         job_id, issue_index, image_path, split, None, "",
                         "sam_mapping_error", "high", 1.0,
                         "SAM returned masks without reliable prompt indices; no box comparison was made.",
@@ -5508,7 +5627,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             box,
                             label_row=label.get("row_index"),
                         )
-                        issues.append(issue)
+                        record_issue(issue)
                         continue
                     mask = selected_candidate["mask"]
                     sam_confidence = selected_candidate.get("confidence")
@@ -5516,7 +5635,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                     sam_prompt_variant = selected_candidate.get("variant", "")
                     if mask is None:
                         issue_index += 1
-                        issues.append(annotation_issue(
+                        record_issue(annotation_issue(
                             job_id, issue_index, image_path, split,
                             label["class_id"], label["class_name"],
                             "empty_mask", "high", 1.0,
@@ -5539,7 +5658,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         )
                         issue["preview"] = f"previews/{issue['issue_id']}.jpg"
                         draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, None)
-                        issues.append(issue)
+                        record_issue(issue)
                         continue
                     stability = annotation_qa_prompt_stability(
                         candidates_for_label,
@@ -5779,9 +5898,10 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             if processed_limit is not None and images_scanned >= processed_limit:
                 break
 
+        issue_writer.flush()
         policy["runtime"] = sam_runtime.stats()
         summary = annotation_qa_summary(
-            issues,
+            annotation_qa_iter_issues(run_dir),
             images_scanned,
             labels_checked,
             request_payload.get("model_label", request_payload["model"]),
@@ -5798,16 +5918,16 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             "dataset_root": str(dataset_root),
             "splits": split_names,
         })
-        write_annotation_qa_report(run_dir, issues, summary)
+        write_json_object_atomic(run_dir / ANNOTATION_QA_SUMMARY_FILE, summary)
         update_annotation_qa_job(
             job_id,
             status="completed",
             stage="completed",
             percent=100,
-            detail=f"QA complete: {len(issues)} issues flagged.",
+            detail=f"QA complete: {issue_writer.count} issues flagged.",
             images_scanned=images_scanned,
             labels_checked=labels_checked,
-            issues=len(issues),
+            issues=issue_writer.count,
             high=summary["high"],
             medium=summary["medium"],
             low=summary["low"],
@@ -5815,10 +5935,12 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             report_available=True,
         )
     except InferenceStopped:
+        if issue_writer is not None:
+            issue_writer.flush()
         if sam_runtime is not None:
             policy["runtime"] = sam_runtime.stats()
         summary = annotation_qa_summary(
-            issues,
+            annotation_qa_iter_issues(run_dir) if issue_writer is not None else (),
             images_scanned,
             labels_checked,
             request_payload.get("model_label", request_payload.get("model", ANNOTATION_QA_MODEL_DEFAULT)),
@@ -5830,7 +5952,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             policy,
             class_label_counts,
         )
-        write_annotation_qa_report(run_dir, issues, summary)
+        write_json_object_atomic(run_dir / ANNOTATION_QA_SUMMARY_FILE, summary)
         update_annotation_qa_job(
             job_id,
             status="stopped",
@@ -5839,7 +5961,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             detail="Annotation QA stopped.",
             images_scanned=images_scanned,
             labels_checked=labels_checked,
-            issues=len(issues),
+            issues=issue_writer.count if issue_writer is not None else 0,
             summary=summary,
             report_available=True,
         )
@@ -5853,10 +5975,12 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             error=str(exc),
             images_scanned=images_scanned,
             labels_checked=labels_checked,
-            issues=len(issues),
+            issues=issue_writer.count if issue_writer is not None else 0,
             report_available=False,
         )
     finally:
+        if issue_writer is not None:
+            issue_writer.close()
         if sam_runtime is not None:
             sam_runtime.close()
         try:
@@ -5873,8 +5997,10 @@ def annotation_qa_job_from_disk(job_id: str) -> Optional[dict]:
         ensure_annotation_qa_path(run_dir)
     except HTTPException:
         return None
-    report = read_json_object(run_dir / ANNOTATION_QA_REPORT_JSON_FILE)
-    summary = report.get("summary") if isinstance(report.get("summary"), dict) else read_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE)
+    summary = read_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE)
+    if not summary:
+        report = read_json_object(run_dir / ANNOTATION_QA_REPORT_JSON_FILE)
+        summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     if not summary:
         return None
     return {
@@ -7099,14 +7225,55 @@ def stop_annotation_qa(job_id: str):
 
 @app.get("/api/annotation-qa/results/{job_id}")
 def annotation_qa_results(job_id: str):
-    if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
-        raise HTTPException(status_code=404, detail="Annotation QA results not found.")
-    run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
-    ensure_annotation_qa_path(run_dir)
-    report_path = run_dir / ANNOTATION_QA_REPORT_JSON_FILE
-    if not report_path.is_file():
-        raise HTTPException(status_code=404, detail="Annotation QA results are not available yet.")
-    return FileResponse(report_path, media_type="application/json")
+    run_dir = annotation_qa_run_dir(job_id)
+    ensure_annotation_qa_store(run_dir)
+    return {
+        "summary": annotation_qa_run_summary(run_dir),
+        "counts": annotation_qa_queue_counts(run_dir),
+        "filters": annotation_qa_filter_options(run_dir),
+        "storage": {"format": "sqlite", "database": ANNOTATION_QA_DATABASE_FILE},
+    }
+
+
+@app.get("/api/annotation-qa/issues/{job_id}")
+def annotation_qa_issues(
+    job_id: str,
+    queue: str = "needs_review",
+    page: int = 1,
+    page_size: int = 50,
+    search: str = "",
+    severity: str = "",
+    split: str = "",
+    class_name: str = "",
+    issue_type: str = "",
+):
+    if queue not in {"needs_review", "audits", "safe_suggestions", "manual", "resolved", "all"}:
+        raise HTTPException(status_code=400, detail="Unknown Annotation QA queue.")
+    run_dir = annotation_qa_run_dir(job_id)
+    ensure_annotation_qa_store(run_dir)
+    result = annotation_qa_query_issues(
+        run_dir,
+        queue=queue,
+        page=page,
+        page_size=page_size,
+        search=search,
+        severity=severity,
+        split=split,
+        class_name=class_name,
+        issue_type=issue_type,
+    )
+    result["counts"] = annotation_qa_queue_counts(run_dir)
+    return result
+
+
+@app.get("/api/annotation-qa/issue/{job_id}/{issue_id}")
+def annotation_qa_issue_detail(job_id: str, issue_id: str):
+    run_dir = annotation_qa_run_dir(job_id)
+    ensure_annotation_qa_store(run_dir)
+    issue = annotation_qa_get_issue(run_dir, issue_id)
+    if issue is None:
+        raise HTTPException(status_code=404, detail="Annotation QA issue not found.")
+    return issue
 
 
 @app.get("/api/annotation-qa/preview/{job_id}/{preview_name}")
@@ -7126,20 +7293,58 @@ def annotation_qa_preview(job_id: str, preview_name: str):
 def annotation_qa_download(job_id: str, artifact: str):
     if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-f0-9]{8}", job_id):
         raise HTTPException(status_code=404, detail="Annotation QA report not found.")
-    filenames = {
-        "json": ANNOTATION_QA_REPORT_JSON_FILE,
-        "csv": ANNOTATION_QA_REPORT_CSV_FILE,
-        "summary": ANNOTATION_QA_SUMMARY_FILE,
+    if artifact not in {"json", "csv", "summary"}:
+        raise HTTPException(status_code=404, detail="Annotation QA report not found.")
+    run_dir = annotation_qa_run_dir(job_id)
+    ensure_annotation_qa_store(run_dir)
+    if artifact == "summary":
+        report_path = run_dir / ANNOTATION_QA_SUMMARY_FILE
+        if not report_path.is_file():
+            raise HTTPException(status_code=404, detail="Annotation QA summary not found.")
+        return FileResponse(report_path, media_type="application/json", filename=ANNOTATION_QA_SUMMARY_FILE)
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{ANNOTATION_QA_REPORT_JSON_FILE if artifact == "json" else ANNOTATION_QA_REPORT_CSV_FILE}"'
     }
-    filename = filenames.get(artifact)
-    if filename is None:
-        raise HTTPException(status_code=404, detail="Annotation QA report not found.")
-    report_path = (ANNOTATION_QA_ROOT / job_id / filename).resolve()
-    ensure_annotation_qa_path(report_path)
-    if not report_path.is_file():
-        raise HTTPException(status_code=404, detail="Annotation QA report not found.")
-    media_type = "text/csv" if artifact == "csv" else "application/json"
-    return FileResponse(report_path, media_type=media_type, filename=filename)
+    if artifact == "json":
+        summary = annotation_qa_run_summary(run_dir)
+
+        def json_rows():
+            yield '{"summary":'
+            yield json.dumps(summary, separators=(",", ":"), ensure_ascii=False)
+            yield ',"issues":['
+            first = True
+            for issue in annotation_qa_iter_issues(run_dir):
+                if not first:
+                    yield ","
+                first = False
+                yield json.dumps(issue, separators=(",", ":"), ensure_ascii=False)
+            yield "]}"
+
+        return StreamingResponse(json_rows(), media_type="application/json", headers=headers)
+
+    fields = [
+        "issue_id", "image_name", "split", "class_id", "class_name", "issue_type",
+        "severity", "score", "message", "preview", "review_status", "accepted_fix",
+        "accepted_class_id", "accepted_class_name", "sam_prompt_index", "sam_confidence",
+        "box_tolerance_percent", "sam_max_difference_percent", "difference_band",
+        "quality_gate_passed", "auto_fix_eligible", "applied", "corrected_label_path",
+        "qa_decision", "decision_reasons", "automatic_fix_eligible", "accepted_fix_source",
+        "audit_required", "audit_status", "sam_selected_variant",
+    ]
+
+    def csv_rows():
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=fields)
+        writer.writeheader()
+        yield buffer.getvalue()
+        for issue in annotation_qa_iter_issues(run_dir):
+            buffer.seek(0)
+            buffer.truncate(0)
+            writer.writerow({field: issue.get(field, "") for field in fields})
+            yield buffer.getvalue()
+
+    return StreamingResponse(csv_rows(), media_type="text/csv", headers=headers)
 
 
 @app.post("/api/annotation-qa/mark/{job_id}")
@@ -7150,36 +7355,40 @@ def mark_annotation_qa_issue(job_id: str, request: AnnotationQaMarkRequest):
     status = str(request.status or "").strip()
     if status not in allowed:
         raise HTTPException(status_code=400, detail="Unknown annotation QA review status.")
-    run_dir = (ANNOTATION_QA_ROOT / job_id).resolve()
-    ensure_annotation_qa_path(run_dir)
-    report_path = run_dir / ANNOTATION_QA_REPORT_JSON_FILE
-    report = read_json_object(report_path)
-    issues = report.get("issues")
-    if not isinstance(issues, list):
-        raise HTTPException(status_code=404, detail="Annotation QA results are not available.")
-    matched = False
-    for issue in issues:
-        if isinstance(issue, dict) and issue.get("issue_id") == request.issue_id:
-            issue["review_status"] = status
-            if issue.get("audit_required"):
-                issue["audit_status"] = "passed" if status == "fix_accepted" else "failed"
-            if status != "fix_accepted":
-                issue["accepted_fix"] = ""
-                issue["accepted_class_id"] = None
-                issue["accepted_class_name"] = ""
-                issue["accepted_fix_source"] = ""
-            matched = True
-            break
-    if not matched:
+    run_dir = annotation_qa_run_dir(job_id)
+    ensure_annotation_qa_store(run_dir)
+
+    def set_status(issue: dict) -> None:
+        issue["review_status"] = status
+        if issue.get("audit_required"):
+            issue["audit_status"] = "passed" if status == "fix_accepted" else "failed"
+        if status != "fix_accepted":
+            issue["accepted_fix"] = ""
+            issue["accepted_class_id"] = None
+            issue["accepted_class_name"] = ""
+            issue["accepted_fix_source"] = ""
+
+    issue = annotation_qa_update_issue(run_dir, request.issue_id, set_status)
+    if issue is None:
         raise HTTPException(status_code=404, detail="Annotation QA issue not found.")
-    write_annotation_qa_report(run_dir, issues, report.get("summary") or read_json_object(run_dir / ANNOTATION_QA_SUMMARY_FILE))
-    return {"issue_id": request.issue_id, "status": status}
+    return {
+        "issue_id": request.issue_id,
+        "status": status,
+        "issue": issue,
+        "counts": annotation_qa_queue_counts(run_dir),
+    }
 
 
 @app.post("/api/annotation-qa/fix/{job_id}")
 def accept_annotation_qa_fix(job_id: str, request: AnnotationQaFixRequest):
     run_dir = annotation_qa_run_dir(job_id)
-    issue = set_annotation_qa_issue_fix(run_dir, request.issue_id, request.fix, request.class_id)
+    issue = set_annotation_qa_issue_fix(
+        run_dir,
+        request.issue_id,
+        request.fix,
+        request.class_id,
+        request.human_override,
+    )
     return {
         "issue_id": request.issue_id,
         "accepted_fix": issue.get("accepted_fix", ""),

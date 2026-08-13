@@ -96,9 +96,13 @@ prompted SAM masks. `Box tolerance (%)` keeps the original YOLO box when every
 SAM box edge is within that percentage of the YOLO box dimensions, with a
 two-pixel minimum allowance for small boxes. Differences up to `Maximum SAM
 difference (%)` are reviewable SAM suggestions. Larger differences preserve
-YOLO and require manual review; they cannot be queued as SAM replacements. SAM
-replacements inside the review band must also pass confidence, overlap,
-coverage, center-shift, area, and prompt-stability checks. `Shadow` mode
+YOLO and require manual review; they cannot be queued through the normal safe
+SAM action. A reviewer can explicitly choose **Use displayed SAM box anyway**
+under **More actions** when a mapped SAM box is available. This requires a
+warning confirmation, uses the displayed SAM box, and records the correction
+as a human override. SAM replacements inside the review band must also pass
+confidence, overlap, coverage, center-shift, area, and prompt-stability checks
+unless a reviewer explicitly overrides them. `Shadow` mode
 (recommended) calculates strict automatic decisions without queueing them;
 `Automatic with audit` queues only strict candidates and requires sampled
 audit decisions to be reviewed before a corrected dataset can be created.

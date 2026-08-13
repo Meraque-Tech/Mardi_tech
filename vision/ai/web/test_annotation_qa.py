@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+import math
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,6 +22,10 @@ def load_qa_helpers():
         "bbox_edge_differences",
         "annotation_qa_difference_band",
         "issue_is_safe_sam_replacement",
+        "annotation_qa_bbox_is_valid",
+        "issue_can_human_override_sam_replacement",
+        "annotation_qa_box_for_accepted_fix",
+        "set_annotation_qa_issue_fix",
         "annotation_qa_thresholds",
         "annotation_qa_summary",
         "bbox_area",
@@ -42,6 +47,12 @@ def load_qa_helpers():
         body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names],
         type_ignores=[],
     )
+    class HttpError(Exception):
+        def __init__(self, status_code, detail):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
     namespace = {
         "Optional": Optional,
         "Path": Path,
@@ -49,9 +60,12 @@ def load_qa_helpers():
         "MYT": timezone(timedelta(hours=8)),
         "ANNOTATION_QA_REPORT_VERSION": 4,
         "hashlib": hashlib,
+        "math": math,
         "threading": threading,
         "SamQaRuntime": object,
         "InferenceStopped": RuntimeError,
+        "HTTPException": HttpError,
+        "ANNOTATION_QA_SAFE_MAPPING_VERSION": 2,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace
@@ -166,9 +180,9 @@ class AnnotationQaTests(unittest.TestCase):
             QA_HELPERS["draw_annotation_qa_preview"](image_path, preview_path, issue, mask)
 
             self.assertTrue(preview_path.is_file())
-            self.assertTrue((preview_path.parent / "issue.raw.jpg").is_file())
+            self.assertTrue((root / issue["raw_preview"]).is_file())
             self.assertTrue((preview_path.parent / "issue.mask.jpg").is_file())
-            self.assertEqual(issue["raw_preview"], "previews/issue.raw.jpg")
+            self.assertTrue(issue["raw_preview"].startswith("previews/image-"))
             self.assertEqual(issue["mask_preview"], "previews/issue.mask.jpg")
 
     def test_masks_are_restored_to_original_prompt_indices(self):
@@ -267,6 +281,65 @@ class AnnotationQaTests(unittest.TestCase):
         issue["quality_gate_passed"] = True
         issue["difference_band"] = "large_disagreement"
         self.assertFalse(QA_HELPERS["issue_is_safe_sam_replacement"](issue))
+
+    def test_human_override_requires_a_valid_mapped_sam_box(self):
+        unstable = {
+            "issue_type": "unstable_sam_prompt",
+            "sam_bbox": [10, 20, 40, 60],
+            "recommended_bbox": None,
+            "accepted_fix_source": "human_override",
+        }
+
+        self.assertTrue(QA_HELPERS["issue_can_human_override_sam_replacement"](unstable))
+        self.assertEqual(QA_HELPERS["annotation_qa_box_for_accepted_fix"](unstable), unstable["sam_bbox"])
+        unstable["sam_bbox"] = [10, 20, 10, 60]
+        self.assertFalse(QA_HELPERS["issue_can_human_override_sam_replacement"](unstable))
+        unstable["sam_bbox"] = [10, 20, 40, 60]
+        unstable["issue_type"] = "sam_mapping_error"
+        self.assertFalse(QA_HELPERS["issue_can_human_override_sam_replacement"](unstable))
+
+    def test_unsafe_sam_fix_requires_explicit_override_and_records_it(self):
+        issue = {
+            "issue_id": "issue-1",
+            "issue_type": "unstable_sam_prompt",
+            "sam_bbox": [10, 20, 40, 60],
+            "recommended_bbox": None,
+            "accepted_fix": "",
+            "accepted_fix_source": "",
+            "review_status": "unreviewed",
+            "quality_gate_passed": True,
+            "auto_fix_eligible": False,
+            "difference_band": "reviewable",
+            "fix_type": "",
+            "decision_reasons": ["prompt_stability_failed"],
+            "metrics": {"prompt_stability": {"passed": False}},
+        }
+        QA_HELPERS["ensure_annotation_qa_store"] = lambda _run_dir: None
+        QA_HELPERS["annotation_qa_run_summary"] = lambda _run_dir: {
+            "report_version": QA_HELPERS["ANNOTATION_QA_REPORT_VERSION"],
+        }
+        QA_HELPERS["annotation_qa_get_issue"] = lambda _run_dir, _issue_id: issue
+
+        def update_issue(_run_dir, _issue_id, callback):
+            callback(issue)
+            return issue
+
+        QA_HELPERS["annotation_qa_update_issue"] = update_issue
+
+        with self.assertRaisesRegex(QA_HELPERS["HTTPException"], "safe correction band"):
+            QA_HELPERS["set_annotation_qa_issue_fix"](
+                Path("/tmp/qa-run"), issue["issue_id"], "sam_box"
+            )
+
+        updated = QA_HELPERS["set_annotation_qa_issue_fix"](
+            Path("/tmp/qa-run"), issue["issue_id"], "sam_box", human_override=True
+        )
+
+        self.assertEqual(updated["accepted_fix"], "sam_box")
+        self.assertEqual(updated["accepted_fix_source"], "human_override")
+        self.assertEqual(updated["review_status"], "fix_accepted")
+        self.assertEqual(updated["sam_override"]["decision_reasons"], ["prompt_stability_failed"])
+        self.assertFalse(updated["sam_override"]["prompt_stability_passed"])
 
     def test_summary_records_report_version_and_tolerance(self):
         summary = QA_HELPERS["annotation_qa_summary"](
