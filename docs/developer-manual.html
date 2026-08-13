@@ -1,0 +1,606 @@
+<title>Sensor Stack Developer Manual</title>
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --surface: #ffffff;
+    --surface-2: #efece5;
+    --ink: #1d1f1d;
+    --ink-dim: #5c6058;
+    --ink-faint: #8a8d84;
+    --line: #ded9cd;
+    --accent: #c8540f;
+    --accent-ink: #ffffff;
+    --accent-soft: #f4e2d3;
+    --ok: #3f7d4f;
+    --warn: #a8631a;
+    --code-bg: #f0eee6;
+    --shadow: 0 1px 2px rgba(30,25,15,0.06), 0 6px 20px rgba(30,25,15,0.05);
+    --radius: 3px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16181a;
+      --surface: #1d2023;
+      --surface-2: #24272a;
+      --ink: #eae7df;
+      --ink-dim: #a5a89f;
+      --ink-faint: #74776f;
+      --line: #33362f;
+      --accent: #ff8a3d;
+      --accent-ink: #1a1200;
+      --accent-soft: #3a2a17;
+      --ok: #6fbf80;
+      --warn: #e0a352;
+      --code-bg: #202225;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16181a;
+    --surface: #1d2023;
+    --surface-2: #24272a;
+    --ink: #eae7df;
+    --ink-dim: #a5a89f;
+    --ink-faint: #74776f;
+    --line: #33362f;
+    --accent: #ff8a3d;
+    --accent-ink: #1a1200;
+    --accent-soft: #3a2a17;
+    --ok: #6fbf80;
+    --warn: #e0a352;
+    --code-bg: #202225;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 24px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Iowan Old Style", "Palatino Linotype", "URW Palladio L", Georgia, serif;
+    font-size: 16px;
+    line-height: 1.65;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr);
+    max-width: 1240px;
+    margin: 0 auto;
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2.25rem 1.5rem 2rem 1.75rem;
+    border-right: 1px solid var(--line);
+    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+  }
+
+  nav.toc .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.68rem;
+    margin-bottom: 1.1rem;
+  }
+
+  nav.toc a {
+    display: block;
+    color: var(--ink-dim);
+    text-decoration: none;
+    padding: 0.3rem 0;
+    border-left: 2px solid transparent;
+    padding-left: 0.7rem;
+    margin-left: -0.7rem;
+    line-height: 1.4;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    outline: none;
+  }
+  nav.toc .sub { padding-left: 1.5rem; font-size: 0.73rem; color: var(--ink-faint); }
+  nav.toc .sub:hover { color: var(--accent); }
+
+  main {
+    padding: 3rem 3.5rem 6rem;
+    min-width: 0;
+  }
+
+  .kicker {
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.75rem;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 0.9rem;
+  }
+
+  h1 {
+    font-size: 2.4rem;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.5rem;
+    text-wrap: balance;
+    font-weight: 600;
+  }
+
+  .dek {
+    font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+    color: var(--ink-dim);
+    font-size: 1.05rem;
+    max-width: 62ch;
+    margin: 0 0 2.4rem;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+    margin: 3.2rem 0 1rem;
+    padding-top: 1.6rem;
+    border-top: 1px solid var(--line);
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    scroll-margin-top: 1.5rem;
+  }
+  section:first-of-type h2:first-child,
+  h2:first-child { border-top: none; padding-top: 0; }
+
+  h3 {
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+    margin: 2.2rem 0 0.9rem;
+    scroll-margin-top: 1.5rem;
+  }
+
+  p { max-width: 72ch; margin: 0 0 1.1rem; }
+  ul, ol { max-width: 72ch; padding-left: 1.4rem; margin: 0 0 1.2rem; }
+  li { margin-bottom: 0.4rem; }
+
+  a { color: var(--accent); }
+
+  code {
+    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    padding: 0.12em 0.4em;
+    border-radius: var(--radius);
+    font-size: 0.85em;
+    color: var(--ink);
+  }
+
+  pre {
+    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.1rem 1.3rem;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    max-width: 100%;
+    margin: 0 0 1.4rem;
+  }
+  pre code { background: none; padding: 0; }
+
+  .table-wrap {
+    overflow-x: auto;
+    margin: 0 0 1.6rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 480px;
+    font-size: 0.86rem;
+    background: var(--surface);
+  }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.9rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-dim);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+  td:first-child { font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.82rem; }
+
+  .callout {
+    max-width: 72ch;
+    border-left: 3px solid var(--warn);
+    background: var(--surface-2);
+    padding: 0.9rem 1.2rem;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 0 0 1.4rem;
+    font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+    font-size: 0.92rem;
+  }
+  .callout strong { color: var(--warn); }
+
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.4rem 1.6rem;
+    margin: 0 0 1.8rem;
+    overflow-x: auto;
+    box-shadow: var(--shadow);
+  }
+  .diagram pre {
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: none;
+    font-size: 0.76rem;
+    line-height: 1.55;
+  }
+
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: center;
+    margin: 0 0 1.8rem;
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+  }
+  .flow .node {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.9rem;
+    box-shadow: var(--shadow);
+  }
+  .flow .node .name { color: var(--accent); font-weight: 600; display: block; margin-bottom: 0.15rem; }
+  .flow .node .desc { color: var(--ink-faint); font-size: 0.72rem; }
+  .flow .arrow { color: var(--ink-faint); font-size: 1.1rem; }
+
+  .pill {
+    display: inline-block;
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.12em 0.55em;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .drift-list { counter-reset: drift; list-style: none; padding-left: 0; }
+  .drift-list li {
+    counter-increment: drift;
+    position: relative;
+    padding-left: 2.2rem;
+    margin-bottom: 1rem;
+    max-width: 68ch;
+  }
+  .drift-list li::before {
+    content: counter(drift);
+    position: absolute;
+    left: 0;
+    top: 0.05em;
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-weight: 600;
+    color: var(--warn);
+    font-size: 0.82rem;
+    background: var(--surface-2);
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
+    color: var(--ink-faint);
+    font-size: 0.78rem;
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); }
+    main { padding: 2rem 1.4rem 4rem; }
+  }
+</style>
+
+<div class="layout">
+  <nav class="toc">
+    <div class="eyebrow">On this page</div>
+    <a href="#architecture">1 · Architecture &amp; data flow</a>
+    <a href="#imu-gnss-raw">2 · imu_gnss_raw</a>
+    <a class="sub" href="#imu-gnss-raw-launch">Launch</a>
+    <a class="sub" href="#imu-gnss-raw-node">Node topics &amp; params</a>
+    <a class="sub" href="#imu-gnss-raw-algo">Algorithm notes</a>
+    <a href="#sensor-data-raw">3 · sensor_data_raw</a>
+    <a class="sub" href="#sdr-launch">Launch</a>
+    <a class="sub" href="#sdr-base-receiver">base_receiver node</a>
+    <a class="sub" href="#sdr-gnss-enu">gnss_enu node</a>
+    <a class="sub" href="#sdr-imu">bwt901ble_imu node</a>
+    <a href="#yolov8">4 · yolov8-trt-bed-detect-orin</a>
+    <a class="sub" href="#yolov8-launch">Launch behavior</a>
+    <a class="sub" href="#yolov8-node">Detection node</a>
+    <a class="sub" href="#yolov8-web">Web server</a>
+    <a class="sub" href="#yolov8-loop">Closed-loop integration</a>
+    <a href="#build">5 · Build &amp; run</a>
+    <a href="#drift">6 · Known drift &amp; gotchas</a>
+    <a href="#udev">7 · Physical device pinning</a>
+  </nav>
+
+  <main>
+    <p class="kicker">Developer Manual</p>
+    <h1>Sensor Fusion &amp; Bed Detection Stack</h1>
+    <p class="dek">Internal reference for the three ROS 2 services that run together on the Jetson Orin Nano: GNSS/IMU acquisition, ESKF sensor fusion, and camera-based detection with a live dashboard.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Image</th><th>Built from</th><th>Contains</th><th>Compose services</th></tr></thead>
+        <tbody>
+          <tr><td>race_nav:sf.humble.v3-aarch64</td><td>vision/sf/Dockerfile.sf.humble</td><td>bwt901ble_imu, prime_msgs, base_receiver, rtk_localization</td><td>imu_gnss_raw-aarch64, sensor_data_raw-aarch64</td></tr>
+          <tr><td>race_nav:yolov8-trt-bed-detect-orin-nano.v5</td><td>vision/ai/Dockerfile.yolov8_trt_bed_detect_jetson_orien_nano</td><td>yolov8_trt_bed_detect_orin</td><td>yolov8-trt-bed-detect-orin</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><code>imu_gnss_raw-*</code> and <code>sensor_data_raw-*</code> are <strong>the same image</strong> — they differ only in which <code>ros2 launch</code> command runs. The x86 siblings build against ROS&nbsp;2 <strong>Jazzy</strong> rather than <strong>Humble</strong>; this is deliberate, since mixing Humble/Jazzy DDS participants on one domain previously caused <code>rmw_cyclonedds</code> decode failures.</p>
+
+    <h2 id="architecture">1 · Architecture &amp; data flow</h2>
+    <p>Chain summary: <strong>sensor_data_raw</strong> (serial GNSS + BLE IMU) → <strong>imu_gnss_raw</strong> (ESKF fusion) → <strong>yolov8-trt-bed-detect-orin</strong> (dashboard / auto-save context). All three containers talk only over ROS&nbsp;2 topics (DDS on loopback, <code>network_mode: host</code>) — no direct process/API coupling except the shared <code>docker.sock</code> used for model conversion.</p>
+
+    <div class="flow">
+      <div class="node"><span class="name">sensor_data_raw</span><span class="desc">serial GNSS → /gnss/pvt, /receiver/fix<br>BLE IMU → /imu/data</span></div>
+      <span class="arrow">→</span>
+      <div class="node"><span class="name">imu_gnss_raw</span><span class="desc">gnss_imu_eskf_node<br>15-state ESKF fusion</span></div>
+      <span class="arrow">→</span>
+      <div class="node"><span class="name">yolov8-trt-bed-detect-orin</span><span class="desc">detection + dashboard<br>:8090 web, :8080 MJPEG</span></div>
+    </div>
+
+    <h2 id="imu-gnss-raw">2 · imu_gnss_raw <span class="pill">rtk_localization</span></h2>
+
+    <h3 id="imu-gnss-raw-launch">Launch</h3>
+    <pre><code>ros2 launch rtk_localization gnss_imu_eskf.launch.py</code></pre>
+    <p>Starts a single node, <code>gnss_imu_eskf_node</code>, parameterized from <code>config/gnss_imu_eskf.yaml</code> (launch arg <code>config</code>, overridable). This launch file assumes <code>/imu/data</code> and <code>/gnss/pvt</code> are already being published by <code>sensor_data_raw-*</code> — it starts no driver of its own.</p>
+
+    <h3 id="imu-gnss-raw-node">Node: gnss_imu_eskf_node — subscriptions</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Topic</th><th>Type</th><th>QoS</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>/imu/data</td><td>sensor_msgs/Imu</td><td>SensorData</td><td>Strapdown prediction, ~100&nbsp;Hz</td></tr>
+        <tr><td>/gnss/pvt</td><td>std_msgs/String (JSON)</td><td>SystemDefaults</td><td>Position update</td></tr>
+        <tr><td>/gnss/rtk_status</td><td>std_msgs/Bool</td><td>SystemDefaults</td><td>RTK-active flag (logged/state only)</td></tr>
+        <tr><td>/gnss_imu_eskf/motion_pos_deadband</td><td>std_msgs/Float32</td><td>depth 10</td><td>Runtime deadband update; rejects ≤0 or non-finite</td></tr>
+      </tbody>
+    </table></div>
+
+    <p>Publications:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Topic</th><th>Type</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>/receiver/fix</td><td>sensor_msgs/NavSatFix</td><td>Republishes every accepted /gnss/pvt fix</td></tr>
+        <tr><td>/gnss_imu_eskf/odom</td><td>nav_msgs/Odometry</td><td>Fused ESKF output, map→gnss_base_link</td></tr>
+        <tr><td>/gnss_imu_eskf/path</td><td>nav_msgs/Path</td><td>Fused path trail</td></tr>
+        <tr><td>/gnss_imu_eskf/raw_gnss_markers</td><td>visualization_msgs/MarkerArray</td><td>RViz marker per accepted raw fix</td></tr>
+        <tr><td>/gnss_imu_eskf/gnss_only_path</td><td>nav_msgs/Path</td><td>Raw-GNSS-only path (no IMU)</td></tr>
+        <tr><td>/gnss_imu_eskf/imu_only_path</td><td>nav_msgs/Path</td><td>IMU-only dead-reckoning debug path</td></tr>
+        <tr><td>/gnss_imu_eskf/gnss_only_odom</td><td>nav_msgs/Odometry</td><td>Position = raw fix, orientation = course heading</td></tr>
+        <tr><td>/gnss_imu_eskf/imu_only_odom</td><td>nav_msgs/Odometry</td><td>Position = raw fix, orientation = IMU-only dead reckoning</td></tr>
+        <tr><td>/gnss_imu_eskf/motion_state</td><td>std_msgs/String</td><td>"idle" / "forward" / "backward", fused</td></tr>
+        <tr><td>/gnss_imu_eskf/motion_state_raw_gnss</td><td>std_msgs/String</td><td>Same classification from raw GNSS only</td></tr>
+        <tr><td>TF map → gnss_base_link</td><td>—</td><td>Broadcast per IMU tick once origin is set, if publish_tf</td></tr>
+      </tbody>
+    </table></div>
+    <p>No services or actions.</p>
+
+    <p>Parameters (declared in <code>gnss_imu_eskf_node.cpp</code>):</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>map_frame</td><td>map</td><td>Parent TF frame</td></tr>
+        <tr><td>base_frame</td><td>gnss_base_link</td><td>Child TF frame</td></tr>
+        <tr><td>min_fix_type</td><td>3</td><td>Minimum /gnss/pvt fix value accepted</td></tr>
+        <tr><td>acc_noise_density</td><td>0.05</td><td>m/s²/√Hz</td></tr>
+        <tr><td>gyro_noise_density</td><td>0.005</td><td>rad/s/√Hz</td></tr>
+        <tr><td>acc_bias_rw</td><td>0.001</td><td>Accel bias random walk</td></tr>
+        <tr><td>gyro_bias_rw</td><td>0.0001</td><td>Gyro bias random walk</td></tr>
+        <tr><td>publish_tf</td><td>true</td><td>Broadcast TF</td></tr>
+        <tr><td>gnss_lever_arm</td><td>[0,0,0]</td><td>Antenna offset from body origin (m)</td></tr>
+        <tr><td>default_hacc / default_vacc</td><td>1.0 / 2.0</td><td>Fallback accuracy (m) when receiver omits it</td></tr>
+        <tr><td>min_heading_dist</td><td>0.1</td><td>Min displacement (m) before recomputing course heading</td></tr>
+        <tr><td>gnss_heading_std_deg</td><td>15.0 (code)</td><td>Heading measurement std — confirm at runtime, see §6</td></tr>
+        <tr><td>motion_pos_deadband_topic</td><td>/gnss_imu_eskf/motion_pos_deadband</td><td>Runtime deadband update topic</td></tr>
+        <tr><td>motion_pos_deadband</td><td>0.3</td><td>m</td></tr>
+        <tr><td>motion_idle_hold_sec</td><td>1.0</td><td>s — hysteresis hold before reverting to idle</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="imu-gnss-raw-algo">Algorithm notes</h3>
+    <p>15-state ESKF: nominal state <code>[p, v, q, ab, gb]</code>, quaternion strapdown integration each IMU tick (midpoint), Joseph-form covariance correction on GNSS position updates and single-antenna course-heading updates. Initialization requires 100 stationary IMU samples to estimate gyro/accel bias and initial attitude (falls back to gravity alignment if no IMU orientation is available). Position integration doesn't start until the first accepted GNSS fix latches the ENU origin.</p>
+    <p>Motion-state classification uses a hysteresis state machine: enters <code>forward</code>/<code>backward</code> only after <code>motion_pos_deadband</code> meters of displacement from a stationary anchor, and only reverts to <code>idle</code> after <code>motion_idle_hold_sec</code> seconds within the deadband of a fixed reference. The <code>_raw_gnss</code> variant runs identical logic from consecutive <code>/gnss/pvt</code> fixes alone (no IMU) and can diverge from the fused result.</p>
+    <p>No environment variables — configured purely via ROS parameters and launch args.</p>
+
+    <h2 id="sensor-data-raw">3 · sensor_data_raw <span class="pill">base_receiver + bwt901ble_imu</span></h2>
+
+    <h3 id="sdr-launch">Launch</h3>
+    <pre><code>ros2 launch base_receiver imu_gps_raw.launch.py</code></pre>
+    <p>This launch file:</p>
+    <ol>
+      <li>Includes <code>base_receiver/launch/receiver.launch.py</code> (serial GNSS bridge)</li>
+      <li>Starts <code>bwt901ble_imu</code>/<code>imu_publisher</code> (BLE IMU driver)</li>
+      <li>Starts <code>imu_complementary_filter</code>/<code>complementary_filter_node</code> (fuses accel+gyro → orientation)</li>
+      <li>Has an RTK localization node inclusion <strong>commented out</strong> — not started here; that's the separate <code>imu_gnss_raw-*</code> service</li>
+      <li>Has <code>imu_filter_madgwick</code> commented out (disabled by default)</li>
+    </ol>
+    <p>Launch args: <code>device_address</code> (default <code>F7:75:A3:1D:9C:AB</code>), <code>device_name_filter</code> (<code>WT</code>), <code>topic</code> (<code>imu/data_raw</code>), <code>mag_topic</code> (<code>imu/mag</code>), <code>frame_id</code> (<code>imu_link</code>), <code>publish_tf</code> (<code>false</code>), <code>tf_parent_frame</code> (<code>imu_reference</code>), <code>magnetic_declination_radians</code> / <code>yaw_offset_radians</code> (<code>0.0</code>).</p>
+
+    <h3 id="sdr-base-receiver">Node: base_receiver <span class="pill">RoverGnssNode</span></h3>
+    <p>Reads newline-delimited JSON from a serial GNSS receiver in a background thread, decoupled from ROS publishing via a bounded queue drained by a 50&nbsp;Hz timer.</p>
+    <p>Parameters: <code>port</code> (default <code>""</code> → USB auto-detect), <code>baud</code> (<code>115200</code>), <code>frame_id</code> (<code>gps</code>), <code>stale_timeout</code> (<code>3.0</code>), <code>reconnect_interval</code> (<code>2.0</code>), <code>fix_topic</code> (<code>/receiver/fix</code>), <code>pvt_topic</code> (<code>/gnss/pvt</code>), <code>rtk_status_topic</code> (<code>/gnss/rtk_status</code>). Deployed <code>config/receiver.yaml</code> pins <code>port: "/dev/gnss_rtk"</code> (see §7).</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Topic</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>/receiver/fix</td><td>sensor_msgs/NavSatFix</td><td>lat/lon/alt/status/covariance</td></tr>
+        <tr><td>/gnss/pvt</td><td>std_msgs/String</td><td>Enriched PVT JSON (rtkState, fixLabel, corrAgeLabel, timestamp)</td></tr>
+        <tr><td>/gnss/rtk_status</td><td>std_msgs/Bool</td><td>true iff rtkState ∈ {RTK_FIXED, RTK_FLOAT}</td></tr>
+      </tbody>
+    </table></div>
+    <p>Auto-detected USB VID/PIDs: <code>(0x10C4,0xEA60)</code> CP210x, <code>(0x1A86,0x7523)</code> CH340, <code>(0x0403,0x6001)</code> FTDI, <code>(0x303A,0x1001)</code> Espressif USB.</p>
+    <p><code>fix</code> codes: <code>0=NO_FIX 1=DEAD_RECKONING 2=2D 3=3D 4=GNSS_DR 5=TIME_ONLY</code> (valid for position: 2/3/4). <code>carr</code>: <code>0=none 1=RTK_FLOAT 2=RTK_FIXED</code>.</p>
+
+    <h3 id="sdr-gnss-enu">Node: gnss_enu <span class="pill">GnssEnuNode</span></h3>
+    <p>Subscribes <code>NavSatFix</code> on <code>fix_topic</code> (default <code>/receiver/fix</code>), publishes <code>geometry_msgs/PointStamped</code> on <code>output_topic</code> (default <code>/gps/enu_position</code>). Origin latched on first valid fix and held until node restart. <code>x=East, y=North, z=Up</code>.</p>
+
+    <h3 id="sdr-imu">Node: bwt901ble_imu / imu_publisher</h3>
+    <p>Connects to a BlueLink WT-series BLE IMU (default MAC <code>F7:75:A3:1D:9C:AB</code>) via <code>bleak</code> over the host's D-Bus/BlueZ socket. Publishes <code>sensor_msgs/Imu</code> on <code>topic</code> (<code>/imu/data_raw</code> as launched) and <code>sensor_msgs/MagneticField</code> on <code>mag_topic</code> (<code>/imu/mag</code>). This is why <code>/run/dbus/system_bus_socket</code> is mounted into the container.</p>
+    <p>Pure ROS params — no environment variables consumed by <code>base_receiver</code> or <code>bwt901ble_imu</code> source.</p>
+
+    <h2 id="yolov8">4 · yolov8-trt-bed-detect-orin <span class="pill">yolov8_trt_bed_detect_orin</span></h2>
+
+    <h3 id="yolov8-launch">Launch behavior — detection is NOT running by default</h3>
+    <pre><code>ros2 launch yolov8_trt_bed_detect_orin yolov8_web.launch.py</code></pre>
+    <p>This starts <strong>only</strong> the Python web server (<code>web_server.py</code>). It does <strong>not</strong> start the TensorRT/ROS C++ detection node.</p>
+    <p>The detection node is started <strong>on demand</strong> by the web server via <code>POST /api/deserialize/model</code>, which runs <code>ros2 launch yolov8_trt_bed_detect_orin bed_detect.launch.py</code> as a background subprocess. Engine serialization similarly runs <code>serialize_engine.launch.py</code> via <code>POST /api/serialize/model</code>.</p>
+
+    <h3 id="yolov8-node">Node: yolov8_trt <span class="pill">C++, executable yolov8_trt_bed_detect_orin</span></h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>engine_name</td><td>yolov8n.engine</td><td>Path to serialized TensorRT engine</td></tr>
+        <tr><td>wts_name</td><td>yolov8n.wts</td><td>Serialize-mode input weights</td></tr>
+        <tr><td>model_type</td><td>n</td><td>YOLOv8 size letter</td></tr>
+        <tr><td>input_h / input_w</td><td>416 / 416</td><td>Inference resolution (baked into engine)</td></tr>
+        <tr><td>num_class</td><td>80</td><td>Class count</td></tr>
+        <tr><td>precision</td><td>fp16</td><td>fp16 or int8</td></tr>
+        <tr><td>cuda_post_process</td><td>g</td><td>g = GPU NMS, c = CPU NMS</td></tr>
+        <tr><td>conf_thresh</td><td>0.5</td><td>Detection confidence threshold</td></tr>
+        <tr><td>nms_thresh</td><td>0.45</td><td>NMS IoU threshold</td></tr>
+        <tr><td>max_output_bbox</td><td>100</td><td>Postprocess box cap</td></tr>
+        <tr><td>mjpeg_port</td><td>8080</td><td>Raw-socket MJPEG streamer port</td></tr>
+        <tr><td>camera_index</td><td>0</td><td>-1 = auto-scan /dev/video0..9</td></tr>
+        <tr><td>camera_width / camera_height</td><td>1280 / 720</td><td>Capture resolution</td></tr>
+        <tr><td>conf_score_value</td><td>0.8</td><td>Gate for bed_detection_status = 1</td></tr>
+        <tr><td>is_track</td><td>false</td><td>Cumulative MOSSE tracking vs per-frame counts</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout"><strong>Deployed config caveat.</strong> <code>config/trt_params.yaml</code> (mounted for both aarch64 and x86 services) defaults <code>engine_name</code> to <code>/weights/yolov8n_x86_64.engine</code>, while <code>config/trt_prams_main.yaml</code> defaults to the aarch64 engine. Both <code>bed_detect.launch.py</code> and <code>yolov8_web.launch.py</code> default their <code>params_file</code> arg to <code>trt_params.yaml</code>. Confirm which engine file actually loads on the Orin before relying on default behavior — this is a real misconfiguration risk.</div>
+
+    <p>Topics:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Topic</th><th>Type</th><th>QoS</th><th>Direction</th></tr></thead>
+      <tbody>
+        <tr><td>conf</td><td>std_msgs/Float32</td><td>depth 10</td><td>Pub — max confidence this frame</td></tr>
+        <tr><td>bed_detection_status</td><td>std_msgs/UInt8</td><td>depth 10</td><td>Pub — 1 if any detection's conf &gt; conf_score_value</td></tr>
+        <tr><td>class_counts</td><td>std_msgs/String</td><td>depth 10</td><td>Pub — e.g. "class0:2 class1:1"</td></tr>
+        <tr><td>detection_active</td><td>std_msgs/UInt8</td><td>reliable + transient_local, depth 1</td><td>Pub — 1 = inference loop running</td></tr>
+        <tr><td>tracking_enabled</td><td>std_msgs/UInt8</td><td>reliable + transient_local, depth 1</td><td>Pub — 1 = unique-tracking mode</td></tr>
+        <tr><td>camera_index</td><td>std_msgs/Int32</td><td>reliable + transient_local, depth 1</td><td>Pub — actually-opened camera index</td></tr>
+        <tr><td>infer_ms</td><td>std_msgs/Float32</td><td>depth 10</td><td>Pub — inference latency per frame</td></tr>
+      </tbody>
+    </table></div>
+
+    <p>Services:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Service</th><th>Type</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr><td>bed_detection</td><td>std_srvs/Trigger</td><td>Enable detection, reset tracker, detection_active=1</td></tr>
+        <tr><td>bed_detection_stop</td><td>std_srvs/Trigger</td><td>Disable detection, zero out status/conf/counts</td></tr>
+        <tr><td>reset_tracker</td><td>std_srvs/Trigger</td><td>Clear cumulative MOSSE tracker counts</td></tr>
+        <tr><td>set_tracking</td><td>std_srvs/SetBool</td><td>Set is_track param at runtime</td></tr>
+      </tbody>
+    </table></div>
+    <p>MJPEG streaming is a custom raw-socket HTTP server (<code>include/mjpeg_server.h</code>), not Flask-based — non-blocking, skips JPEG encode if no clients connected.</p>
+
+    <h3 id="yolov8-web">Web server <span class="pill">web_server/web_server.py</span></h3>
+    <p>The actual container entrypoint process. Full REST/WebSocket API is documented separately in the API Reference.</p>
+    <p>Environment variables (set by <code>yolov8_web.launch.py</code>, sourced from <code>docker-compose.yml</code>):</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>SAVE_DIR</td><td>/saved_frames</td><td>JPEG + SQLite DB storage</td></tr>
+        <tr><td>WEIGHTS_DIR</td><td>/weights</td><td>Model file directory</td></tr>
+        <tr><td>CONVERT_IMAGE</td><td>meraquetech/tensorrt-yolov8:ultralytics</td><td>Docker image for .pt→.wts (x86 only)</td></tr>
+        <tr><td>HOST_WEIGHTS_DIR</td><td>—</td><td>Host path for weights (conversion talks to host daemon via docker.sock)</td></tr>
+        <tr><td>HOST_YOLOV8_DIR</td><td>—</td><td>Host path to yolov8/ source</td></tr>
+        <tr><td>TRT_PARAMS_FILE</td><td>.../config/trt_params.yaml</td><td>File the web server edits in place for model selection</td></tr>
+        <tr><td>MJPEG_PORT</td><td>8080</td><td>Port the C++ node's MJPEG server listens on</td></tr>
+        <tr><td>API_PORT</td><td>8090</td><td>Flask bind port</td></tr>
+        <tr><td>HISTORY_DB</td><td>&lt;SAVE_DIR&gt;/count_history.db</td><td>SQLite path</td></tr>
+        <tr><td>AUTO_SAVE_INTERVAL</td><td>0.5 (floor)</td><td>Auto-save loop wake interval, seconds</td></tr>
+        <tr><td>GNSS_FIX_TOPIC</td><td>/receiver/fix</td><td>NavSatFix source for dashboard lat/lon</td></tr>
+        <tr><td>GNSS_STALE_TIMEOUT</td><td>3.0</td><td>Seconds before GNSS considered stale</td></tr>
+        <tr><td>MOTION_STATE_TOPIC</td><td>/gnss_imu_eskf/motion_state_raw_gnss</td><td>Direction subscription</td></tr>
+        <tr><td>MOTION_POS_DEADBAND_TOPIC</td><td>/gnss_imu_eskf/motion_pos_deadband</td><td>Publishes deadband updates back to ESKF node</td></tr>
+        <tr><td>MOTION_POS_DEADBAND_M</td><td>0.3</td><td>Initial deadband</td></tr>
+        <tr><td>REPORT_LOW_CONFIDENCE</td><td>0.5</td><td>QA report threshold</td></tr>
+        <tr><td>REPORT_NEAR_DUPLICATE_M</td><td>= MOTION_POS_DEADBAND_M</td><td>QA report near-duplicate distance</td></tr>
+        <tr><td>REPORT_NO_DETECTION_RUN_LENGTH</td><td>3</td><td>QA report min flagged gap run length</td></tr>
+        <tr><td>GNSS_ONLY_ODOM_TOPIC</td><td>/gnss_imu_eskf/gnss_only_odom</td><td>ENU source for auto-save distance gating</td></tr>
+        <tr><td>DIRECTION_STALE_TIMEOUT</td><td>3.0</td><td>Seconds before direction data considered stale</td></tr>
+      </tbody>
+    </table></div>
+    <p><code>HOST_COMPOSE_FILE</code> and <code>SERIALIZE_SERVICE_NAME</code> are read but not set in the current <code>docker-compose.yml</code> — likely vestigial from an earlier compose-based serialize workflow.</p>
+
+    <h3 id="yolov8-loop">Closed-loop GNSS/motion integration</h3>
+    <ol>
+      <li><code>imu_gnss_raw</code> publishes <code>/receiver/fix</code>, <code>/gnss_imu_eskf/motion_state_raw_gnss</code>, <code>/gnss_imu_eskf/gnss_only_odom</code>; subscribes <code>/gnss_imu_eskf/motion_pos_deadband</code>.</li>
+      <li><code>web_server.py</code>'s <code>BridgeNode</code> subscribes to those same three topics (via env-var-configured names) and publishes back to the deadband topic when the dashboard's deadband control (<code>POST /api/motion_pos_deadband</code>) is used.</li>
+      <li>Auto-save gating requires <code>is_forward=true AND is_backward=false</code> (fresh, non-stale) <strong>and</strong> ≥ <code>motion_pos_deadband_m</code> displacement since the last save (Euclidean distance in ENU from <code>gnss_only_odom</code>).</li>
+    </ol>
+    <p><strong>Live-edit volumes:</strong> <code>docker-compose.yml</code> bind-mounts <code>config/</code>, <code>launch/</code>, and <code>web_server/</code> directly over the installed share-directory paths inside the container. Host edits take effect without rebuilding the image — this is also why the web server's in-place YAML edits (<code>_update_trt_params</code>) persist across restarts.</p>
+    <p><strong>Privileges:</strong> <code>pid: host</code> + <code>privileged: true</code> + <code>/var/run/docker.sock</code> mounted grant this container effective root control of the host: <code>POST /api/shutdown</code> <code>nsenter</code>s into host PID&nbsp;1 to shut down the physical Jetson; <code>.pt→.wts</code> conversion runs <code>docker run</code> against the host daemon.</p>
+
+    <h2 id="build">5 · Build &amp; run</h2>
+    <pre><code># aarch64 (Jetson)
+docker compose build imu_gnss_raw-aarch64 yolov8-trt-bed-detect-orin sensor_data_raw-aarch64
+
+# x86 (desktop/dev)
+docker compose build imu_gnss_raw-x86 yolov8-trt-bed-detect-x86-jazzy sensor_data_raw-x86</code></pre>
+    <p><code>run_ai.sh</code> wraps this per-architecture (<code>uname -m</code> dispatch) and additionally calls <code>./kill_server.sh</code> first, which force-removes <strong>all</strong> running containers (<code>docker rm -f $(docker ps -aq)</code>) — not scoped to this project.</p>
+    <div class="callout"><strong>Asymmetry.</strong> The x86 branch of <code>run_ai.sh</code> builds <code>sensor_data_raw-x86</code> but does not <code>up</code> it (that line is commented out); the aarch64 branch starts all three services.</div>
+
+    <h2 id="drift">6 · Known drift &amp; gotchas</h2>
+    <ol class="drift-list">
+      <li><strong>gnss_heading_std_deg</strong> — code default <code>15.0</code>, not set in deployed <code>config/gnss_imu_eskf.yaml</code>, and rtk_localization's own <code>docs/readme.md</code> describes a different value/range. Verify with <code>ros2 param get /gnss_imu_eskf_node gnss_heading_std_deg</code> before treating any single number as authoritative.</li>
+      <li>Several parameters present in <code>config/gnss_imu_eskf.yaml</code> (<code>min_carr_soln</code>, <code>max_hacc</code>, <code>max_vacc</code>, <code>position_nis_gate</code>, <code>heading_nis_gate</code>, <code>resolve_reverse_motion</code>, <code>stationary_init_samples</code>, <code>initial_yaw_std_deg</code>, etc.) are <strong>not</strong> <code>declare_parameter</code>'d in <code>gnss_imu_eskf_node.cpp</code> and are silently ignored by rclcpp unless the node allows undeclared parameters (it does not). Confirm live with <code>ros2 param list /gnss_imu_eskf_node</code>.</li>
+      <li><code>bwt901ble_imu/README.md</code> describes an older/aspirational architecture (topics <code>/gnss/odom</code>, <code>/gnss/is_forward</code>, <code>/gnss/is_backward</code>, a node <code>/rtk_localization</code> included by <code>imu_gps_raw.launch.py</code>) that doesn't match current wiring (RTK inclusion is commented out there; the real ESKF node lives in the separate <code>imu_gnss_raw</code> service with <code>/gnss_imu_eskf/*</code> topic names).</li>
+      <li><code>yolov8_trt_bed_detect_orin/README.md</code>'s "Prerequisites" section (Jetson Nano, JetPack 4.6.1, L4T r32.7) contradicts the actual Dockerfile chain (Jetson <strong>Orin</strong> Nano, JetPack 6.x, L4T r36.4.0, sm_87) — likely copied from the non-Orin sibling package without updating.</li>
+      <li><code>config/trt_params.yaml</code> vs <code>config/trt_prams_main.yaml</code> engine-path defaults appear swapped relative to their intended architecture — see §4.</li>
+    </ol>
+
+    <h2 id="udev">7 · Physical device pinning</h2>
+    <p>The GNSS receiver is a CH340 USB-serial adapter pinned to a fixed device symlink so USB enumeration order can't swap it:</p>
+    <pre><code># udev/gnss_rtk.rules
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", KERNELS=="1-2.3", MODE:="0777", SYMLINK+="gnss_rtk"</code></pre>
+    <p><code>KERNELS=="1-2.3"</code> is the physical USB port path (from <code>udevadm info -a -n /dev/ttyUSBx</code>). If the receiver moves to a different USB port, regenerate this rule. Install/reload via <code>udev/install.sh</code>.</p>
+    <p><code>base_receiver/config/receiver.yaml</code> points <code>port: "/dev/gnss_rtk"</code> at this symlink.</p>
+
+    <footer>Mardi_tech · Sensor Fusion &amp; Bed Detection Stack · Developer Manual</footer>
+  </main>
+</div>

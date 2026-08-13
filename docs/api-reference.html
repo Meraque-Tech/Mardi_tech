@@ -1,0 +1,257 @@
+<title>Bed Detection API Reference</title>
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --surface: #ffffff;
+    --surface-2: #efece5;
+    --ink: #1d1f1d;
+    --ink-dim: #5c6058;
+    --ink-faint: #8a8d84;
+    --line: #ded9cd;
+    --accent: #c8540f;
+    --accent-soft: #f4e2d3;
+    --get: #2f6f4e;
+    --get-soft: #dcece2;
+    --post: #b5580c;
+    --post-soft: #f6e4d1;
+    --delete: #a3311f;
+    --delete-soft: #f5e0dc;
+    --ws: #4a4fb0;
+    --ws-soft: #e3e3f7;
+    --code-bg: #f0eee6;
+    --shadow: 0 1px 2px rgba(30,25,15,0.06), 0 6px 20px rgba(30,25,15,0.05);
+    --radius: 3px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16181a; --surface: #1d2023; --surface-2: #24272a;
+      --ink: #eae7df; --ink-dim: #a5a89f; --ink-faint: #74776f; --line: #33362f;
+      --accent: #ff8a3d; --accent-soft: #3a2a17;
+      --get: #6fbf80; --get-soft: #1e2f22;
+      --post: #e0a352; --post-soft: #332512;
+      --delete: #e37c68; --delete-soft: #3a2018;
+      --ws: #9a9df0; --ws-soft: #26264a;
+      --code-bg: #202225;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16181a; --surface: #1d2023; --surface-2: #24272a;
+    --ink: #eae7df; --ink-dim: #a5a89f; --ink-faint: #74776f; --line: #33362f;
+    --accent: #ff8a3d; --accent-soft: #3a2a17;
+    --get: #6fbf80; --get-soft: #1e2f22;
+    --post: #e0a352; --post-soft: #332512;
+    --delete: #e37c68; --delete-soft: #3a2018;
+    --ws: #9a9df0; --ws-soft: #26264a;
+    --code-bg: #202225;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 24px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); margin: 0;
+    font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+    font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 3rem 2rem 6rem; }
+
+  .kicker {
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.75rem;
+    color: var(--accent); font-weight: 600; margin: 0 0 0.9rem;
+  }
+  h1 { font-size: 2.3rem; margin: 0 0 0.5rem; text-wrap: balance; letter-spacing: -0.01em; font-weight: 700; }
+  .dek { color: var(--ink-dim); font-size: 1.03rem; max-width: 62ch; margin: 0 0 1.6rem; }
+
+  .base-urls {
+    display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 0 0 2.6rem;
+  }
+  .base-urls code {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 0.5rem 0.9rem; font-size: 0.85rem; box-shadow: var(--shadow);
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .base-urls .label { color: var(--ink-faint); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 0.3rem; }
+
+  h2 {
+    font-size: 1.25rem; margin: 3rem 0 1rem; padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--line); font-weight: 700; letter-spacing: -0.005em;
+    display: flex; align-items: baseline; gap: 0.6rem; scroll-margin-top: 1.5rem;
+  }
+  h2 .count { font-family: "Berkeley Mono", ui-monospace, monospace; font-size: 0.75rem; color: var(--ink-faint); font-weight: 400; }
+
+  .endpoint {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 1rem 1.3rem; margin-bottom: 0.7rem; box-shadow: var(--shadow);
+  }
+  .endpoint-head { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
+  .method {
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em;
+    padding: 0.2rem 0.55rem; border-radius: var(--radius); flex-shrink: 0; min-width: 3.6rem; text-align: center;
+  }
+  .method.get { background: var(--get-soft); color: var(--get); }
+  .method.post { background: var(--post-soft); color: var(--post); }
+  .method.delete { background: var(--delete-soft); color: var(--delete); }
+  .method.ws { background: var(--ws-soft); color: var(--ws); }
+
+  .route {
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.92rem; font-weight: 600;
+  }
+  .route .param { color: var(--accent); }
+
+  .endpoint-desc { color: var(--ink-dim); font-size: 0.9rem; margin: 0.5rem 0 0; max-width: 68ch; }
+  .endpoint-meta {
+    margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px dashed var(--line);
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.78rem; color: var(--ink-faint);
+  }
+  .endpoint-meta .k { color: var(--accent); }
+  .endpoint.warn { border-color: var(--delete); }
+  .badge-x86 {
+    font-family: "Berkeley Mono", monospace; font-size: 0.65rem; text-transform: uppercase;
+    background: var(--accent-soft); color: var(--accent); padding: 0.1em 0.5em; border-radius: 999px;
+  }
+
+  p.lead { max-width: 68ch; color: var(--ink-dim); }
+
+  pre {
+    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 1.1rem 1.3rem; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; margin: 0 0 1rem;
+  }
+  code { font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); margin: 0 0 1.4rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 420px; font-size: 0.85rem; background: var(--surface); }
+  th, td { text-align: left; padding: 0.5rem 0.85rem; border-bottom: 1px solid var(--line); }
+  th { font-family: "Berkeley Mono", monospace; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-dim); background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+
+  .field-list { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 1.4rem; }
+  .field-list code { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.2rem 0.55rem; font-size: 0.8rem; }
+
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 0.78rem; font-family: "Berkeley Mono", monospace; }
+</style>
+
+<div class="wrap">
+  <p class="kicker">API Reference</p>
+  <h1>Bed Detection Dashboard</h1>
+  <p class="dek">HTTP + WebSocket surface exposed by <code>yolov8-trt-bed-detect-orin</code>'s web server, including the ROS 2 services it proxies.</p>
+
+  <div class="base-urls">
+    <code><span class="label">Dashboard / API</span>http://&lt;jetson-ip&gt;:8090</code>
+    <code><span class="label">Raw MJPEG (no auth)</span>http://&lt;jetson-ip&gt;:8080</code>
+  </div>
+
+  <p class="lead">All JSON errors follow <code>{"success": false, "message": "..."}</code>. Codes: <code>400</code> invalid input · <code>404</code> not found · <code>409</code> conflict · <code>500</code> I/O or DB failure · <code>503</code> ROS bridge/service unavailable.</p>
+
+  <h2>Pages &amp; static <span class="count">2</span></h2>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/</span></div><p class="endpoint-desc">Dashboard HTML single-page app.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/saved/<span class="param">&lt;path:filename&gt;</span></span></div><p class="endpoint-desc">Serve a saved JPEG frame.</p></div>
+
+  <h2>Live counts &amp; history <span class="count">5</span></h2>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/counts</span></div><p class="endpoint-desc">Current live per-class detection counts.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/history</span></div><p class="endpoint-desc">Paginated saved-count history.</p><div class="endpoint-meta"><span class="k">query</span> limit (≤5000) · offset</div></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/path</span></div><p class="endpoint-desc">Recent ENU path-point trace for the UI map/plot.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/save_count</span></div><p class="endpoint-desc">Save one snapshot of live counts to SQLite.</p><div class="endpoint-meta"><span class="k">409</span> if no live count yet</div></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/status</span></div><p class="endpoint-desc">Full live-state snapshot, including <code>mjpeg_port</code>.</p></div>
+
+  <h2>Auto-save &amp; motion tuning <span class="count">2</span></h2>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/auto_save</span></div><p class="endpoint-desc">Toggle forward-only auto-save.</p><div class="endpoint-meta"><span class="k">body</span> {"enabled": bool}</div></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/motion_pos_deadband</span></div><p class="endpoint-desc">Push new deadband distance to the ESKF node via ROS.</p><div class="endpoint-meta"><span class="k">body</span> {"deadband_m": float&gt;0}</div></div>
+
+  <h2>Detection control <span class="count">5</span></h2>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/start</span></div><p class="endpoint-desc">Calls the <code>bed_detection</code> Trigger service; also runs <code>jetson_clocks</code> if on Jetson.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/stop</span></div><p class="endpoint-desc">Calls the <code>bed_detection_stop</code> Trigger service.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/reset_tracker</span></div><p class="endpoint-desc">Calls the <code>reset_tracker</code> Trigger service.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/set_track</span></div><p class="endpoint-desc">Calls the <code>set_tracking</code> SetBool service.</p><div class="endpoint-meta"><span class="k">body</span> {"enabled": bool}</div></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/save</span></div><p class="endpoint-desc">Grab the current MJPEG frame and save it as a JPEG immediately.</p></div>
+
+  <h2>Model management <span class="count">11</span></h2>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/models/upload</span></div><p class="endpoint-desc">Multipart upload of a <code>.wts</code> file into <code>WEIGHTS_DIR</code>.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/models/upload_pt</span></div><p class="endpoint-desc">Multipart upload of a <code>.pt</code> file.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/models</span></div><p class="endpoint-desc">List <code>.pt</code>/<code>.wts</code>/<code>.engine</code> files; includes <code>conversion_supported</code> flag.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/models/<span class="param">&lt;kind&gt;</span>/<span class="param">&lt;filename&gt;</span>/download</span></div><p class="endpoint-desc">Download a model file.</p><div class="endpoint-meta"><span class="k">kind</span> pt · wts · engine</div></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method delete">DELETE</span><span class="route">/api/models/<span class="param">&lt;kind&gt;</span>/<span class="param">&lt;filename&gt;</span></span></div><p class="endpoint-desc">Delete a model file.</p></div>
+  <div class="endpoint warn"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/models/convert</span><span class="badge-x86">x86 only</span></div><p class="endpoint-desc">Background <code>.pt</code>→<code>.wts</code> conversion via <code>docker run</code>. Returns 400 on Jetson.</p><div class="endpoint-meta"><span class="k">body</span> {"filename": "x.pt"}</div></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/models/convert/status</span></div><p class="endpoint-desc">Poll conversion job status.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/models/build_engine</span></div><p class="endpoint-desc">Writes <code>wts_name</code> / <code>engine_name</code> / <code>num_class</code> into <code>trt_params.yaml</code>.</p><div class="endpoint-meta"><span class="k">body</span> {"filename","num_class"} · <span class="k">400</span> if num_class missing/non-positive</div></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/models/select_engine</span></div><p class="endpoint-desc">Writes <code>engine_name</code> / <code>num_class</code> only.</p><div class="endpoint-meta"><span class="k">body</span> {"filename","num_class"}</div></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/serialize/model</span></div><p class="endpoint-desc">Runs <code>serialize_engine.launch.py</code> in the background (skips if engine file already exists).</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/deserialize/model</span></div><p class="endpoint-desc">Runs <code>bed_detect.launch.py</code> in the background — stops any running serialize first, restarts detection if already running.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/models/launch/status</span></div><p class="endpoint-desc">Returns <code>{"running","mode","message","ok"}</code>.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/models/launch/log</span></div><p class="endpoint-desc">Last 500 lines of the current/last <code>ros2 launch</code> subprocess output.</p></div>
+
+  <h2>Saved images &amp; reports <span class="count">5</span></h2>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/images</span></div><p class="endpoint-desc">List saved JPEGs with metadata.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/report</span></div><p class="endpoint-desc">Generate and download an HTML QA report — flags low confidence, missing GNSS, near-duplicate positions, no-detection runs.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method get">GET</span><span class="route">/api/images/download</span></div><p class="endpoint-desc">Stream a ZIP of all saved JPEGs plus <code>images_manifest.csv</code>.</p></div>
+  <div class="endpoint"><div class="endpoint-head"><span class="method delete">DELETE</span><span class="route">/api/images/<span class="param">&lt;filename&gt;</span></span></div><p class="endpoint-desc">Delete one saved JPEG.</p></div>
+  <div class="endpoint warn"><div class="endpoint-head"><span class="method delete">DELETE</span><span class="route">/api/data</span></div><p class="endpoint-desc"><strong>Destructive.</strong> Disables auto-save, deletes all history rows and all saved JPEGs.</p></div>
+
+  <h2>System <span class="count">1</span></h2>
+  <div class="endpoint warn"><div class="endpoint-head"><span class="method post">POST</span><span class="route">/api/shutdown</span></div><p class="endpoint-desc"><code>nsenter</code>s into host PID&nbsp;1 and runs <code>shutdown -h now</code> on the physical host (works via <code>pid: host</code>).</p><div class="endpoint-meta"><span class="k">body</span> {"confirm": "shutdown"}</div></div>
+
+  <h2>WebSocket <span class="count">1</span></h2>
+  <div class="endpoint"><div class="endpoint-head"><span class="method ws">WS</span><span class="route">/ws</span></div><p class="endpoint-desc">On connect, the server sends a full state snapshot. It then pushes <code>{"type":"status"}</code> on detection/tracking/direction/camera-index change, and <code>{"type":"snapshot"}</code> on every <code>class_counts</code> update. Send a <code>ping</code> text frame roughly every 20s to keep the connection alive (30s server-side receive timeout).</p></div>
+
+  <p style="margin-top:0.9rem; color: var(--ink-dim); font-size: 0.92rem;">State snapshot fields:</p>
+  <div class="field-list">
+    <code>counts</code><code>bed_status</code><code>conf</code><code>detecting</code><code>is_track</code><code>auto_save</code>
+    <code>motion_pos_deadband_m</code><code>last_updated</code><code>camera_index</code><code>infer_ms</code>
+    <code>latitude</code><code>longitude</code><code>gnss_valid</code><code>gnss_received_at</code>
+    <code>is_forward</code><code>is_backward</code><code>direction_received_at</code>
+    <code>direction_valid</code><code>auto_save_direction_eligible</code><code>auto_save_distance_eligible</code><code>auto_save_active</code>
+  </div>
+
+  <h2>ROS 2 service proxying</h2>
+  <p class="lead">These endpoints are thin wrappers around ROS 2 services exposed by the <code>yolov8_trt</code> detection node. If the node isn't running yet (before <code>/api/deserialize/model</code> has been called), they return <code>503</code>.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>REST endpoint</th><th>ROS service</th><th>ROS type</th></tr></thead>
+    <tbody>
+      <tr><td>POST /api/start</td><td>/bed_detection</td><td>std_srvs/Trigger</td></tr>
+      <tr><td>POST /api/stop</td><td>/bed_detection_stop</td><td>std_srvs/Trigger</td></tr>
+      <tr><td>POST /api/reset_tracker</td><td>/reset_tracker</td><td>std_srvs/Trigger</td></tr>
+      <tr><td>POST /api/set_track</td><td>/set_tracking</td><td>std_srvs/SetBool</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>curl examples</h2>
+  <pre><code># Start detection
+curl -X POST http://&lt;jetson-ip&gt;:8090/api/start
+
+# Check live status
+curl http://&lt;jetson-ip&gt;:8090/api/status
+
+# Toggle auto-save on
+curl -X POST http://&lt;jetson-ip&gt;:8090/api/auto_save \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled": true}'
+
+# Update motion deadband to 0.5m
+curl -X POST http://&lt;jetson-ip&gt;:8090/api/motion_pos_deadband \
+  -H 'Content-Type: application/json' \
+  -d '{"deadband_m": 0.5}'
+
+# Download a QA report
+curl -o report.html http://&lt;jetson-ip&gt;:8090/api/report
+
+# Download all saved frames as a zip
+curl -o frames.zip http://&lt;jetson-ip&gt;:8090/api/images/download</code></pre>
+
+  <h2>Related ROS 2 topics</h2>
+  <p class="lead">Not HTTP, but relevant when building tooling that talks to the stack directly.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Topic</th><th>Type</th><th>Source node</th></tr></thead>
+    <tbody>
+      <tr><td>/receiver/fix</td><td>sensor_msgs/NavSatFix</td><td>gnss_imu_eskf_node (republished)</td></tr>
+      <tr><td>/gnss_imu_eskf/gnss_only_odom</td><td>nav_msgs/Odometry</td><td>gnss_imu_eskf_node</td></tr>
+      <tr><td>/gnss_imu_eskf/motion_state_raw_gnss</td><td>std_msgs/String</td><td>gnss_imu_eskf_node</td></tr>
+      <tr><td>/gnss_imu_eskf/motion_pos_deadband</td><td>std_msgs/Float32</td><td>written by dashboard, read by gnss_imu_eskf_node</td></tr>
+      <tr><td>/conf, /bed_detection_status, /class_counts, /detection_active, /tracking_enabled, /camera_index, /infer_ms</td><td>various</td><td>yolov8_trt detection node</td></tr>
+    </tbody>
+  </table></div>
+
+  <footer>Mardi_tech · Bed Detection Dashboard · API Reference</footer>
+</div>

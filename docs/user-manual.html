@@ -1,0 +1,222 @@
+<title>Bed Detection User Manual</title>
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --surface: #ffffff;
+    --surface-2: #efece5;
+    --ink: #1d1f1d;
+    --ink-dim: #5c6058;
+    --ink-faint: #8a8d84;
+    --line: #ded9cd;
+    --accent: #c8540f;
+    --accent-soft: #f4e2d3;
+    --ok: #2f6f4e;
+    --ok-soft: #dcece2;
+    --warn: #a8631a;
+    --warn-soft: #f6e9d5;
+    --danger: #a3311f;
+    --danger-soft: #f5e0dc;
+    --code-bg: #f0eee6;
+    --shadow: 0 1px 2px rgba(30,25,15,0.06), 0 8px 24px rgba(30,25,15,0.06);
+    --radius: 6px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16181a; --surface: #1d2023; --surface-2: #24272a;
+      --ink: #eae7df; --ink-dim: #a5a89f; --ink-faint: #74776f; --line: #33362f;
+      --accent: #ff8a3d; --accent-soft: #3a2a17;
+      --ok: #6fbf80; --ok-soft: #1e2f22;
+      --warn: #e0a352; --warn-soft: #332512;
+      --danger: #e37c68; --danger-soft: #3a2018;
+      --code-bg: #202225;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 28px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16181a; --surface: #1d2023; --surface-2: #24272a;
+    --ink: #eae7df; --ink-dim: #a5a89f; --ink-faint: #74776f; --line: #33362f;
+    --accent: #ff8a3d; --accent-soft: #3a2a17;
+    --ok: #6fbf80; --ok-soft: #1e2f22;
+    --warn: #e0a352; --warn-soft: #332512;
+    --danger: #e37c68; --danger-soft: #3a2018;
+    --code-bg: #202225;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 28px rgba(0,0,0,0.4);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); margin: 0;
+    font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+    font-size: 16.5px; line-height: 1.65; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 3.2rem 1.75rem 6rem; }
+
+  .kicker {
+    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.74rem;
+    color: var(--accent); font-weight: 600; margin: 0 0 0.9rem;
+  }
+  h1 { font-size: 2.5rem; margin: 0 0 0.6rem; text-wrap: balance; letter-spacing: -0.015em; font-weight: 700; }
+  .dek { color: var(--ink-dim); font-size: 1.12rem; max-width: 58ch; margin: 0 0 2.6rem; }
+
+  h2 {
+    font-size: 1.4rem; margin: 3.1rem 0 1rem; font-weight: 700; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 0.6rem; scroll-margin-top: 1.5rem;
+  }
+  h2 .num {
+    font-family: "Berkeley Mono", ui-monospace, monospace; font-size: 0.85rem; font-weight: 700;
+    color: var(--accent); background: var(--accent-soft); width: 1.9rem; height: 1.9rem;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+
+  p { max-width: 62ch; margin: 0 0 1.1rem; }
+  ul, ol { max-width: 62ch; padding-left: 1.3rem; margin: 0 0 1.2rem; }
+  li { margin-bottom: 0.55rem; }
+  strong { font-weight: 650; }
+
+  code {
+    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg); padding: 0.12em 0.4em; border-radius: 4px; font-size: 0.87em;
+  }
+  pre {
+    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 1.1rem 1.3rem; overflow-x: auto; font-size: 0.86rem; line-height: 1.6; margin: 0 0 1.4rem;
+  }
+  pre code { background: none; padding: 0; }
+
+  .url-card {
+    display: flex; align-items: center; gap: 0.8rem; background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.3rem;
+    margin: 0 0 1rem; box-shadow: var(--shadow);
+  }
+  .url-card .icon { font-size: 1.4rem; }
+  .url-card .label { font-size: 0.78rem; color: var(--ink-faint); margin-bottom: 0.15rem; }
+  .url-card code { background: none; padding: 0; font-size: 0.95rem; color: var(--accent); font-weight: 600; }
+
+  .steps { counter-reset: step; list-style: none; padding-left: 0; max-width: 62ch; }
+  .steps li {
+    counter-increment: step; position: relative; padding-left: 2.6rem; margin-bottom: 1.3rem;
+  }
+  .steps li::before {
+    content: counter(step); position: absolute; left: 0; top: -0.05em;
+    font-family: "Berkeley Mono", ui-monospace, monospace; font-weight: 700; font-size: 0.85rem;
+    color: #fff; background: var(--accent); width: 1.9rem; height: 1.9rem; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.9rem; margin: 0 0 1.6rem; }
+  .feature-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 1.1rem 1.2rem; box-shadow: var(--shadow);
+  }
+  .feature-card .name { font-weight: 650; margin-bottom: 0.35rem; display: block; }
+  .feature-card .desc { color: var(--ink-dim); font-size: 0.89rem; line-height: 1.5; }
+
+  .callout {
+    max-width: 62ch; border-radius: var(--radius); padding: 1rem 1.3rem; margin: 0 0 1.2rem;
+    font-size: 0.94rem; display: flex; gap: 0.7rem; align-items: flex-start;
+  }
+  .callout .glyph { font-size: 1.1rem; flex-shrink: 0; line-height: 1.4; }
+  .callout.warn { background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+  .callout.warn strong { color: var(--warn); }
+  .callout.danger { background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
+  .callout.danger strong { color: var(--danger); }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); margin: 0 0 1.4rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 460px; font-size: 0.88rem; background: var(--surface); }
+  th, td { text-align: left; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: "Berkeley Mono", monospace; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-dim); background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 0.8rem; font-family: "Berkeley Mono", monospace; }
+</style>
+
+<div class="wrap">
+  <p class="kicker">User Manual</p>
+  <h1>Bed Detection Dashboard</h1>
+  <p class="dek">Everything you need to start the system, use the dashboard, and troubleshoot common issues on the vehicle's onboard Jetson computer.</p>
+
+  <h2><span class="num">1</span>What it does</h2>
+  <p>This system runs on the vehicle and combines a GNSS receiver, an IMU, and a camera to detect and count objects ("beds") while tracking the vehicle's motion and position.</p>
+  <div class="feature-grid">
+    <div class="feature-card"><span class="name">Position &amp; motion</span><span class="desc">Fuses GNSS and IMU readings into a smooth, reliable estimate of where the vehicle is and whether it's moving forward, backward, or idle.</span></div>
+    <div class="feature-card"><span class="name">Camera detection</span><span class="desc">Runs a camera-based detector that counts objects in view in real time.</span></div>
+    <div class="feature-card"><span class="name">Smart auto-save</span><span class="desc">Only saves a snapshot when the vehicle is actually moving forward and has traveled far enough — no duplicate saves while parked or reversing.</span></div>
+    <div class="feature-card"><span class="name">Web dashboard</span><span class="desc">Start or stop detection, view live counts, browse saved images, tune settings, and download QA reports from any browser.</span></div>
+  </div>
+
+  <h2><span class="num">2</span>Starting the system</h2>
+  <p>On the Jetson:</p>
+  <pre><code>cd ~/Mardi_tech
+./run_ai.sh</code></pre>
+  <p>This detects the computer's architecture and starts all three required services together. It also stops any previously running containers first.</p>
+  <p>To check everything is up:</p>
+  <pre><code>docker compose ps
+docker compose logs -f imu_gnss_raw-aarch64</code></pre>
+
+  <h2><span class="num">3</span>Opening the dashboard</h2>
+  <div class="url-card">
+    <span class="icon">🖥️</span>
+    <div><div class="label">Dashboard</div><code>http://&lt;jetson-ip&gt;:8090/</code></div>
+  </div>
+  <div class="url-card">
+    <span class="icon">📷</span>
+    <div><div class="label">Raw camera stream (no controls)</div><code>http://&lt;jetson-ip&gt;:8080/</code></div>
+  </div>
+  <p>Replace <code>&lt;jetson-ip&gt;</code> with the Jetson's actual IP address on your network.</p>
+
+  <h2><span class="num">4</span>Dashboard features</h2>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><td><strong>Live count</strong></td><td>Current detected object count per class, updated in real time.</td></tr>
+        <tr><td><strong>Confidence / status</strong></td><td>Whether a detection above the configured confidence threshold is currently in view.</td></tr>
+        <tr><td><strong>Start / Stop</strong></td><td>Turns the detector on or off. Detection does not run automatically on boot — check status before assuming it's running.</td></tr>
+        <tr><td><strong>GNSS position &amp; direction</strong></td><td>Live latitude/longitude and whether the vehicle is moving forward, backward, or idle, with a recent path trace.</td></tr>
+        <tr><td><strong>Auto-save toggle</strong></td><td>Automatically saves a snapshot (image + counts + position) when the vehicle moves forward past the configured distance since the last save.</td></tr>
+        <tr><td><strong>Motion deadband</strong></td><td>Minimum distance (meters) the vehicle must travel before auto-save considers it "new". Default 0.3&nbsp;m, adjustable live.</td></tr>
+        <tr><td><strong>Saved images gallery</strong></td><td>Browse, download, or delete previously saved snapshots.</td></tr>
+        <tr><td><strong>Model management</strong></td><td>Upload new detection models, convert them, and switch which one is active — no restart needed.</td></tr>
+        <tr><td><strong>QA report</strong></td><td>Downloadable HTML report flagging low confidence, missing GNSS, near-duplicate positions, or long detection gaps.</td></tr>
+        <tr><td><strong>Shutdown</strong></td><td>Safely powers off the physical Jetson from the dashboard.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2><span class="num">5</span>Typical workflow</h2>
+  <ol class="steps">
+    <li>Power on the Jetson and confirm <code>./run_ai.sh</code> has started all three services.</li>
+    <li>Open the dashboard and confirm GNSS position is showing (valid indicator) and the camera preview is live.</li>
+    <li>Press <strong>Start</strong> to begin detection.</li>
+    <li>Enable <strong>Auto-save</strong> if you want the system to log snapshots automatically as the vehicle moves.</li>
+    <li>Drive the route.</li>
+    <li>When finished, press <strong>Stop</strong>, then use the <strong>Saved images</strong> gallery or <strong>Download report</strong> to review results.</li>
+  </ol>
+
+  <h2><span class="num">6</span>Cautions</h2>
+  <div class="callout warn"><span class="glyph">⚠</span><div><strong>Auto-save can fill storage quickly</strong> if left running continuously without a moving vehicle. Check the images gallery periodically and clear old data if storage is a concern.</div></div>
+  <div class="callout danger"><span class="glyph">⛔</span><div><strong>Delete all data is destructive and cannot be undone.</strong> Only use it when you're certain you no longer need the saved images and history.</div></div>
+  <div class="callout warn"><span class="glyph">⚠</span><div><strong>GNSS position must be valid before auto-save is meaningful.</strong> If the GNSS indicator is red or stale, position-based auto-save will not trigger correctly.</div></div>
+  <div class="callout warn"><span class="glyph">⚠</span><div><strong>Don't move the GNSS receiver or camera to a different USB port</strong> without telling whoever manages the system config. The GNSS receiver is pinned to a specific physical port for reliable detection — moving it will break that until the configuration is updated.</div></div>
+  <div class="callout danger"><span class="glyph">⛔</span><div><strong>Shutdown powers off the whole computer</strong>, not just the software. Use it only when you're finished with the session.</div></div>
+
+  <h2><span class="num">7</span>Troubleshooting</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Symptom</th><th>Likely cause</th><th>What to try</th></tr></thead>
+      <tbody>
+        <tr><td>Dashboard won't load</td><td>Container not running or wrong IP</td><td><code>docker compose ps</code> on the Jetson; use the Jetson's IP, not <code>localhost</code>, from another machine</td></tr>
+        <tr><td>No camera image</td><td>Camera not detected or in use elsewhere</td><td>Check the camera is plugged in; restart the container</td></tr>
+        <tr><td>GNSS position stuck</td><td>Receiver unplugged, wrong port, or no satellite fix (e.g. indoors)</td><td>Check <code>/dev/gnss_rtk</code> exists on the host; move to open sky</td></tr>
+        <tr><td>Direction always "idle"</td><td>Vehicle hasn't moved beyond the deadband distance yet</td><td>Expected at low speed/short distances — lower the deadband if needed</td></tr>
+        <tr><td>Detection won't start</td><td>Model/engine not loaded yet</td><td>Use Model management to select or build an engine first</td></tr>
+        <tr><td>Auto-save not saving</td><td>Direction not "forward", GNSS stale, or distance threshold not met</td><td>Check the GNSS/direction indicators are valid before expecting saves</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top: 2rem; color: var(--ink-dim);">For deeper technical detail — topics, parameters, container internals — see the Developer Manual and API Reference.</p>
+
+  <footer>Mardi_tech · Bed Detection Dashboard · User Manual</footer>
+</div>
