@@ -102,13 +102,24 @@
   }
   nav.toc .part:first-of-type { margin-top: 0; }
   nav.toc a {
-    display: block; color: var(--ink-dim); text-decoration: none; padding: 0.28rem 0;
+    display: flex; align-items: center; gap: 0.4rem; color: var(--ink-dim); text-decoration: none; padding: 0.28rem 0;
     border-left: 2px solid transparent; padding-left: 0.7rem; margin-left: -0.7rem; line-height: 1.4;
-    transition: color 0.12s, border-color 0.12s;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+    position: relative;
   }
-  nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); border-left-color: var(--accent); outline: none; }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); border-left-color: color-mix(in srgb, var(--accent) 45%, transparent); outline: none; }
+  nav.toc a .dot {
+    width: 5px; height: 5px; border-radius: 50%; background: transparent; flex-shrink: 0;
+    transition: background 0.12s, transform 0.12s; transform: scale(0.6);
+  }
+  nav.toc a.active {
+    color: var(--accent); font-weight: 700; border-left-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+  }
+  nav.toc a.active .dot { background: var(--accent); transform: scale(1); }
   nav.toc .sub { padding-left: 1.5rem; font-size: 0.72rem; color: var(--ink-faint); }
   nav.toc .sub:hover { color: var(--accent); }
+  nav.toc .sub.active { padding-left: 1.5rem; }
   nav.toc .theme-note { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 0.68rem; line-height: 1.5; }
 
   main { padding: 3.5rem 4rem 6rem; min-width: 0; }
@@ -311,38 +322,38 @@
       <div class="mark">M</div>
       <div class="brand">Mardi Pineapple<br>Detection AI</div>
     </div>
-    <div class="brand-sub">Unified reference</div>
+    <!-- <div class="brand-sub">Unified reference</div> -->
 
     <div class="part">Overview</div>
-    <a href="#overview">System overview</a>
+    <a href="#overview"><span class="dot"></span>System overview</a>
 
     <div class="part">User Manual</div>
-    <a href="#um-1">1 · What it does</a>
-    <a href="#um-2">2 · Starting the system</a>
-    <a href="#um-3">3 · Opening the dashboard</a>
-    <a href="#um-4">4 · Dashboard features</a>
-    <a href="#um-5">5 · Typical workflow</a>
-    <a href="#um-6">6 · Cautions</a>
-    <a href="#um-7">7 · Troubleshooting</a>
+    <a href="#um-1"><span class="dot"></span>1 · What it does</a>
+    <a href="#um-2"><span class="dot"></span>2 · Starting the system</a>
+    <a href="#um-3"><span class="dot"></span>3 · Opening the dashboard</a>
+    <a href="#um-4"><span class="dot"></span>4 · Dashboard features</a>
+    <a href="#um-5"><span class="dot"></span>5 · Typical workflow</a>
+    <a href="#um-6"><span class="dot"></span>6 · Cautions</a>
+    <a href="#um-7"><span class="dot"></span>7 · Troubleshooting</a>
 
     <div class="part">Developer Manual</div>
-    <a href="#dm-architecture">1 · Architecture &amp; data flow</a>
-    <a href="#dm-imu-gnss-raw">2 · imu_gnss_raw</a>
-    <a href="#dm-sensor-data-raw">3 · sensor_data_raw</a>
-    <a href="#dm-yolov8">4 · Detection service</a>
-    <a href="#dm-build">5 · Build &amp; run</a>
-    <a href="#dm-drift">6 · Known drift &amp; gotchas</a>
-    <a href="#dm-udev">7 · Physical device pinning</a>
+    <a href="#dm-architecture"><span class="dot"></span>1 · Architecture &amp; data flow</a>
+    <a href="#dm-imu-gnss-raw"><span class="dot"></span>2 · imu_gnss_raw</a>
+    <a href="#dm-sensor-data-raw"><span class="dot"></span>3 · sensor_data_raw</a>
+    <a href="#dm-yolov8"><span class="dot"></span>4 · Detection service</a>
+    <a href="#dm-build"><span class="dot"></span>5 · Build &amp; run</a>
+    <a href="#dm-drift"><span class="dot"></span>6 · Known drift &amp; gotchas</a>
+    <a href="#dm-udev"><span class="dot"></span>7 · Physical device pinning</a>
 
     <div class="part">API Reference</div>
-    <a href="#api-pages">Pages &amp; static</a>
-    <a href="#api-counts">Live counts &amp; history</a>
-    <a href="#api-autosave">Auto-save &amp; motion tuning</a>
-    <a href="#api-control">Detection control</a>
-    <a href="#api-models">Model management</a>
-    <a href="#api-images">Saved images &amp; reports</a>
-    <a href="#api-system">System &amp; WebSocket</a>
-    <a href="#api-curl">curl examples</a>
+    <a href="#api-pages"><span class="dot"></span>Pages &amp; static</a>
+    <a href="#api-counts"><span class="dot"></span>Live counts &amp; history</a>
+    <a href="#api-autosave"><span class="dot"></span>Auto-save &amp; motion tuning</a>
+    <a href="#api-control"><span class="dot"></span>Detection control</a>
+    <a href="#api-models"><span class="dot"></span>Model management</a>
+    <a href="#api-images"><span class="dot"></span>Saved images &amp; reports</a>
+    <a href="#api-system"><span class="dot"></span>System &amp; WebSocket</a>
+    <a href="#api-curl"><span class="dot"></span>curl examples</a>
 
     <div class="theme-note">One page, three manuals — User, Developer, and API Reference — kept in sync as a single reference for the pineapple detection stack.</div>
   </nav>
@@ -350,7 +361,7 @@
   <main>
     <div class="cover">
       <div class="cover-inner">
-        <p class="kicker">Unified Reference</p>
+        <!-- <p class="kicker">Unified Reference</p> -->
         <h1>Mardi Pineapple Detection AI</h1>
         <p class="dek">User manual, developer manual, and API reference for the onboard sensor fusion and pineapple detection stack — combined into one page.</p>
         <div class="stack-row">
@@ -831,3 +842,50 @@ curl -o frames.zip http://&lt;jetson-ip&gt;:8090/api/images/download</code></pre
     <div class="top-footer">Mardi_tech · Mardi Pineapple Detection AI · User Manual + Developer Manual + API Reference</div>
   </main>
 </div>
+
+<script>
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+    var targets = links
+      .map(function (a) {
+        var id = a.getAttribute('href').slice(1);
+        var el = document.getElementById(id);
+        return el ? { link: a, el: el } : null;
+      })
+      .filter(Boolean);
+
+    if (!targets.length) return;
+
+    function setActive(link) {
+      links.forEach(function (a) { a.classList.remove('active'); });
+      if (link) {
+        link.classList.add('active');
+        var navEl = document.querySelector('nav.toc');
+        var linkRect = link.getBoundingClientRect();
+        var navRect = navEl.getBoundingClientRect();
+        if (linkRect.top < navRect.top || linkRect.bottom > navRect.bottom) {
+          link.scrollIntoView({ block: 'nearest' });
+        }
+      }
+    }
+
+    var current = null;
+    var io = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            var match = targets.find(function (t) { return t.el === entry.target; });
+            if (match && match.link !== current) {
+              current = match.link;
+              setActive(current);
+            }
+          }
+        });
+      },
+      { rootMargin: '-15% 0px -75% 0px', threshold: 0 }
+    );
+
+    targets.forEach(function (t) { io.observe(t.el); });
+    setActive(targets[0].link);
+  })();
+</script>
