@@ -18,7 +18,7 @@ case "$ARCH" in
     docker compose build imu_gnss_raw-aarch64 \
           yolov8-trt-bed-detect-orin \
           sensor_data_raw-aarch64
-    # docker compose push imu_gnss_raw-aarch64 yolov8-trt-bed-detect-orin sensor_data_raw-aarch64
+    docker compose push imu_gnss_raw-aarch64 yolov8-trt-bed-detect-orin sensor_data_raw-aarch64
     docker compose up -d imu_gnss_raw-aarch64 \
           yolov8-trt-bed-detect-orin \
           sensor_data_raw-aarch64
