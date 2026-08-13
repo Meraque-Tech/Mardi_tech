@@ -14,6 +14,7 @@ case "$ARCH" in
 
     ;;
   aarch64)
+    ./kill_server.sh
     docker compose build imu_gnss_raw-aarch64 \
           yolov8-trt-bed-detect-orin \
           sensor_data_raw-aarch64
