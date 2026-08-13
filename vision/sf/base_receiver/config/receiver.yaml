@@ -1,6 +1,6 @@
 base_receiver:
   ros__parameters:
-    port: "" # Serial device path; empty enables supported USB receiver auto-detection.
+    port: "/dev/gnss_rtk" # Serial device path; empty enables supported USB receiver auto-detection.
     baud: 115200 # Serial communication speed in bits per second.
     frame_id: gps # ROS frame ID assigned to published GNSS messages.
     stale_timeout: 3.0 # Seconds without valid receiver data before its outputs are marked stale.

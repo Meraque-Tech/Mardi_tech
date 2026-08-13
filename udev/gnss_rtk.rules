@@ -1,0 +1,8 @@
+# GNSS RTK receiver (CH340 USB-serial) pinned to a fixed physical USB port
+# so it always shows up as /dev/gnss_rtk regardless of enumeration order.
+#
+# KERNELS "1-2.3" is the physical USB port path found via:
+#   udevadm info -a -n /dev/ttyUSB1
+# If the receiver is plugged into a different USB port, re-run that command
+# against its new /dev/ttyUSBx and update KERNELS below to match.
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", KERNELS=="1-2.3", MODE:="0777", SYMLINK+="gnss_rtk"
