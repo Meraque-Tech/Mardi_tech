@@ -1,4 +1,4 @@
-<title>Sensor Stack Developer Manual</title>
+<title>Mardi Pineapple Detection AI — Developer Manual</title>
 <style>
   :root {
     --bg: #f6f5f1;
@@ -357,7 +357,7 @@
 
   <main>
     <p class="kicker">Developer Manual</p>
-    <h1>Sensor Fusion &amp; Bed Detection Stack</h1>
+    <h1>Mardi Pineapple Detection AI</h1>
     <p class="dek">Internal reference for the three ROS 2 services that run together on the Jetson Orin Nano: GNSS/IMU acquisition, ESKF sensor fusion, and camera-based detection with a live dashboard.</p>
 
     <div class="table-wrap">
@@ -601,6 +601,6 @@ KERNEL=="ttyUSB*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", KERNELS=="
     <p><code>KERNELS=="1-2.3"</code> is the physical USB port path (from <code>udevadm info -a -n /dev/ttyUSBx</code>). If the receiver moves to a different USB port, regenerate this rule. Install/reload via <code>udev/install.sh</code>.</p>
     <p><code>base_receiver/config/receiver.yaml</code> points <code>port: "/dev/gnss_rtk"</code> at this symlink.</p>
 
-    <footer>Mardi_tech · Sensor Fusion &amp; Bed Detection Stack · Developer Manual</footer>
+    <footer>Mardi_tech · Mardi Pineapple Detection AI · Developer Manual</footer>
   </main>
 </div>

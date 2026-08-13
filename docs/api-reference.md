@@ -1,4 +1,6 @@
-# API Reference — Bed Detection Dashboard (`yolov8-trt-bed-detect-orin`)
+# API Reference — Mardi Pineapple Detection AI Dashboard (`yolov8-trt-bed-detect-orin`)
+
+> **Naming note:** the service/endpoint identifiers below (`bed_detection`, `bed_detect.launch.py`, etc.) are unchanged code-level names from the underlying repo. The product is **Mardi Pineapple Detection AI**.
 
 Base URL: `http://<jetson-ip>:8090`
 Raw MJPEG stream (no auth, no JSON): `http://<jetson-ip>:8080`

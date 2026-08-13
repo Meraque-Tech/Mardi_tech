@@ -1,13 +1,13 @@
-# User Manual — Sensor Fusion & Bed Detection Stack
+# User Manual — Mardi Pineapple Detection AI
 
-This system runs on the Jetson (Orin Nano) and combines a GNSS receiver, an IMU, and a camera to detect and count objects ("beds") while tracking the vehicle's motion and position. It exposes a web dashboard for control and monitoring.
+This system runs on the Jetson (Orin Nano) and combines a GNSS receiver, an IMU, and a camera to detect and count pineapples while tracking the vehicle's motion and position. It exposes a web dashboard for control and monitoring.
 
 ## What it does
 
 1. Reads position from a GNSS receiver and motion from an IMU, fuses them into a smooth, reliable estimate of where the vehicle is and whether it's moving forward, backward, or idle.
 2. Runs a camera-based detector that counts objects in view.
-3. Combines both: only auto-saves a detection snapshot when the vehicle is actually moving forward and has traveled far enough since the last save — avoiding duplicate saves while stationary or reversing.
-4. Provides a web dashboard to start/stop detection, view live counts, browse saved images, tune settings, and download QA reports.
+3. Combines both: only auto-saves a pineapple detection snapshot when the vehicle is actually moving forward and has traveled far enough since the last save — avoiding duplicate saves while stationary or reversing.
+4. Provides a web dashboard to start/stop pineapple detection, view live counts, browse saved images, tune settings, and download QA reports.
 
 ## Starting the system
 

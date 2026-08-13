@@ -1,10 +1,12 @@
-# Developer Manual — Sensor Fusion & Bed Detection Stack
+# Developer Manual — Mardi Pineapple Detection AI
 
 Scope: the three services launched together on the Jetson (`run_ai.sh`, `aarch64` branch):
 
 - `imu_gnss_raw-aarch64` — `rtk_localization` package, node `gnss_imu_eskf_node`
 - `sensor_data_raw-aarch64` — `base_receiver` + `bwt901ble_imu` packages
-- `yolov8-trt-bed-detect-orin` — `yolov8_trt_bed_detect_orin` package (C++ TensorRT node + Python web server)
+- `yolov8-trt-bed-detect-orin` — `yolov8_trt_bed_detect_orin` package (C++ TensorRT node + Python web server), the object-detection service used for pineapple detection
+
+> **Naming note:** the underlying code, Docker service names, ROS topics, and launch files still use their original identifiers (`bed_detect`, `bed_detection_status`, `yolov8-trt-bed-detect-orin`, etc.) from an earlier deployment. The product is now **Mardi Pineapple Detection AI**; these code-level names are documented verbatim below since renaming them would make this manual inaccurate against the actual repo.
 
 All three ship in **two** Docker images:
 
