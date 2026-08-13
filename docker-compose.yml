@@ -255,7 +255,7 @@ services:
       - imu_gnss_raw-aarch64
     network_mode: host
     ipc: host
-    restart: always
+    # restart: always
     user: "0:0"
     tty: true
     volumes:
