@@ -5,7 +5,8 @@ logs.txt
 /rosbags
 /bags2
 /bags
-
-/build
-/install
-/log
+build/
+install/
+log/
+__pycache__/
+*.py[cod]

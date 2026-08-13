@@ -1,6 +1,6 @@
 services:
   yolov8-trt-serialize-x86-jazzy:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v7
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v8
     container_name: yolov8-trt-serialize-x86-jazzy
     # build:
     #   context: .
@@ -21,7 +21,7 @@ services:
                ros2 launch yolov8_trt_bed_detect_orin serialize_engine.launch.py"
 
   yolov8-trt-bed-detect-x86-jazzy:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v7
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v8
     container_name: yolov8-trt-bed-detect-x86-jazzy
     build:
       context: .
