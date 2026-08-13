@@ -14,14 +14,17 @@
 
 services:
   imu_gnss_raw-x86:
-    image: meraquetech/race_nav:sf.humble.v3-x86
+    # Keep every x86 ROS participant on Jazzy. The TensorRT service below
+    # requires Jazzy/Ubuntu 24.04; sharing its DDS domain with this node when
+    # this node used Humble caused rmw_cyclonedds serdata.cpp decode failures.
+    image: meraquetech/race_nav:sf.jazzy.v1-x86
     container_name: imu_gnss_raw-x86
     build:
       context: ./vision/sf/
-      dockerfile: Dockerfile.sf.humble
+      dockerfile: Dockerfile.sf.jazzy
       # Same reasoning as yolov8-trt-bed-detect-x86-jazzy below: use the
-      # local humble.sensors.dep_jetson image as-is instead of checking the
-      # registry for a newer digest on every `docker compose build`.
+      # local image as-is instead of checking the registry for a newer digest
+      # on every `docker compose build`.
       # pull_policy: never
     command: >
       ros2 launch rtk_localization gnss_imu_eskf.launch.py
@@ -86,11 +89,11 @@ services:
       - CYCLONEDDS_URI=file:///dds_ws/cyclone_dds_profile.xml
 
   sensor_data_raw-x86:
-    image: meraquetech/race_nav:sf.humble.sr.v3-x86
+    image: meraquetech/race_nav:sf.jazzy.sr.v1-x86
     container_name: sensor_data_raw-x86
     build:
       context: ./vision/sf/
-      dockerfile: Dockerfile.sf.humble
+      dockerfile: Dockerfile.sf.jazzy
       # pull_policy: never
     command: >
       ros2 launch base_receiver imu_gps_raw.launch.py
