@@ -25,7 +25,7 @@ services:
       # pull_policy: never
     command: >
       ros2 launch rtk_localization gnss_imu_eskf.launch.py
-    # ros2 launch rtk_localization imu_gps_raw.launch.py
+    # ros2 launch base_receiver imu_gps_raw.launch.py
     tty: true
     hostname: imu_gnss_raw-x86
     user: "0:0"
@@ -64,6 +64,70 @@ services:
     # ros2 launch rtk_localization imu_gps_raw.launch.py
     tty: true
     hostname: imu_gnss_raw-aarch64
+    user: "0:0"
+    privileged: true
+    group_add:
+      - "20"
+    network_mode: host
+    ipc: host
+    restart: always
+    stop_grace_period: 5s
+    tmpfs:
+      - /tmp
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:rw
+      - ./cyclone_dds_profile.xml:/dds_ws/cyclone_dds_profile.xml:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - HOME=/tmp
+      - ROS_HOME=/tmp/ros
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///dds_ws/cyclone_dds_profile.xml
+
+  sensor_data_raw-x86:
+    image: meraquetech/race_nav:sf.humble.sr.v3-x86
+    container_name: sensor_data_raw-x86
+    build:
+      context: ./vision/sf/
+      dockerfile: Dockerfile.sf.humble
+      # pull_policy: never
+    command: >
+      ros2 launch base_receiver imu_gps_raw.launch.py
+    tty: true
+    hostname: sensor_data_raw-x86
+    user: "0:0"
+    privileged: true
+    group_add:
+      - "20"
+    network_mode: host
+    ipc: host
+    restart: always
+    stop_grace_period: 5s
+    tmpfs:
+      - /tmp
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:rw
+      - ./cyclone_dds_profile.xml:/dds_ws/cyclone_dds_profile.xml:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - HOME=/tmp
+      - ROS_HOME=/tmp/ros
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///dds_ws/cyclone_dds_profile.xml
+
+  sensor_data_raw-aarch64:
+    image: meraquetech/race_nav:sf.humble.sr.v3-aarch64
+    container_name: sensor_data_raw-aarch64
+    build:
+      context: ./vision/sf/
+      dockerfile: Dockerfile.sf.humble
+      # pull_policy: never
+    command: >
+      ros2 launch base_receiver imu_gps_raw.launch.py
+    tty: true
+    hostname: sensor_data_raw-aarch64
     user: "0:0"
     privileged: true
     group_add:
