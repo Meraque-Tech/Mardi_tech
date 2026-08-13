@@ -1,145 +1,191 @@
 <title>Mardi Pineapple Detection AI</title>
 <style>
+  /*
+    Palette matched to the Meraque brand PowerPoint template:
+    accent red #ED1A3B (dominant brand color, 77 occurrences across the
+    template's slides/layouts/masters), Metropolis / Metropolis Extra
+    Bold / Metropolis Black type family. Neutrals are a cool, professional
+    grey (not warm/cream) to match the template's light hex-pattern
+    background rather than a generic docs-site cream.
+  */
   :root {
-    --bg: #f6f5f1;
+    --bg: #f4f5f6;
     --surface: #ffffff;
-    --surface-2: #efece5;
-    --ink: #1d1f1d;
-    --ink-dim: #5c6058;
-    --ink-faint: #8a8d84;
-    --line: #ded9cd;
-    --accent: #c8540f;
-    --accent-soft: #f4e2d3;
-    --ok: #2f6f4e;
-    --ok-soft: #dcece2;
-    --warn: #a8631a;
-    --warn-soft: #f6e9d5;
-    --danger: #a3311f;
-    --danger-soft: #f5e0dc;
-    --get: #2f6f4e; --get-soft: #dcece2;
-    --post: #b5580c; --post-soft: #f6e4d1;
-    --delete: #a3311f; --delete-soft: #f5e0dc;
-    --ws: #4a4fb0; --ws-soft: #e3e3f7;
-    --code-bg: #f0eee6;
-    --shadow: 0 1px 2px rgba(30,25,15,0.06), 0 6px 20px rgba(30,25,15,0.05);
-    --radius: 4px;
+    --surface-2: #eceef0;
+    --ink: #1a1c1e;
+    --ink-dim: #565b60;
+    --ink-faint: #868c92;
+    --line: #dde1e4;
+    --accent: #ed1a3b;
+    --accent-ink: #ffffff;
+    --accent-soft: #fce3e7;
+    --accent-dim: #b3122c;
+    --ok: #1e7a4c;
+    --ok-soft: #dcefe4;
+    --warn: #a15a00;
+    --warn-soft: #faedd6;
+    --danger: #b3122c;
+    --danger-soft: #fce3e7;
+    --get: #1e7a4c; --get-soft: #dcefe4;
+    --post: #a15a00; --post-soft: #faedd6;
+    --delete: #b3122c; --delete-soft: #fce3e7;
+    --ws: #4046a8; --ws-soft: #e5e5f5;
+    --code-bg: #eef0f2;
+    --shadow: 0 1px 2px rgba(20,22,24,0.05), 0 8px 24px rgba(20,22,24,0.06);
+    --radius: 6px;
+    --font-display: "Metropolis Black", "Metropolis", "Century Gothic", "Segoe UI", ui-sans-serif, sans-serif;
+    --font-bold: "Metropolis Extra Bold", "Metropolis", "Century Gothic", "Segoe UI", ui-sans-serif, sans-serif;
+    --font-body: "Metropolis", "Century Gothic", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #16181a; --surface: #1d2023; --surface-2: #24272a;
-      --ink: #eae7df; --ink-dim: #a5a89f; --ink-faint: #74776f; --line: #33362f;
-      --accent: #ff8a3d; --accent-soft: #3a2a17;
-      --ok: #6fbf80; --ok-soft: #1e2f22;
-      --warn: #e0a352; --warn-soft: #332512;
-      --danger: #e37c68; --danger-soft: #3a2018;
-      --get: #6fbf80; --get-soft: #1e2f22;
-      --post: #e0a352; --post-soft: #332512;
-      --delete: #e37c68; --delete-soft: #3a2018;
-      --ws: #9a9df0; --ws-soft: #26264a;
-      --code-bg: #202225;
-      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 24px rgba(0,0,0,0.35);
+      --bg: #131517; --surface: #1b1d20; --surface-2: #212427;
+      --ink: #eceeef; --ink-dim: #a6acb1; --ink-faint: #74797e; --line: #303539;
+      --accent: #ff4863; --accent-ink: #1a0508; --accent-soft: #3a1219; --accent-dim: #ff7488;
+      --ok: #5cc98b; --ok-soft: #16281f;
+      --warn: #e0a63f; --warn-soft: #332510;
+      --danger: #ff7488; --danger-soft: #3a1219;
+      --get: #5cc98b; --get-soft: #16281f;
+      --post: #e0a63f; --post-soft: #332510;
+      --delete: #ff7488; --delete-soft: #3a1219;
+      --ws: #9498e0; --ws-soft: #232449;
+      --code-bg: #1f2225;
+      --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 10px 28px rgba(0,0,0,0.4);
     }
   }
   :root[data-theme="dark"] {
-    --bg: #16181a; --surface: #1d2023; --surface-2: #24272a;
-    --ink: #eae7df; --ink-dim: #a5a89f; --ink-faint: #74776f; --line: #33362f;
-    --accent: #ff8a3d; --accent-soft: #3a2a17;
-    --ok: #6fbf80; --ok-soft: #1e2f22;
-    --warn: #e0a352; --warn-soft: #332512;
-    --danger: #e37c68; --danger-soft: #3a2018;
-    --get: #6fbf80; --get-soft: #1e2f22;
-    --post: #e0a352; --post-soft: #332512;
-    --delete: #e37c68; --delete-soft: #3a2018;
-    --ws: #9a9df0; --ws-soft: #26264a;
-    --code-bg: #202225;
-    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 6px 24px rgba(0,0,0,0.35);
+    --bg: #131517; --surface: #1b1d20; --surface-2: #212427;
+    --ink: #eceeef; --ink-dim: #a6acb1; --ink-faint: #74797e; --line: #303539;
+    --accent: #ff4863; --accent-ink: #1a0508; --accent-soft: #3a1219; --accent-dim: #ff7488;
+    --ok: #5cc98b; --ok-soft: #16281f;
+    --warn: #e0a63f; --warn-soft: #332510;
+    --danger: #ff7488; --danger-soft: #3a1219;
+    --get: #5cc98b; --get-soft: #16281f;
+    --post: #e0a63f; --post-soft: #332510;
+    --delete: #ff7488; --delete-soft: #3a1219;
+    --ws: #9498e0; --ws-soft: #232449;
+    --code-bg: #1f2225;
+    --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 10px 28px rgba(0,0,0,0.4);
   }
 
   * { box-sizing: border-box; }
   body {
     background: var(--bg); color: var(--ink); margin: 0;
-    font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+    font-family: var(--font-body);
     font-size: 16px; line-height: 1.65; -webkit-font-smoothing: antialiased;
   }
 
-  .layout { display: grid; grid-template-columns: 268px minmax(0, 1fr); max-width: 1320px; margin: 0 auto; }
+  .layout { display: grid; grid-template-columns: 272px minmax(0, 1fr); max-width: 1340px; margin: 0 auto; }
 
   nav.toc {
     position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
-    padding: 2rem 1.4rem 2rem 1.75rem; border-right: 1px solid var(--line);
-    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    padding: 1.75rem 1.4rem 2rem 1.75rem; border-right: 1px solid var(--line);
+    background: var(--surface);
+    font-family: var(--font-mono);
     font-size: 0.77rem;
   }
-  nav.toc .brand {
-    font-weight: 700; font-size: 0.95rem; color: var(--ink); margin-bottom: 0.3rem;
-    font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif; letter-spacing: -0.01em;
+  nav.toc .brand-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.15rem; }
+  nav.toc .mark {
+    width: 1.7rem; height: 1.7rem; border-radius: 5px; background: var(--accent); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display); color: var(--accent-ink); font-size: 1rem; font-weight: 800;
   }
-  nav.toc .brand-sub { color: var(--ink-faint); font-size: 0.7rem; margin-bottom: 1.6rem; }
+  nav.toc .brand {
+    font-weight: 800; font-size: 1rem; color: var(--ink);
+    font-family: var(--font-display); letter-spacing: -0.01em; line-height: 1.15;
+  }
+  nav.toc .brand-sub { color: var(--ink-faint); font-size: 0.68rem; margin: 0.55rem 0 1.7rem; padding-left: 0.05rem; }
   nav.toc .part {
-    text-transform: uppercase; letter-spacing: 0.09em; color: var(--accent); font-weight: 700;
-    font-size: 0.68rem; margin: 1.5rem 0 0.6rem;
+    text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); font-weight: 700;
+    font-size: 0.67rem; margin: 1.6rem 0 0.6rem;
   }
   nav.toc .part:first-of-type { margin-top: 0; }
   nav.toc a {
     display: block; color: var(--ink-dim); text-decoration: none; padding: 0.28rem 0;
     border-left: 2px solid transparent; padding-left: 0.7rem; margin-left: -0.7rem; line-height: 1.4;
+    transition: color 0.12s, border-color 0.12s;
   }
   nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); border-left-color: var(--accent); outline: none; }
   nav.toc .sub { padding-left: 1.5rem; font-size: 0.72rem; color: var(--ink-faint); }
   nav.toc .sub:hover { color: var(--accent); }
   nav.toc .theme-note { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 0.68rem; line-height: 1.5; }
 
-  main { padding: 3rem 3.5rem 6rem; min-width: 0; }
+  main { padding: 3.5rem 4rem 6rem; min-width: 0; }
+
+  /* Cover is a deliberately dark, always-on hero band (independent of page
+     theme) so its light text stays fixed regardless of light/dark mode. */
+  .cover {
+    margin: 0 0 3rem; padding: 2.6rem 2.8rem; border-radius: 10px; position: relative; overflow: hidden;
+    background: linear-gradient(155deg, #1a1c1e 0%, #2c2f33 55%, #1a1c1e 100%);
+    box-shadow: var(--shadow);
+  }
+  .cover::before {
+    content: ""; position: absolute; inset: 0; opacity: 0.55; pointer-events: none;
+    background-image: radial-gradient(circle at 88% 20%, rgba(237,26,59,0.5) 0%, transparent 42%);
+  }
+  .cover-inner { position: relative; z-index: 1; }
+  .cover .kicker { color: #ff8095; margin-bottom: 1rem; }
+  .cover h1 { font-family: var(--font-display); color: #ffffff; margin-bottom: 0.75rem; }
+  .cover .dek { color: #d7d9dc; margin-bottom: 0; }
+  .cover .stack-row { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 1.6rem; }
+  .cover .chip {
+    font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em;
+    padding: 0.35rem 0.8rem; border-radius: 999px; background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.16); color: #eceeef;
+  }
 
   .kicker {
-    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.75rem;
-    color: var(--accent); font-weight: 600; margin: 0 0 0.9rem;
+    font-family: var(--font-mono);
+    text-transform: uppercase; letter-spacing: 0.13em; font-size: 0.74rem;
+    color: var(--accent); font-weight: 700; margin: 0 0 0.9rem;
   }
-  h1 { font-size: 2.7rem; line-height: 1.1; letter-spacing: -0.015em; margin: 0 0 0.6rem; text-wrap: balance; font-weight: 700; }
-  .dek { font-family: inherit; color: var(--ink-dim); font-size: 1.1rem; max-width: 62ch; margin: 0 0 2rem; }
+  h1 { font-family: var(--font-display); font-size: 2.5rem; line-height: 1.1; letter-spacing: -0.015em; margin: 0 0 0.6rem; text-wrap: balance; font-weight: 800; }
+  .dek { font-family: var(--font-body); color: var(--ink-dim); font-size: 1.08rem; max-width: 62ch; margin: 0 0 2rem; }
 
-  .doc-section { padding-top: 2rem; margin-top: 2rem; border-top: 1px solid var(--line); }
+  .doc-section { padding-top: 2.2rem; margin-top: 2.2rem; border-top: 1px solid var(--line); }
   .doc-section:first-of-type { padding-top: 0; margin-top: 0; border-top: none; }
   .doc-title { display: flex; align-items: baseline; gap: 0.7rem; margin: 0 0 0.4rem; scroll-margin-top: 1.5rem; }
-  .doc-title h1 { font-size: 2.1rem; margin: 0; }
+  .doc-title h1 { font-size: 2rem; margin: 0; }
   .doc-title .part-label {
-    font-family: "Berkeley Mono", ui-monospace, monospace; font-size: 0.72rem; color: var(--accent);
-    background: var(--accent-soft); padding: 0.2em 0.6em; border-radius: 999px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.04em;
+    font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent-ink);
+    background: var(--accent); padding: 0.28em 0.7em; border-radius: 999px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em;
   }
 
   h2 {
-    font-size: 1.45rem; margin: 3rem 0 1rem; padding-top: 1.5rem; border-top: 1px solid var(--line);
-    font-weight: 700; letter-spacing: -0.005em; scroll-margin-top: 1.5rem;
+    font-family: var(--font-bold);
+    font-size: 1.4rem; margin: 3rem 0 1rem; padding-top: 1.6rem; border-top: 1px solid var(--line);
+    font-weight: 800; letter-spacing: -0.005em; scroll-margin-top: 1.5rem;
     display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
   }
-  .doc-section > h2:first-of-type { border-top: none; padding-top: 0; margin-top: 1.6rem; }
+  .doc-section > h2:first-of-type { border-top: none; padding-top: 0; margin-top: 1.8rem; }
   h2 .num {
-    font-family: "Berkeley Mono", ui-monospace, monospace; font-size: 0.8rem; font-weight: 700;
-    color: var(--accent); background: var(--accent-soft); width: 1.8rem; height: 1.8rem;
+    font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700;
+    color: var(--accent-ink); background: var(--accent); width: 1.8rem; height: 1.8rem;
     border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
-  h2 .count { font-family: "Berkeley Mono", ui-monospace, monospace; font-size: 0.72rem; color: var(--ink-faint); font-weight: 400; }
+  h2 .count { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-faint); font-weight: 400; }
 
   h3 {
-    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 0.93rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink);
-    margin: 2rem 0 0.9rem; scroll-margin-top: 1.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.045em; color: var(--ink);
+    margin: 2.1rem 0 0.9rem; scroll-margin-top: 1.5rem; font-weight: 700;
   }
 
   p { max-width: 72ch; margin: 0 0 1.1rem; }
   ul, ol { max-width: 72ch; padding-left: 1.4rem; margin: 0 0 1.2rem; }
   li { margin-bottom: 0.45rem; }
-  strong { font-weight: 650; }
-  a { color: var(--accent); }
+  strong { font-weight: 700; }
+  a { color: var(--accent); text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+  a:hover { text-decoration-color: var(--accent); }
 
   code {
-    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     background: var(--code-bg); padding: 0.12em 0.4em; border-radius: 4px; font-size: 0.85em; color: var(--ink);
   }
   pre {
-    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius);
     padding: 1.1rem 1.3rem; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; max-width: 100%; margin: 0 0 1.4rem;
   }
@@ -149,12 +195,12 @@
   table { border-collapse: collapse; width: 100%; min-width: 460px; font-size: 0.86rem; background: var(--surface); }
   th, td { text-align: left; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
   th {
-    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.7rem;
+    font-family: var(--font-mono); font-size: 0.7rem;
     text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-dim); background: var(--surface-2); white-space: nowrap;
   }
   tr:last-child td { border-bottom: none; }
   td code { white-space: nowrap; }
-  td:first-child { font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.82rem; }
+  td:first-child { font-family: var(--font-mono); font-size: 0.82rem; }
 
   .callout {
     max-width: 72ch; border-radius: var(--radius); padding: 1rem 1.3rem; margin: 0 0 1.4rem;
@@ -170,7 +216,7 @@
 
   .flow {
     display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin: 0 0 1.8rem;
-    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.82rem;
+    font-family: var(--font-mono); font-size: 0.82rem;
   }
   .flow .node { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.6rem 0.9rem; box-shadow: var(--shadow); }
   .flow .node .name { color: var(--accent); font-weight: 600; display: block; margin-bottom: 0.15rem; }
@@ -178,7 +224,7 @@
   .flow .arrow { color: var(--ink-faint); font-size: 1.1rem; }
 
   .pill {
-    display: inline-block; font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    display: inline-block; font-family: var(--font-mono);
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.12em 0.55em;
     border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 600;
   }
@@ -187,16 +233,20 @@
   .drift-list li { counter-increment: drift; position: relative; padding-left: 2.2rem; margin-bottom: 1rem; max-width: 68ch; }
   .drift-list li::before {
     content: counter(drift); position: absolute; left: 0; top: 0.05em;
-    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-weight: 600;
+    font-family: var(--font-mono); font-weight: 600;
     color: var(--warn); font-size: 0.82rem; background: var(--surface-2); width: 1.5rem; height: 1.5rem;
     border-radius: 50%; display: flex; align-items: center; justify-content: center;
   }
 
   /* --- overview chain cards --- */
   .chain-row { display: flex; align-items: stretch; gap: 0; margin: 1.6rem 0 2rem; flex-wrap: wrap; }
-  .chain-card { flex: 1; min-width: 220px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.3rem 1.3rem; box-shadow: var(--shadow); }
-  .chain-card .step-num { font-family: "Berkeley Mono", monospace; font-size: 0.68rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 0.5rem; }
-  .chain-card .step-name { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.4rem; font-family: "Berkeley Mono", monospace; }
+  .chain-card {
+    flex: 1; min-width: 220px; background: var(--surface); border: 1px solid var(--line);
+    border-top: 3px solid var(--accent); border-radius: var(--radius); padding: 1.3rem 1.3rem;
+    box-shadow: var(--shadow);
+  }
+  .chain-card .step-num { font-family: var(--font-mono); font-size: 0.68rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 0.5rem; }
+  .chain-card .step-name { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.4rem; font-family: var(--font-mono); }
   .chain-card .step-desc { color: var(--ink-dim); font-size: 0.88rem; line-height: 1.5; }
   .chain-arrow { display: flex; align-items: center; justify-content: center; padding: 0 0.6rem; color: var(--accent); font-size: 1.4rem; flex: 0 0 auto; }
   @media (max-width: 720px) { .chain-arrow { transform: rotate(90deg); padding: 0.4rem 0; } }
@@ -211,7 +261,7 @@
   .steps li { counter-increment: step; position: relative; padding-left: 2.6rem; margin-bottom: 1.3rem; }
   .steps li::before {
     content: counter(step); position: absolute; left: 0; top: -0.05em;
-    font-family: "Berkeley Mono", ui-monospace, monospace; font-weight: 700; font-size: 0.85rem;
+    font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem;
     color: #fff; background: var(--accent); width: 1.9rem; height: 1.9rem; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
   }
@@ -225,7 +275,7 @@
   .endpoint { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.3rem; margin-bottom: 0.7rem; box-shadow: var(--shadow); }
   .endpoint-head { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
   .method {
-    font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.72rem;
+    font-family: var(--font-mono); font-size: 0.72rem;
     font-weight: 700; letter-spacing: 0.03em; padding: 0.2rem 0.55rem; border-radius: var(--radius);
     flex-shrink: 0; min-width: 3.6rem; text-align: center;
   }
@@ -233,20 +283,20 @@
   .method.post { background: var(--post-soft); color: var(--post); }
   .method.delete { background: var(--delete-soft); color: var(--delete); }
   .method.ws { background: var(--ws-soft); color: var(--ws); }
-  .route { font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.92rem; font-weight: 600; }
+  .route { font-family: var(--font-mono); font-size: 0.92rem; font-weight: 600; }
   .route .param { color: var(--accent); }
   .endpoint-desc { color: var(--ink-dim); font-size: 0.9rem; margin: 0.5rem 0 0; max-width: 68ch; }
-  .endpoint-meta { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px dashed var(--line); font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.78rem; color: var(--ink-faint); }
+  .endpoint-meta { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px dashed var(--line); font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-faint); }
   .endpoint-meta .k { color: var(--accent); }
   .endpoint.warn { border-color: var(--delete); }
-  .badge-x86 { font-family: "Berkeley Mono", monospace; font-size: 0.65rem; text-transform: uppercase; background: var(--accent-soft); color: var(--accent); padding: 0.1em 0.5em; border-radius: 999px; }
+  .badge-x86 { font-family: var(--font-mono); font-size: 0.65rem; text-transform: uppercase; background: var(--accent-soft); color: var(--accent); padding: 0.1em 0.5em; border-radius: 999px; }
   .base-urls { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 0 0 1.6rem; }
   .base-urls code { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.5rem 0.9rem; font-size: 0.85rem; box-shadow: var(--shadow); }
   .base-urls .label { color: var(--ink-faint); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 0.3rem; }
   .field-list { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 1.4rem; }
   .field-list code { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.2rem 0.55rem; font-size: 0.8rem; }
 
-  .top-footer { margin-top: 4.5rem; padding-top: 1.5rem; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 0.78rem; font-family: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .top-footer { margin-top: 4.5rem; padding-top: 1.5rem; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 0.78rem; font-family: var(--font-mono); }
 
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; }
@@ -257,7 +307,10 @@
 
 <div class="layout">
   <nav class="toc">
-    <div class="brand">Mardi Pineapple Detection AI</div>
+    <div class="brand-row">
+      <div class="mark">M</div>
+      <div class="brand">Mardi Pineapple<br>Detection AI</div>
+    </div>
     <div class="brand-sub">Unified reference</div>
 
     <div class="part">Overview</div>
@@ -295,9 +348,19 @@
   </nav>
 
   <main>
-    <p class="kicker">Unified Reference</p>
-    <h1>Mardi Pineapple Detection AI</h1>
-    <p class="dek">User manual, developer manual, and API reference for the onboard sensor fusion and pineapple detection stack — combined into one page.</p>
+    <div class="cover">
+      <div class="cover-inner">
+        <p class="kicker">Unified Reference</p>
+        <h1>Mardi Pineapple Detection AI</h1>
+        <p class="dek">User manual, developer manual, and API reference for the onboard sensor fusion and pineapple detection stack — combined into one page.</p>
+        <div class="stack-row">
+          <span class="chip">ROS 2 Humble</span>
+          <span class="chip">TensorRT</span>
+          <span class="chip">Docker Compose</span>
+          <span class="chip">Jetson Orin Nano</span>
+        </div>
+      </div>
+    </div>
 
     <!-- ================================================================ OVERVIEW -->
     <section class="doc-section" id="overview">
