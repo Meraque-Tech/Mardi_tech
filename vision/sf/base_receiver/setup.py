@@ -14,7 +14,10 @@ setup(
             "share/" + package_name + "/config",
             ["config/receiver.yaml"],
         ),
-        ("share/" + package_name + "/launch", ["launch/receiver.launch.py"]),
+        (
+            "share/" + package_name + "/launch",
+            ["launch/receiver.launch.py", "launch/imu_gps_raw.launch.py"],
+        ),
     ],
     install_requires=["setuptools", "pyserial", "pymap3d"],
     tests_require=["pytest"],
