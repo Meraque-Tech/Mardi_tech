@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <base href="/static/">
-  <title>Meraque Vision Console</title>
+  <title>Pineapple Detection System</title>
   <style>
     :root {
       color-scheme:dark;
       --bg:#070707;--bg-elevated:#0c0c0c;--card:#121212;--card-strong:#181818;
       --card-hover:#1d1d1d;--line:#2b2b2b;--line-strong:#3a3a3a;
       --text:#f7f7f7;--muted:#9b9b9b;--muted-strong:#c6c6c6;
-      --red:#e51b23;--red-bright:#ff3139;--red-deep:#8e1016;--red-soft:#2c0d10;
+      --red:#e51b23;--red-bright:#ff3139;--red-hover:#c9141b;--red-deep:#8e1016;--red-soft:#2c0d10;
       --green:#31c878;--amber:#f5b942;--cyan:#f7f7f7;--blue:#e51b23;
       --shadow:0 18px 55px rgba(0,0,0,.34);--radius:16px;
     }
@@ -51,11 +51,21 @@
     #stream{width:100%;height:100%;object-fit:contain}.stream-overlay{position:absolute;z-index:3;left:16px;bottom:14px;display:flex;gap:8px;pointer-events:none}.stream-tag{padding:5px 8px;background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.12);border-radius:5px;color:#ddd;font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;backdrop-filter:blur(8px)}
     #stream-message{position:absolute;z-index:4;padding:9px 13px;border:1px solid #343434;border-radius:8px;background:rgba(0,0,0,.86);color:#ddd;font-size:12px}
     .control-groups{display:grid;gap:14px}.control-group{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.control-label{width:78px;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.actions{flex-wrap:wrap}
-    button,.button-link{min-height:36px;color:#fff;background:linear-gradient(180deg,var(--red-bright),var(--red));border:1px solid var(--red-bright);border-radius:8px;padding:8px 14px;font-weight:750;cursor:pointer;transition:background .18s,border-color .18s,transform .18s,box-shadow .18s;text-decoration:none}
-    button:hover,.button-link:hover{background:var(--red-bright);box-shadow:0 7px 20px rgba(229,27,35,.18);transform:translateY(-1px)}button:active{transform:translateY(0)}button:disabled{opacity:.38;cursor:not-allowed;box-shadow:none;transform:none}
-    button.green{background:#f5f5f5;border-color:#f5f5f5;color:#080808}button.green:hover{background:#fff;box-shadow:0 7px 20px rgba(255,255,255,.1)}button.red{background:var(--red-soft);border-color:#64151a;color:#ffadb1}button.red:hover{background:#421014;border-color:var(--red)}button.gray{background:#202020;border-color:#373737;color:#eee}button.gray:hover{background:#292929;border-color:#505050;box-shadow:none}
-    button.link,a.link{min-height:auto;padding:4px 6px;background:none;border:0;color:#ff777d;font-size:11px;box-shadow:none;text-decoration:none}button.link:hover,a.link:hover{color:#fff;background:rgba(229,27,35,.1);box-shadow:none;transform:none}
-    input[type=file],input[type=text],input[type=number]{min-width:0;background:#0b0b0b;border:1px solid var(--line-strong);border-radius:8px;padding:8px 10px;color:var(--text)}input[type=file]::file-selector-button{margin:-8px 10px -8px -10px;padding:9px 12px;border:0;border-right:1px solid var(--line);background:#202020;color:#eee;cursor:pointer}
+    button,.button-link{min-height:36px;color:#fff;background-color:var(--red);border:1px solid var(--red-bright);border-radius:8px;padding:8px 14px;font-weight:750;cursor:pointer;transition:background-color 220ms ease,border-color 220ms ease,box-shadow 220ms ease,transform 160ms ease;text-decoration:none}
+    button:not(:disabled):active{transform:translateY(0)}button:disabled{opacity:.38;cursor:not-allowed;box-shadow:none;transform:none}
+    button.green{background-color:#f5f5f5;border-color:#f5f5f5;color:#080808}button.red{background-color:var(--red-soft);border-color:#64151a;color:#ffadb1}button.gray{background-color:#202020;border-color:#373737;color:#eee}
+    button.link,a.link{min-height:auto;padding:4px 6px;background-color:transparent;border:0;color:#ff777d;font-size:11px;box-shadow:none;text-decoration:none}
+    .button-with-icon{display:inline-flex;align-items:center;justify-content:center;gap:8px}.button-icon{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+    input[type=file],input[type=text],input[type=number]{min-width:0;background:#0b0b0b;border:1px solid var(--line-strong);border-radius:8px;padding:8px 10px;color:var(--text)}input[type=file]::file-selector-button{margin:-8px 10px -8px -10px;padding:9px 12px;border:0;border-right:1px solid var(--line);background-color:#202020;color:#eee;cursor:pointer;transition:background-color 220ms ease,color 220ms ease}
+    @media(hover:hover) and (pointer:fine){
+      button:not(:disabled):hover,.button-link:hover{background-color:var(--red-hover);border-color:var(--red-bright);box-shadow:0 7px 20px rgba(229,27,35,.24);transform:translateY(-1px)}
+      button.green:not(:disabled):hover{background-color:#fff;border-color:#fff;box-shadow:0 7px 20px rgba(255,255,255,.1)}
+      button.red:not(:disabled):hover{background-color:#421014;border-color:var(--red)}
+      button.gray:not(:disabled):hover{background-color:#292929;border-color:#505050;box-shadow:none}
+      button.link:not(:disabled):hover,a.link:hover{color:#fff;background-color:rgba(229,27,35,.1);box-shadow:none;transform:none}
+      input[type=file]:hover::file-selector-button{background-color:#292929;color:#fff}
+    }
+    @media(prefers-reduced-motion:reduce){button,.button-link,input[type=file]::file-selector-button{transition:none}}
     .model-uploads{display:grid;grid-template-columns:1fr 1fr;gap:10px}.upload-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.file-section{margin-top:14px;padding-top:13px;border-top:1px solid var(--line)}.file-title{display:flex;align-items:center;gap:8px;margin-bottom:7px;color:var(--muted-strong);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.file-type{padding:2px 6px;border:1px solid #4c1619;border-radius:4px;background:var(--red-soft);color:#ff7e84}
     .sb-summary{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:18px}.sb-stat{background:#101010;padding:16px}.sb-stat .label{font-size:9.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}.sb-stat .value{font-size:34px;font-weight:800;letter-spacing:-1.5px;line-height:1}.sb-stat .value.small{font-size:14px;font-weight:650;letter-spacing:0;line-height:1.4}
     .sb-divider{border:0;border-top:1px solid var(--line);margin:14px 0}.sb-conf-row{display:flex;align-items:center;gap:10px}.sb-conf-bar{flex:1;height:7px;border-radius:999px;background:#272727;overflow:hidden}.sb-conf-bar span{display:block;height:100%;border-radius:inherit;transition:width .4s ease,background .4s}.sb-conf-val{font-size:13px;font-weight:750;font-family:ui-monospace,monospace;min-width:44px;text-align:right}
@@ -79,9 +89,8 @@
     <div class="brand">
       <img class="brand-logo" src="assets/meraque-logo.png" alt="Meraque">
       <div class="brand-copy">
-        <div class="eyebrow">Field vision system</div>
-        <h1>AI Detection Console</h1>
-        <div class="sub">YOLOv8 · TensorRT · ROS 2</div>
+        <div class="eyebrow">Pineapple Detection System</div>
+        <h1>AI Detection + Geotagging Live Dashboard</h1>
       </div>
     </div>
     <div class="row">
@@ -125,7 +134,13 @@
           </div>
           <div class="control-group">
             <span class="control-label">Capture</span>
-            <button onclick="saveFrame()">▣ Save frame</button>
+            <button class="button-with-icon" onclick="saveFrame()">
+              <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M14.5 4 16 6h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3l1.5-2h5Z"></path>
+                <circle cx="12" cy="12.5" r="3.5"></circle>
+              </svg>
+              <span>Save frame</span>
+            </button>
             <button class="gray" onclick="saveCount()">＋ Save current count</button>
           </div>
           <div class="control-group">
