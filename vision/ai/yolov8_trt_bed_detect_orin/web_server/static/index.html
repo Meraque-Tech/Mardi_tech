@@ -50,10 +50,10 @@
     .stream-wrap:before,.stream-wrap:after{content:"";position:absolute;z-index:2;width:42px;height:42px;pointer-events:none}.stream-wrap:before{left:10px;top:10px;border-left:2px solid var(--red);border-top:2px solid var(--red)}.stream-wrap:after{right:10px;bottom:10px;border-right:2px solid var(--red);border-bottom:2px solid var(--red)}.stream-wrap.detecting{border-color:#67171b;box-shadow:0 0 0 1px rgba(229,27,35,.08),0 0 28px rgba(229,27,35,.08)}
     #stream{width:100%;height:100%;object-fit:contain}.stream-overlay{position:absolute;z-index:3;left:16px;bottom:14px;display:flex;gap:8px;pointer-events:none}.stream-tag{padding:5px 8px;background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.12);border-radius:5px;color:#ddd;font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;backdrop-filter:blur(8px)}
     #stream-message{position:absolute;z-index:4;padding:9px 13px;border:1px solid #343434;border-radius:8px;background:rgba(0,0,0,.86);color:#ddd;font-size:12px}
-    .control-groups{display:grid;gap:14px}.control-group{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.control-label{width:78px;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.actions{flex-wrap:wrap}
+    .control-groups{display:grid;gap:18px}.control-group{display:grid;gap:8px}.control-group-head{display:flex;align-items:center;gap:10px;min-height:18px}.control-label{color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.control-actions{display:grid;gap:9px}.control-actions.detection-actions{grid-template-columns:repeat(4,minmax(0,1fr));margin-left:80px}.control-actions.two-up{grid-template-columns:repeat(2,minmax(0,1fr))}.control-actions button{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:46px}.actions{flex-wrap:wrap}
     button,.button-link{min-height:36px;color:#fff;background-color:var(--red);border:1px solid var(--red-bright);border-radius:8px;padding:8px 14px;font-weight:750;cursor:pointer;transition:background-color 220ms ease,border-color 220ms ease,box-shadow 220ms ease,transform 160ms ease;text-decoration:none}
     button:not(:disabled):active{transform:translateY(0)}button:disabled{opacity:.38;cursor:not-allowed;box-shadow:none;transform:none}
-    button.green{background-color:#f5f5f5;border-color:#f5f5f5;color:#080808}button.red{background-color:var(--red-soft);border-color:#64151a;color:#ffadb1}button.gray{background-color:#202020;border-color:#373737;color:#eee}
+    button.green{background-color:#f5f5f5;border-color:#f5f5f5;color:#080808}button.red{background-color:var(--red-soft);border-color:#64151a;color:#ffadb1}button.gray{background-color:#202020;border-color:#373737;color:#eee}button.danger-fill{background-color:#d83a40;border-color:#e54a50;color:#fff}button.danger-outline{background-color:transparent;border-color:#7b1b20;color:#ff8f94}
     button.link,a.link{min-height:auto;padding:4px 6px;background-color:transparent;border:0;color:#ff777d;font-size:11px;box-shadow:none;text-decoration:none}
     .button-with-icon{display:inline-flex;align-items:center;justify-content:center;gap:8px}.button-icon{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
     input[type=file],input[type=text],input[type=number]{min-width:0;background:#0b0b0b;border:1px solid var(--line-strong);border-radius:8px;padding:8px 10px;color:var(--text)}input[type=file]::file-selector-button{margin:-8px 10px -8px -10px;padding:9px 12px;border:0;border-right:1px solid var(--line);background-color:#202020;color:#eee;cursor:pointer;transition:background-color 220ms ease,color 220ms ease}
@@ -62,6 +62,8 @@
       button.green:not(:disabled):hover{background-color:#fff;border-color:#fff;box-shadow:0 7px 20px rgba(255,255,255,.1)}
       button.red:not(:disabled):hover{background-color:#421014;border-color:var(--red)}
       button.gray:not(:disabled):hover{background-color:#292929;border-color:#505050;box-shadow:none}
+      button.danger-fill:not(:disabled):hover{background-color:#e1474d;border-color:#f05a60;box-shadow:0 7px 20px rgba(229,27,35,.24)}
+      button.danger-outline:not(:disabled):hover{background-color:var(--red-soft);border-color:var(--red);box-shadow:none}
       button.link:not(:disabled):hover,a.link:hover{color:#fff;background-color:rgba(229,27,35,.1);box-shadow:none;transform:none}
       input[type=file]:hover::file-selector-button{background-color:#292929;color:#fff}
     }
@@ -80,7 +82,8 @@
     #launch-log{background:#060606!important;border-color:#303030!important;color:#d4d4d4!important}#toast{position:fixed;right:24px;bottom:24px;max-width:380px;background:#181818;border:1px solid var(--red);border-left:4px solid var(--red);padding:13px 17px;border-radius:9px;box-shadow:var(--shadow);transform:translateY(90px);opacity:0;transition:.25s;z-index:20}#toast.show{transform:none;opacity:1}#toast.error{background:#260d0f;border-color:var(--red-bright)}#lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:30;padding:25px;place-items:center}#lightbox.open{display:grid}#lightbox img{max-width:100%;max-height:100%;border:1px solid #3a3a3a;border-radius:12px;box-shadow:var(--shadow)}
     @media(max-width:1100px){.status{grid-template-columns:repeat(3,1fr)}.status-item:nth-child(n){border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.status-item:nth-child(3n){border-right:0}.status-item:nth-last-child(-n+1){border-bottom:0}.layout{grid-template-columns:minmax(0,1.65fr) minmax(300px,1fr)}.model-uploads{grid-template-columns:1fr}}
     @media(max-width:900px){.shell{padding:18px}.brand-logo{width:155px}.brand-copy{display:none}.layout{grid-template-columns:1fr}.history-card{grid-column:auto}.status{grid-template-columns:repeat(2,1fr)}.status-item:nth-child(n){border-right:1px solid var(--line)}.status-item:nth-child(2n){border-right:0}.status-item:nth-last-child(-n+2){border-bottom:0}.gallery{grid-template-columns:repeat(3,1fr)}}
-    @media(max-width:600px){.shell{padding:12px}header{align-items:flex-start;gap:10px}.brand-logo{width:128px}.system-chip{display:none}.connection{padding:6px 9px}.status{grid-template-columns:1fr 1fr}.status-item{padding:12px}.card{padding:14px;border-radius:13px}.control-group{display:grid;grid-template-columns:1fr 1fr}.control-label{grid-column:1/-1;width:auto}.control-group button{width:100%}.model-uploads{grid-template-columns:1fr}.upload-row{grid-template-columns:1fr}.gallery{grid-template-columns:repeat(2,1fr)}.card-head{align-items:flex-start;flex-wrap:wrap}.card-head>.row{flex-wrap:wrap}.status-item strong{font-size:12px}}
+    @media(max-width:600px){.shell{padding:12px}header{align-items:flex-start;gap:10px}.brand-logo{width:128px}.system-chip{display:none}.connection{padding:6px 9px}.status{grid-template-columns:1fr 1fr}.status-item{padding:12px}.card{padding:14px;border-radius:13px}.control-actions.detection-actions{grid-template-columns:repeat(2,minmax(0,1fr));margin-left:0}.model-uploads{grid-template-columns:1fr}.upload-row{grid-template-columns:1fr}.gallery{grid-template-columns:repeat(2,1fr)}.card-head{align-items:flex-start;flex-wrap:wrap}.card-head>.row{flex-wrap:wrap}.status-item strong{font-size:12px}}
+    @media(max-width:420px){.control-actions.detection-actions,.control-actions.two-up{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -126,27 +129,36 @@
         <div class="card-head"><div><h2>Operations</h2><span class="section-meta">Detection and capture controls</span></div></div>
         <div class="control-groups">
           <div class="control-group">
-            <span class="control-label">Detection</span>
-            <button id="start-btn" class="green" onclick="setDetection(true)">▶ Start detection</button>
-            <button id="stop-btn" class="red" onclick="setDetection(false)">■ Stop detection</button>
-            <button id="deserialize-btn" class="gray" onclick="deserializeModel()">⇄ Load engine</button>
-            <button class="gray" onclick="resetTracker()">↺ Reset tracker</button>
+            <div class="control-group-head">
+              <span class="control-label">Detection</span>
+              <span id="operations-detect-badge" class="badge stopped" role="status">Stopped</span>
+            </div>
+            <div class="control-actions detection-actions">
+              <button id="start-btn" class="green" onclick="setDetection(true)">▶ Start detection</button>
+              <button id="stop-btn" class="gray" onclick="setDetection(false)">■ Stop detection</button>
+              <button id="deserialize-btn" class="gray" onclick="deserializeModel()">⇄ Load engine</button>
+              <button class="gray" onclick="resetTracker()">↺ Reset tracker</button>
+            </div>
           </div>
           <div class="control-group">
-            <span class="control-label">Capture</span>
-            <button class="button-with-icon" onclick="saveFrame()">
-              <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M14.5 4 16 6h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3l1.5-2h5Z"></path>
-                <circle cx="12" cy="12.5" r="3.5"></circle>
-              </svg>
-              <span>Save frame</span>
-            </button>
-            <button class="gray" onclick="saveCount()">＋ Save current count</button>
+            <div class="control-group-head"><span class="control-label">Capture</span></div>
+            <div class="control-actions two-up">
+              <button class="gray button-with-icon" onclick="saveFrame()">
+                <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M14.5 4 16 6h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3l1.5-2h5Z"></path>
+                  <circle cx="12" cy="12.5" r="3.5"></circle>
+                </svg>
+                <span>Save frame</span>
+              </button>
+              <button class="gray" onclick="saveCount()">＋ Save current count</button>
+            </div>
           </div>
           <div class="control-group">
-            <span class="control-label">System</span>
-            <button class="red" onclick="deleteAllData()">⚠ Delete saved data</button>
-            <button class="red" onclick="shutdownDevice()">⏻ Shutdown device</button>
+            <div class="control-group-head"><span class="control-label">System</span></div>
+            <div class="control-actions two-up">
+              <button class="danger-fill" onclick="deleteAllData()">⚠ Delete saved data</button>
+              <button class="danger-outline" onclick="shutdownDevice()">⏻ Shutdown device</button>
+            </div>
           </div>
         </div>
       </section>
@@ -417,6 +429,7 @@
     liveDot.style.color=running?'var(--red-bright)':'var(--muted)';
     // Top status bar
     const detect=document.getElementById('detect-badge');detect.textContent=running?'RUNNING':'STOPPED';detect.className=`badge ${running?'running':'stopped'}`;
+    const operationsDetect=document.getElementById('operations-detect-badge');operationsDetect.textContent=running?'Running':'Stopped';operationsDetect.className=`badge ${running?'running':'stopped'}`;
     // Sidebar status badge (synced to same badge element via bed-badge-sb)
     const bedSb=document.getElementById('bed-badge-sb');
     bedSb.innerHTML=bed?'<span class="badge found">OBJ FOUND</span>':'<span class="badge clear">CLEAR</span>';

@@ -1,6 +1,6 @@
 services:
   yolov8-trt-serialize-orin-nano:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v4
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v5
     container_name: yolov8-trt-serialize-orin-nano
     # build:
     #   context: .
@@ -22,7 +22,7 @@ services:
                ros2 launch yolov8_trt_bed_detect_orin serialize_engine.launch.py"
 
   yolov8-trt-bed-detect-orin:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v4
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v5
     container_name: yolov8-trt-bed-detect-orin-nano
     build:
       context: .
