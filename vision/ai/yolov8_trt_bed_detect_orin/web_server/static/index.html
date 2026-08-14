@@ -6,11 +6,11 @@
   <meta name="theme-color" content="#070707">
   <base href="/static/">
   <title>Pineapple Detection System</title>
-  <link rel="icon" href="assets/favicon/favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon/favicon-32x32.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon/favicon-16x16.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="assets/favicon/apple-touch-icon.png">
-  <link rel="manifest" href="assets/favicon/site.webmanifest">
+  <link rel="icon" href="assets/favicon/favicon.ico?v=2" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon/favicon-32x32.png?v=2">
+  <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon/favicon-16x16.png?v=2">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/favicon/apple-touch-icon.png?v=2">
+  <link rel="manifest" href="assets/favicon/site.webmanifest?v=2">
   <style>
     :root {
       color-scheme:dark;
@@ -52,10 +52,10 @@
     .badge.yes{color:#fff;background:var(--red-soft);border-color:#71181d}.badge.no{color:#bdbdbd;background:#202020;border-color:#363636}.badge.unavailable{color:#777;background:#191919;border-color:#292929}
     .layout{display:grid;grid-template-columns:minmax(0,2.08fr) minmax(330px,.92fr);gap:20px}.stack{display:grid;gap:20px;align-content:start}
     .card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px}.card-head h2{margin:0}.section-meta{font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
-    .live{display:inline-flex;align-items:center;gap:6px;color:#ff8b90;font-size:10px;font-weight:850;letter-spacing:.09em}.stream-wrap{aspect-ratio:16/9;background:#030303;border:1px solid #2f2f2f;border-radius:12px;overflow:hidden;display:grid;place-items:center;position:relative;box-shadow:inset 0 0 0 1px rgba(255,255,255,.018)}
-    .stream-wrap:before,.stream-wrap:after{content:"";position:absolute;z-index:2;width:42px;height:42px;pointer-events:none}.stream-wrap:before{left:10px;top:10px;border-left:2px solid var(--red);border-top:2px solid var(--red)}.stream-wrap:after{right:10px;bottom:10px;border-right:2px solid var(--red);border-bottom:2px solid var(--red)}.stream-wrap.detecting{border-color:#67171b;box-shadow:0 0 0 1px rgba(229,27,35,.08),0 0 28px rgba(229,27,35,.08)}
-    #stream{width:100%;height:100%;object-fit:contain}.stream-overlay{position:absolute;z-index:3;left:16px;bottom:14px;display:flex;gap:8px;pointer-events:none}.stream-tag{padding:5px 8px;background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.12);border-radius:5px;color:#ddd;font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;backdrop-filter:blur(8px)}
-    #stream-message{position:absolute;z-index:4;padding:9px 13px;border:1px solid #343434;border-radius:8px;background:rgba(0,0,0,.86);color:#ddd;font-size:12px}
+    .live{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:850;letter-spacing:.09em}.live.connecting{color:var(--amber)}.live.online{color:#ff8b90}.live.offline{color:var(--muted)}.stream-wrap{aspect-ratio:16/9;background:#030303;border:1px solid #2f2f2f;border-radius:12px;overflow:hidden;display:grid;place-items:center;position:relative;box-shadow:inset 0 0 0 1px rgba(255,255,255,.018)}
+    .stream-wrap:before,.stream-wrap:after{content:"";position:absolute;z-index:2;width:42px;height:42px;opacity:0;pointer-events:none;transition:opacity .2s ease}.stream-wrap:before{left:10px;top:10px;border-left:2px solid var(--red);border-top:2px solid var(--red)}.stream-wrap:after{right:10px;bottom:10px;border-right:2px solid var(--red);border-bottom:2px solid var(--red)}.stream-wrap.stream-online:before,.stream-wrap.stream-online:after{opacity:1}.stream-wrap.stream-online.detecting{border-color:#67171b;box-shadow:0 0 0 1px rgba(229,27,35,.08),0 0 28px rgba(229,27,35,.08)}
+    #stream{display:block;width:100%;height:100%;object-fit:contain;opacity:0;visibility:hidden;transition:opacity .2s ease}.stream-wrap.stream-online #stream{opacity:1;visibility:visible}.stream-overlay{position:absolute;z-index:3;left:16px;bottom:14px;display:flex;gap:8px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .2s ease}.stream-wrap.stream-online .stream-overlay{opacity:1;visibility:visible}.stream-tag{padding:5px 8px;background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.12);border-radius:5px;color:#ddd;font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;backdrop-filter:blur(8px)}
+    .stream-placeholder{position:absolute;inset:0;z-index:4;display:grid;place-content:center;justify-items:center;gap:12px;padding:24px;text-align:center;background:radial-gradient(circle,rgba(30,30,30,.5),transparent 42%);transition:opacity .2s ease,visibility .2s ease}.stream-placeholder-icon{width:42px;height:42px;color:#777;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.stream-placeholder-copy{display:grid;gap:4px}.stream-placeholder-copy strong{font-size:14px}.stream-placeholder-copy span{color:var(--muted);font-size:12px}.stream-wrap.stream-online .stream-placeholder{opacity:0;visibility:hidden}
     .control-groups{display:grid;gap:18px}.control-group{display:grid;gap:8px}.control-group-head{display:flex;align-items:center;gap:10px;min-height:18px}.control-label{color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.control-actions{display:grid;gap:9px}.control-actions.detection-actions{grid-template-columns:repeat(4,minmax(0,1fr));margin-left:80px}.control-actions.two-up{grid-template-columns:repeat(2,minmax(0,1fr))}.control-actions button{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:46px}.actions{flex-wrap:wrap}
     button,.button-link{min-height:36px;color:#fff;background-color:var(--red);border:1px solid var(--red-bright);border-radius:8px;padding:8px 14px;font-weight:750;cursor:pointer;transition:background-color 220ms ease,border-color 220ms ease,box-shadow 220ms ease,transform 160ms ease;text-decoration:none}
     button:not(:disabled):active{transform:translateY(0)}button:disabled{opacity:.38;cursor:not-allowed;box-shadow:none;transform:none}
@@ -124,11 +124,22 @@
   <div class="layout">
     <div class="stack">
       <section class="card">
-        <div class="card-head"><div><h2>Live vision feed</h2><span class="section-meta">Camera inference output</span></div><span class="live">● LIVE</span></div>
-        <div class="stream-wrap">
+        <div class="card-head"><div><h2>Live vision feed</h2><span class="section-meta">Camera inference output</span></div><span id="stream-state" class="live connecting">● CONNECTING</span></div>
+        <div class="stream-wrap stream-connecting">
           <img id="stream" alt="Live camera detection stream">
           <div class="stream-overlay" aria-hidden="true"><span class="stream-tag">TensorRT</span><span class="stream-tag">ROS 2</span></div>
-          <span id="stream-message">Connecting to camera…</span>
+          <div id="stream-placeholder" class="stream-placeholder" role="status" aria-live="polite" aria-atomic="true">
+            <svg class="stream-placeholder-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M14.5 5 16 7h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7"></path>
+              <path d="M4.5 7H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10"></path>
+              <circle cx="12" cy="13" r="3.5"></circle>
+              <path d="m3 3 18 18"></path>
+            </svg>
+            <div class="stream-placeholder-copy">
+              <strong id="stream-message-title">Connecting to camera</strong>
+              <span id="stream-message">Waiting for the camera stream…</span>
+            </div>
+          </div>
         </div>
       </section>
       <section class="card">
@@ -712,21 +723,39 @@
     canvas.addEventListener('dblclick',resetPathView);
   }
 
+  function setStreamState(state,detail='') {
+    const states={
+      connecting:{label:'● CONNECTING',title:'Connecting to camera',detail:'Waiting for the camera stream…'},
+      online:{label:'● LIVE',title:'Camera connected',detail:'Live camera stream'},
+      offline:{label:'○ OFFLINE',title:'Camera unavailable',detail:'Retrying automatically…'}
+    };
+    const next=states[state]||states.offline;
+    const wrap=document.querySelector('.stream-wrap'),img=document.getElementById('stream');
+    wrap.classList.remove('stream-connecting','stream-online','stream-offline');
+    wrap.classList.add(`stream-${state in states?state:'offline'}`);
+    const indicator=document.getElementById('stream-state');
+    indicator.className=`live ${state in states?state:'offline'}`;
+    indicator.textContent=next.label;
+    document.getElementById('stream-message-title').textContent=next.title;
+    document.getElementById('stream-message').textContent=detail||next.detail;
+    if(state==='online')img.removeAttribute('aria-hidden');else img.setAttribute('aria-hidden','true');
+  }
+
   function connectStream(immediate=false) {
     clearTimeout(streamRetryTimer);
     const delay=immediate?0:Math.min(5000,500*2**Math.min(streamRetries,4));
     streamRetryTimer=setTimeout(()=>{
-      const img=document.getElementById('stream'),message=document.getElementById('stream-message');
-      message.style.display='block';message.textContent=streamRetries?'Reconnecting to camera…':'Connecting to camera…';
-      img.onload=()=>{clearTimeout(streamRetryTimer);streamRetries=0;message.style.display='none';};
-      img.onerror=()=>{streamRetries++;message.style.display='block';message.textContent='Camera unavailable — retrying automatically…';connectStream(false);};
+      const img=document.getElementById('stream');
+      setStreamState('connecting',streamRetries?'Retrying camera connection…':'Waiting for the camera stream…');
+      img.onload=()=>{clearTimeout(streamRetryTimer);streamRetries=0;setStreamState('online');};
+      img.onerror=()=>{streamRetries++;setStreamState('offline');connectStream(false);};
       img.src=`http://${location.hostname}:${streamPort}/?t=${Date.now()}`;
     },delay);
   }
 
   async function initStream() {
     try { const status=await api('/api/status');applySnapshot(status);streamPort=Number(status.mjpeg_port||8080);connectStream(true); }
-    catch(error){document.getElementById('stream-message').textContent=`${error.message} — retrying…`;setTimeout(initStream,1500);}
+    catch(error){setStreamState('offline',`${error.message} — retrying…`);setTimeout(initStream,1500);}
   }
 
   async function saveFrame() { try{toast('Saving frame…');const result=await api('/api/save',{method:'POST'});toast(`Saved ${result.filename}`);loadImages();}catch(error){toast(error.message,true);} }
