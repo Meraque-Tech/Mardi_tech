@@ -14,7 +14,7 @@ yolov8_trt:
     # Input .wts weights file and YOLOv8 model size (n, s, m, l, x).
     # engine_name and input_h/input_w above are reused for the output engine
     # path and build resolution.
-    wts_name: "/weights/best_yolov8_final.wts"
+    wts_name: "/weights/yolov8n.wts"
     model_type: "n"
     num_class: 80
 
