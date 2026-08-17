@@ -6,6 +6,7 @@ import csv
 import datetime
 import io
 import json
+import logging
 import math
 import os
 import platform
@@ -17,6 +18,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+import uuid
 import zipfile
 from pathlib import Path
 from typing import List, Optional
@@ -796,6 +798,7 @@ def _auto_save_loop():
 
 # Flask app
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
+app.logger.setLevel(logging.INFO)
 sock = Sock(app)
 
 
@@ -811,14 +814,27 @@ def saved_file(filename):
 
 @sock.route("/ws")
 def websocket(ws):
+    peer = request.remote_addr or "unknown"
+    app.logger.info("Dashboard WebSocket connected remote=%s", peer)
     with ws_lock:
         ws_clients.append(ws)
     try:
         ws.send(json.dumps(_snapshot_payload()))
         while True:
-            ws.receive(timeout=30)
-    except Exception:
-        pass
+            message = ws.receive(timeout=15)
+            if message is None:
+                break
+            if message == "ping":
+                ws.send(json.dumps({
+                    "type": "pong",
+                    "server_time": datetime.datetime.now(
+                        datetime.timezone.utc
+                    ).isoformat(),
+                }))
+    except Exception as exc:
+        app.logger.info(
+            "Dashboard WebSocket disconnected remote=%s reason=%s", peer, exc
+        )
     finally:
         with ws_lock:
             if ws in ws_clients:
@@ -978,8 +994,38 @@ def _control_response(method_name):
     bridge = ros_node
     if bridge is None:
         return jsonify({"success": False, "message": "ROS bridge is not ready"}), 503
+
+    action = {
+        "call_start": "start",
+        "call_stop": "stop",
+        "call_reset": "reset_tracker",
+    }.get(method_name, method_name)
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    user_agent = request.headers.get("User-Agent", "")[:240]
+    log = app.logger.warning if action == "stop" else app.logger.info
+    log(
+        "Detection control requested action=%s request_id=%s remote=%s "
+        "forwarded_for=%s user_agent=%s",
+        action,
+        request_id,
+        request.remote_addr or "unknown",
+        forwarded_for or "-",
+        user_agent or "-",
+    )
     ok, message = getattr(bridge, method_name)()
-    return jsonify({"success": ok, "message": message}), (200 if ok else 503)
+    log(
+        "Detection control completed action=%s request_id=%s success=%s message=%s",
+        action,
+        request_id,
+        ok,
+        message,
+    )
+    return jsonify({
+        "success": ok,
+        "message": message,
+        "request_id": request_id,
+    }), (200 if ok else 503)
 
 
 def _run_jetson_clocks():

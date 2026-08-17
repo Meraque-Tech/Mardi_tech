@@ -368,7 +368,11 @@
   const COLORS=['#ff3139','#f7f7f7','#a90f16','#ff7b80','#b7b7b7','#721017','#e51b23','#737373'];
   const HISTORY_PAGE=50;
   let historyOffset=0, historyTotal=0, chartItems=[], refreshTimer=0, wsRetries=0;
+  let activeSocket=null, wsReconnectTimer=0, wsLastMessageAt=0;
   let streamPort=8080, streamRetries=0, streamRetryTimer=0;
+  let streamController=null, streamGeneration=0, streamConnectStartedAt=0;
+  let lastStreamFrameAt=0, streamWatchdogTimer=0;
+  const STREAM_STALE_MS=4000, WS_STALE_MS=12000;
   let lastMotionPosDeadband=0.3, motionPosDeadbandSynced=false;
 
   // Class label mapping — stored in localStorage
@@ -554,12 +558,64 @@
     if(nextPort!==streamPort){streamPort=nextPort;connectStream(true);}
   }
 
-  function connectWebSocket() {
-    const scheme=location.protocol==='https:'?'wss':'ws', socket=new WebSocket(`${scheme}://${location.host}/ws`);
-    socket.onopen=()=>{wsRetries=0;socket.keepalive=setInterval(()=>{if(socket.readyState===WebSocket.OPEN)socket.send('ping');},20000);document.getElementById('ws-dot').classList.add('on');document.getElementById('ws-label').textContent='Connected';};
-    socket.onmessage=event=>{try{const data=JSON.parse(event.data);applySnapshot(data);if(data.type==='snapshot')scheduleHistoryRefresh();}catch(_error){}};
-    socket.onclose=()=>{clearInterval(socket.keepalive);document.getElementById('ws-dot').classList.remove('on');document.getElementById('ws-label').textContent='Disconnected';setTimeout(connectWebSocket,Math.min(5000,500*2**wsRetries++));};
-    socket.onerror=()=>socket.close();
+  function setWebSocketState(connected,label) {
+    document.getElementById('ws-dot').classList.toggle('on',connected);
+    document.getElementById('ws-label').textContent=label;
+  }
+
+  function connectWebSocket(immediate=false) {
+    clearTimeout(wsReconnectTimer);
+    if(activeSocket){
+      clearInterval(activeSocket.keepalive);
+      activeSocket.onclose=null;
+      activeSocket.close();
+      activeSocket=null;
+    }
+    const delay=immediate?0:Math.min(5000,500*2**Math.min(wsRetries,4));
+    setWebSocketState(false,delay?'Reconnecting…':'Connecting…');
+    wsReconnectTimer=setTimeout(()=>{
+      const scheme=location.protocol==='https:'?'wss':'ws';
+      const socket=new WebSocket(`${scheme}://${location.host}/ws`);
+      activeSocket=socket;
+      socket.onopen=()=>{
+        if(activeSocket!==socket)return;
+        wsRetries=0;wsLastMessageAt=Date.now();
+        setWebSocketState(true,'Connected');
+        socket.keepalive=setInterval(()=>{
+          if(socket.readyState!==WebSocket.OPEN)return;
+          if(Date.now()-wsLastMessageAt>WS_STALE_MS){
+            setWebSocketState(false,'Connection stale');
+            clearInterval(socket.keepalive);
+            socket.onclose=null;
+            if(activeSocket===socket)activeSocket=null;
+            socket.close();
+            wsRetries++;
+            connectWebSocket(false);
+            return;
+          }
+          try { socket.send('ping'); } catch(_error) { socket.close(); }
+        },4000);
+        loadStatus().catch(()=>{});
+      };
+      socket.onmessage=event=>{
+        if(activeSocket!==socket)return;
+        wsLastMessageAt=Date.now();
+        try {
+          const data=JSON.parse(event.data);
+          if(data.type==='pong')return;
+          applySnapshot(data);
+          if(data.type==='snapshot')scheduleHistoryRefresh();
+        } catch(_error) {}
+      };
+      socket.onclose=()=>{
+        clearInterval(socket.keepalive);
+        if(activeSocket!==socket)return;
+        activeSocket=null;wsRetries++;
+        setWebSocketState(false,'Disconnected');
+        connectWebSocket(false);
+      };
+      socket.onerror=()=>socket.close();
+    },delay);
   }
 
   function scheduleHistoryRefresh() { if(historyOffset!==0||refreshTimer)return;refreshTimer=setTimeout(()=>{refreshTimer=0;loadHistory(0);},1200); }
@@ -741,20 +797,121 @@
     if(state==='online')img.removeAttribute('aria-hidden');else img.setAttribute('aria-hidden','true');
   }
 
-  function connectStream(immediate=false) {
+  function appendStreamBytes(left,right) {
+    if(!left.length)return right;
+    const joined=new Uint8Array(left.length+right.length);
+    joined.set(left);joined.set(right,left.length);
+    return joined;
+  }
+
+  function findHeaderEnd(buffer) {
+    for(let i=0;i<=buffer.length-4;i++){
+      if(buffer[i]===13&&buffer[i+1]===10&&buffer[i+2]===13&&buffer[i+3]===10)return i;
+    }
+    return -1;
+  }
+
+  function showStreamFrame(jpeg) {
+    const img=document.getElementById('stream');
+    const objectUrl=URL.createObjectURL(new Blob([jpeg],{type:'image/jpeg'}));
+    img.src=objectUrl;
+    // Keep the URL alive long enough for asynchronous image decoding. Each
+    // frame owns its URL, so rapid updates cannot revoke the next frame.
+    setTimeout(()=>URL.revokeObjectURL(objectUrl),2000);
+    lastStreamFrameAt=Date.now();
+    streamRetries=0;
+    setStreamState('online');
+  }
+
+  async function readMjpegStream(response,generation,signal) {
+    if(!response.ok)throw new Error(`MJPEG request failed (${response.status})`);
+    if(!response.body)throw new Error('Streaming responses are not supported by this browser');
+
+    const reader=response.body.getReader();
+    const decoder=new TextDecoder('ascii');
+    let buffer=new Uint8Array(0);
+    try {
+      while(generation===streamGeneration&&!signal.aborted){
+        let headerEnd=findHeaderEnd(buffer);
+        if(headerEnd<0){
+          if(buffer.length>65536)throw new Error('Invalid MJPEG headers');
+          const next=await reader.read();
+          if(next.done)throw new Error('MJPEG connection closed');
+          buffer=appendStreamBytes(buffer,next.value);
+          continue;
+        }
+
+        const header=decoder.decode(buffer.subarray(0,headerEnd));
+        const lengthMatch=/content-length:\s*(\d+)/i.exec(header);
+        if(!lengthMatch){
+          buffer=buffer.slice(headerEnd+4);
+          continue;
+        }
+
+        const frameLength=Number(lengthMatch[1]);
+        if(!Number.isInteger(frameLength)||frameLength<=0||frameLength>10000000){
+          throw new Error('Invalid MJPEG frame length');
+        }
+        const frameStart=headerEnd+4,frameEnd=frameStart+frameLength;
+        if(buffer.length<frameEnd){
+          const next=await reader.read();
+          if(next.done)throw new Error('MJPEG frame was truncated');
+          buffer=appendStreamBytes(buffer,next.value);
+          continue;
+        }
+
+        showStreamFrame(buffer.slice(frameStart,frameEnd));
+        buffer=buffer.slice(frameEnd);
+      }
+    } finally {
+      reader.cancel().catch(()=>{});
+    }
+  }
+
+  async function startStreamConnection(generation) {
+    if(generation!==streamGeneration)return;
+    const controller=new AbortController();
+    streamController=controller;
+    streamConnectStartedAt=Date.now();lastStreamFrameAt=0;
+    setStreamState('connecting',streamRetries?'Retrying camera connection…':'Waiting for the camera stream…');
+    try {
+      const response=await fetch(
+        `http://${location.hostname}:${streamPort}/?t=${Date.now()}`,
+        {signal:controller.signal,cache:'no-store',mode:'cors'}
+      );
+      await readMjpegStream(response,generation,controller.signal);
+    } catch(error) {
+      if(generation!==streamGeneration||controller.signal.aborted)return;
+      streamController=null;streamRetries++;
+      setStreamState('offline',`${error.message} — retrying automatically…`);
+      connectStream(false);
+    }
+  }
+
+  function connectStream(immediate=false,detail='') {
     clearTimeout(streamRetryTimer);
+    streamGeneration++;
+    if(streamController){streamController.abort();streamController=null;}
+    const generation=streamGeneration;
     const delay=immediate?0:Math.min(5000,500*2**Math.min(streamRetries,4));
-    streamRetryTimer=setTimeout(()=>{
-      const img=document.getElementById('stream');
-      setStreamState('connecting',streamRetries?'Retrying camera connection…':'Waiting for the camera stream…');
-      img.onload=()=>{clearTimeout(streamRetryTimer);streamRetries=0;setStreamState('online');};
-      img.onerror=()=>{streamRetries++;setStreamState('offline');connectStream(false);};
-      img.src=`http://${location.hostname}:${streamPort}/?t=${Date.now()}`;
-    },delay);
+    setStreamState('connecting',detail||(delay?'Retrying camera connection…':'Waiting for the camera stream…'));
+    streamRetryTimer=setTimeout(()=>startStreamConnection(generation),delay);
+  }
+
+  function startStreamWatchdog() {
+    clearInterval(streamWatchdogTimer);
+    streamWatchdogTimer=setInterval(()=>{
+      if(!streamController)return;
+      const lastActivity=lastStreamFrameAt||streamConnectStartedAt;
+      if(lastActivity&&Date.now()-lastActivity>STREAM_STALE_MS){
+        setStreamState('offline','Camera stream stalled — reconnecting…');
+        connectStream(true,'Camera stream stalled — reconnecting…');
+      }
+    },1000);
   }
 
   async function initStream() {
-    try { const status=await api('/api/status');applySnapshot(status);streamPort=Number(status.mjpeg_port||8080);connectStream(true); }
+    try { const status=await api('/api/status');applySnapshot(status);streamPort=Number(status.mjpeg_port||8080);connectStream(true);startStreamWatchdog(); }
     catch(error){setStreamState('offline',`${error.message} — retrying…`);setTimeout(initStream,1500);}
   }
 
@@ -966,9 +1123,21 @@
     } catch(_error) { /* no job in progress or endpoint unreachable — ignore */ }
   }
 
-  loadLabels();connectWebSocket();initStream();loadHistory(0);loadImages();loadModels();initConvertPoll();initLaunchPoll();loadPath();initPathInteraction();
+  loadLabels();connectWebSocket(true);initStream();loadHistory(0);loadImages();loadModels();initConvertPoll();initLaunchPoll();loadPath();initPathInteraction();
   setInterval(()=>loadStatus().catch(()=>{}),3000);
   setInterval(loadPath,2000);
+  window.addEventListener('online',()=>{connectWebSocket(true);connectStream(true,'Network restored — reconnecting camera…');});
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState!=='visible')return;
+    if(!activeSocket||Date.now()-wsLastMessageAt>WS_STALE_MS)connectWebSocket(true);
+    if(!lastStreamFrameAt||Date.now()-lastStreamFrameAt>STREAM_STALE_MS)connectStream(true,'Dashboard resumed — reconnecting camera…');
+  });
+  window.addEventListener('beforeunload',()=>{
+    clearTimeout(wsReconnectTimer);clearTimeout(streamRetryTimer);
+    clearInterval(streamWatchdogTimer);
+    if(activeSocket){clearInterval(activeSocket.keepalive);activeSocket.onclose=null;activeSocket.close();}
+    if(streamController)streamController.abort();
+  });
   window.addEventListener('resize',()=>drawChart(chartItems));
   window.addEventListener('resize',()=>drawPath(pathPoints));
 </script>

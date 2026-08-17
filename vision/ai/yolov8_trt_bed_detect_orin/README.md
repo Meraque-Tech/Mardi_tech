@@ -281,6 +281,15 @@ Live counts update continuously in the dashboard. They are persisted when `POST 
 
 The dashboard is self-contained and does not require internet access or CDN scripts.
 
+The live view reads and decodes the MJPEG response frame-by-frame. If no complete
+frame arrives for four seconds, the dashboard aborts the stale TCP request and
+opens a fresh stream automatically. WebSocket state uses a separate ping/pong
+watchdog and reloads `/api/status` after reconnecting, so a temporary Wi-Fi loss
+is shown as a connection interruption rather than stopping detection. Slow MJPEG
+clients have independent sender threads on the detector and cannot block other
+viewers or inference. Camera capture also reopens the configured V4L2 device after
+two seconds of empty frames while preserving the current detection-enabled state.
+
 ### Serialize / deserialize from the dashboard
 
 - **Convert to .engine** (in the *Model weights* card, next to a `.wts` file) requires a **# classes** value entered in the field beside the button — the number of classes that `.wts` was trained on. The button updates `trt_params.yaml` (`wts_name`, `engine_name`, and `num_class`) and then calls `POST /api/serialize/model`, which runs `serialize_engine.launch.py` in the background. The number of classes is not guessed or defaulted; the request is rejected client-side and server-side (`400`) if it's missing or not a positive integer, since serializing with the wrong class count silently produces a broken engine.
@@ -297,8 +306,8 @@ Base URL: `http://<host-ip>:8090`
 |---|---|---|---|---|
 | `GET` | `/api/status` | None | Live state object plus `mjpeg_port` | Read detection, object-result, confidence, counts, and tracking state |
 | `GET` | `/api/counts` | None | `{"0":2,"1":1}` | Read the latest live per-class count |
-| `POST` | `/api/start` | None | `{"success":true,"message":"bed detection started"}` | Start inference through ROS |
-| `POST` | `/api/stop` | None | `{"success":true,"message":"bed detection stopped"}` | Stop inference through ROS |
+| `POST` | `/api/start` | None | `{"success":true,"message":"bed detection started","request_id":"..."}` | Start inference through ROS; caller and result are logged |
+| `POST` | `/api/stop` | None | `{"success":true,"message":"bed detection stopped","request_id":"..."}` | Stop inference through ROS; caller and result are logged |
 | `POST` | `/api/set_track` | JSON: `{"enabled":true}` | `{"success":true,"message":"...","is_track":true}` | Select unique-object or per-frame counting |
 | `POST` | `/api/reset_tracker` | None | `{"success":true,"message":"tracker reset requested"}` | Clear cumulative unique-object counts |
 | `POST` | `/api/save_count` | None | Saved record ID, time, counts, and total | Save exactly one current live-count snapshot to SQLite |
@@ -359,7 +368,8 @@ Connection URL: `ws://<host-ip>:8090/ws` (use `wss://` when the dashboard is ser
 |---|---|---|---|
 | Server → client | `snapshot` | Immediately after connection and after every `/class_counts` update | Complete live state object with `type: "snapshot"` |
 | Server → client | `status` | Detection or tracking state changes | Complete live state object with `type: "status"` |
-| Client → server | `ping` | Dashboard sends every 20 seconds | Plain text `ping`; keeps the socket open |
+| Client → server | `ping` | Dashboard sends every 4 seconds | Plain text `ping`; keeps the socket open and checks freshness |
+| Server → client | `pong` | In response to every client ping | JSON heartbeat with `type: "pong"` and `server_time` |
 
 Example server message:
 

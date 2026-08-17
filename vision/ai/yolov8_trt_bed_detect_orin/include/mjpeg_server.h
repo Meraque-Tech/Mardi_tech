@@ -11,14 +11,19 @@
 #include <condition_variable>
 #include <vector>
 #include <atomic>
+#include <cerrno>
 #include <cstring>
+#include <iostream>
+#include <memory>
+#include <string>
 
 // Minimal MJPEG-over-HTTP streamer: connect a browser to
 // http://<host>:<port>/ to view frames pushed via push_frame().
 //
-// push_frame() never blocks the caller on network I/O: it only swaps in the
-// latest frame and wakes a dedicated worker thread that does the JPEG encode
-// and broadcast. If no clients are connected, encoding is skipped entirely.
+// Camera capture and JPEG encoding never perform client network I/O. Each
+// client has an independent sender thread which always takes the newest JPEG;
+// a slow or half-open remote connection can therefore neither stall inference
+// nor prevent healthy clients from receiving frames.
 class MjpegServer {
 public:
     bool start(int port) {
@@ -33,8 +38,12 @@ public:
         addr.sin_addr.s_addr = INADDR_ANY;
         addr.sin_port = htons(port);
 
-        if (bind(listen_fd_, (sockaddr *)&addr, sizeof(addr)) < 0) return false;
-        if (listen(listen_fd_, 5) < 0) return false;
+        if (bind(listen_fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0 ||
+            listen(listen_fd_, 16) < 0) {
+            close(listen_fd_);
+            listen_fd_ = -1;
+            return false;
+        }
 
         running_ = true;
         accept_thread_ = std::thread(&MjpegServer::accept_loop, this);
@@ -42,42 +51,68 @@ public:
         return true;
     }
 
-    // Cheap: just stashes a reference frame and notifies the worker.
-    // Never touches the network, never blocks on encode.
+    // Cheap: only keep the most recent camera frame. If encoding falls behind,
+    // intermediate frames are intentionally dropped rather than queued.
     void push_frame(const cv::Mat &frame) {
+        if (active_clients_.load() == 0) return;
         {
-            std::lock_guard<std::mutex> lock(clients_mutex_);
-            if (clients_.empty()) return;  // nobody watching, skip the copy entirely
+            std::lock_guard<std::mutex> lock(frame_mutex_);
+            frame.copyTo(latest_frame_);
+            has_new_frame_ = true;
         }
-        std::lock_guard<std::mutex> lock(frame_mutex_);
-        frame.copyTo(latest_frame_);
-        has_new_frame_ = true;
         frame_cv_.notify_one();
     }
 
     void stop() {
-        running_ = false;
+        if (!running_.exchange(false)) return;
+
         frame_cv_.notify_all();
+        encoded_cv_.notify_all();
         if (listen_fd_ >= 0) {
             shutdown(listen_fd_, SHUT_RDWR);
             close(listen_fd_);
+            listen_fd_ = -1;
         }
         if (accept_thread_.joinable()) accept_thread_.join();
+
+        // Wake a client currently blocked in send() before joining it.
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
+            for (const auto &client : clients_) shutdown(client->fd, SHUT_RDWR);
+        }
+
         if (worker_thread_.joinable()) worker_thread_.join();
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        for (int fd : clients_) close(fd);
-        clients_.clear();
+
+        std::vector<std::shared_ptr<Client>> clients;
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
+            clients.swap(clients_);
+        }
+        for (const auto &client : clients) {
+            if (client->thread.joinable()) client->thread.join();
+        }
     }
 
     ~MjpegServer() { stop(); }
 
 private:
+    struct Client {
+        int fd = -1;
+        std::string peer;
+        std::atomic<bool> active{true};
+        std::thread thread;
+        uint64_t frames_sent = 0;
+    };
+
     static bool send_all(int fd, const char *data, size_t len) {
         size_t sent = 0;
         while (sent < len) {
-            ssize_t n = send(fd, data + sent, len - sent, MSG_NOSIGNAL);
-            if (n <= 0) return false;
-            sent += n;
+            const ssize_t n = send(fd, data + sent, len - sent, MSG_NOSIGNAL);
+            if (n <= 0) {
+                if (n == 0) errno = EPIPE;
+                return false;
+            }
+            sent += static_cast<size_t>(n);
         }
         return true;
     }
@@ -90,73 +125,176 @@ private:
                 std::unique_lock<std::mutex> lock(frame_mutex_);
                 frame_cv_.wait(lock, [this] { return has_new_frame_ || !running_; });
                 if (!running_) break;
-                frame = latest_frame_;  // shares buffer; we only read it below
+                latest_frame_.copyTo(frame);
                 has_new_frame_ = false;
             }
 
-            {
-                std::lock_guard<std::mutex> lock(clients_mutex_);
-                if (clients_.empty()) continue;
+            if (active_clients_.load() == 0) continue;
+            if (!cv::imencode(".jpg", frame, jpg, {cv::IMWRITE_JPEG_QUALITY, 80})) {
+                std::cerr << "MJPEG frame encoding failed" << std::endl;
+                continue;
             }
 
-            cv::imencode(".jpg", frame, jpg, {cv::IMWRITE_JPEG_QUALITY, 80});
+            {
+                std::lock_guard<std::mutex> lock(encoded_mutex_);
+                latest_jpg_ = jpg;
+                ++encoded_sequence_;
+            }
+            encoded_cv_.notify_all();
+        }
+    }
 
-            std::string header =
+    void client_loop(const std::shared_ptr<Client> &client) {
+        static const char *response =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
+            "Cache-Control: no-store, no-cache, must-revalidate\r\n"
+            "Pragma: no-cache\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "X-Content-Type-Options: nosniff\r\n"
+            "Connection: close\r\n\r\n";
+
+        if (!send_all(client->fd, response, std::strlen(response))) {
+            finish_client(client, "response send failed");
+            return;
+        }
+
+        uint64_t seen_sequence = 0;
+        while (running_ && client->active.load()) {
+            std::vector<uchar> jpg;
+            uint64_t sequence = 0;
+            {
+                std::unique_lock<std::mutex> lock(encoded_mutex_);
+                encoded_cv_.wait(lock, [this, seen_sequence] {
+                    return encoded_sequence_ != seen_sequence || !running_;
+                });
+                if (!running_) break;
+                sequence = encoded_sequence_;
+                jpg = latest_jpg_;
+            }
+            if (jpg.empty() || sequence == seen_sequence) continue;
+            seen_sequence = sequence;
+
+            const std::string header =
                 "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " +
-                std::to_string(jpg.size()) + "\r\n\r\n";
+                std::to_string(jpg.size()) + "\r\nX-Frame-Sequence: " +
+                std::to_string(sequence) + "\r\n\r\n";
 
+            if (!send_all(client->fd, header.data(), header.size()) ||
+                !send_all(client->fd, reinterpret_cast<const char *>(jpg.data()), jpg.size()) ||
+                !send_all(client->fd, "\r\n", 2)) {
+                finish_client(client, "frame send failed");
+                return;
+            }
+            ++client->frames_sent;
+        }
+
+        errno = 0;
+        finish_client(client, running_ ? "client closed" : "server stopping");
+    }
+
+    void finish_client(const std::shared_ptr<Client> &client, const char *reason) {
+        if (!client->active.exchange(false)) return;
+        const int saved_errno = errno;
+        shutdown(client->fd, SHUT_RDWR);
+        close(client->fd);
+        active_clients_.fetch_sub(1);
+        std::cerr << "MJPEG client disconnected: " << client->peer
+                  << " frames=" << client->frames_sent
+                  << " reason=" << reason;
+        if (saved_errno != 0) std::cerr << " error=" << std::strerror(saved_errno);
+        std::cerr << std::endl;
+    }
+
+    void reap_inactive_clients() {
+        std::vector<std::shared_ptr<Client>> inactive;
+        {
             std::lock_guard<std::mutex> lock(clients_mutex_);
-            for (auto it = clients_.begin(); it != clients_.end();) {
-                int fd = *it;
-                bool ok = send_all(fd, header.data(), header.size()) &&
-                          send_all(fd, reinterpret_cast<const char *>(jpg.data()), jpg.size()) &&
-                          send_all(fd, "\r\n", 2);
-                if (!ok) {
-                    close(fd);
+            auto it = clients_.begin();
+            while (it != clients_.end()) {
+                if (!(*it)->active.load()) {
+                    inactive.push_back(*it);
                     it = clients_.erase(it);
                 } else {
                     ++it;
                 }
             }
         }
+        for (const auto &client : inactive) {
+            if (client->thread.joinable()) client->thread.join();
+        }
     }
 
     void accept_loop() {
         while (running_) {
-            int client_fd = accept(listen_fd_, nullptr, nullptr);
+            sockaddr_in peer_addr{};
+            socklen_t peer_len = sizeof(peer_addr);
+            const int client_fd = accept(
+                listen_fd_, reinterpret_cast<sockaddr *>(&peer_addr), &peer_len);
             if (client_fd < 0) {
                 if (!running_) break;
                 continue;
             }
 
-            // A slow/stalled client should time out instead of blocking the
-            // worker thread's send() indefinitely.
             timeval tv{};
             tv.tv_sec = 1;
-            tv.tv_usec = 0;
             setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-            static const char *response =
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
-                "Cache-Control: no-cache\r\n"
-                "Connection: close\r\n\r\n";
-            send_all(client_fd, response, strlen(response));
+            int keepalive = 1;
+            setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+#ifdef TCP_KEEPIDLE
+            int keepidle = 5;
+            setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+#endif
+#ifdef TCP_KEEPINTVL
+            int keepintvl = 2;
+            setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+#endif
+#ifdef TCP_KEEPCNT
+            int keepcnt = 3;
+            setsockopt(client_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+#endif
+#ifdef TCP_USER_TIMEOUT
+            unsigned int user_timeout_ms = 5000;
+            setsockopt(
+                client_fd, IPPROTO_TCP, TCP_USER_TIMEOUT,
+                &user_timeout_ms, sizeof(user_timeout_ms));
+#endif
 
-            std::lock_guard<std::mutex> lock(clients_mutex_);
-            clients_.push_back(client_fd);
+            char address[INET_ADDRSTRLEN] = "unknown";
+            inet_ntop(AF_INET, &peer_addr.sin_addr, address, sizeof(address));
+            auto client = std::make_shared<Client>();
+            client->fd = client_fd;
+            client->peer = std::string(address) + ":" +
+                           std::to_string(ntohs(peer_addr.sin_port));
+            active_clients_.fetch_add(1);
+            client->thread = std::thread(&MjpegServer::client_loop, this, client);
+            {
+                std::lock_guard<std::mutex> lock(clients_mutex_);
+                clients_.push_back(client);
+            }
+            std::cout << "MJPEG client connected: " << client->peer << std::endl;
+            reap_inactive_clients();
         }
+        reap_inactive_clients();
     }
 
     int listen_fd_ = -1;
     std::atomic<bool> running_{false};
+    std::atomic<size_t> active_clients_{0};
     std::thread accept_thread_;
     std::thread worker_thread_;
-    std::vector<int> clients_;
+
+    std::vector<std::shared_ptr<Client>> clients_;
     std::mutex clients_mutex_;
 
     cv::Mat latest_frame_;
     bool has_new_frame_ = false;
     std::mutex frame_mutex_;
     std::condition_variable frame_cv_;
+
+    std::vector<uchar> latest_jpg_;
+    uint64_t encoded_sequence_ = 0;
+    std::mutex encoded_mutex_;
+    std::condition_variable encoded_cv_;
 };

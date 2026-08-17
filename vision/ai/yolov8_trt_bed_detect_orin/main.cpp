@@ -12,7 +12,9 @@
 #include <signal.h>
 #include <stdio.h>
 #include <atomic>
+#include <chrono>
 #include <map>
+#include <thread>
 #include "simple_tracker.h"
 
 // Global state
@@ -248,6 +250,13 @@ int main(int argc, char *argv[]) {
     camera_index_msg.data = opened_camera_index;
     camera_index_pub->publish(camera_index_msg);
 
+    auto configure_camera = [&p](cv::VideoCapture &camera) {
+        camera.set(cv::CAP_PROP_FRAME_WIDTH,  p.camera_width);
+        camera.set(cv::CAP_PROP_FRAME_HEIGHT, p.camera_height);
+    };
+    auto last_good_frame_at = std::chrono::steady_clock::now();
+    auto next_camera_retry_at = last_good_frame_at;
+
     MjpegServer mjpeg_server;
     if (!mjpeg_server.start(p.mjpeg_port)) {
         std::cerr << "Failed to start MJPEG server on port " << p.mjpeg_port << std::endl;
@@ -281,8 +290,46 @@ int main(int argc, char *argv[]) {
         // Process web/ROS controls before starting the next inference cycle.
         rclcpp::spin_some(node);
 
+        if (!cap.isOpened()) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= next_camera_retry_at) {
+                cap = open_camera(p.camera_index, opened_camera_index);
+                if (cap.isOpened()) {
+                    configure_camera(cap);
+                    camera_index_msg.data = opened_camera_index;
+                    camera_index_pub->publish(camera_index_msg);
+                    tracker_reset_requested = true;
+                    last_good_frame_at = now;
+                    RCLCPP_INFO(
+                        node->get_logger(),
+                        "camera stream recovered on /dev/video%d", opened_camera_index);
+                } else {
+                    next_camera_retry_at = now + std::chrono::seconds(1);
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+
         cap >> frame;
-        if (frame.empty()) continue;
+        const auto frame_received_at = std::chrono::steady_clock::now();
+        if (frame.empty()) {
+            if (frame_received_at - last_good_frame_at >= std::chrono::seconds(2)) {
+                RCLCPP_WARN(
+                    node->get_logger(),
+                    "camera produced no frames for 2 seconds; reopening /dev/video%d",
+                    opened_camera_index);
+                cap.release();
+                opened_camera_index = -1;
+                camera_index_msg.data = -1;
+                camera_index_pub->publish(camera_index_msg);
+                next_camera_retry_at = frame_received_at + std::chrono::milliseconds(250);
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            continue;
+        }
+        last_good_frame_at = frame_received_at;
 
         const bool is_track = node->get_parameter("is_track").as_bool();
         if (is_track != last_tracking_enabled) {
