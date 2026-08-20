@@ -319,6 +319,25 @@ def _report_rows():
     return [dict(row) for row in rows]
 
 
+def _geo_rows():
+    """Every saved-count row with a GNSS fix, in capture order -- the
+    trajectory + detection-density dataset for the report's heatmap. Unlike
+    _report_rows(), this isn't limited to rows with a saved frame: a
+    "Save current count" click also records a position, and the trajectory
+    should reflect the robot's full path, not just where a photo was taken.
+    """
+    with db_lock, _db_connect() as db:
+        rows = db.execute(
+            """
+            SELECT id, recorded_at, counts_json, total, latitude, longitude
+            FROM count_history
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+            ORDER BY id ASC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def broadcast(payload: str):
     with ws_lock:
         dead = []
@@ -1655,6 +1674,167 @@ def _class_totals(rows):
     return ordered, sum(ordered.values())
 
 
+# Warm low->high intensity ramp (5 stops) for the heatmap glow color -- kept
+# separate from the class-color palette below since intensity here means
+# "how many objects at this point", not "which class".
+_HEATMAP_RAMP = ["#2b6cb0", "#38a169", "#d69e2e", "#dd6b20", "#e53e3e"]
+
+
+def _heatmap_ramp_color(t):
+    # type: (float) -> str
+    """t in [0, 1] -> hex color, interpolated across _HEATMAP_RAMP."""
+    t = max(0.0, min(1.0, t))
+    scaled = t * (len(_HEATMAP_RAMP) - 1)
+    i = min(int(scaled), len(_HEATMAP_RAMP) - 2)
+    frac = scaled - i
+
+    def _hex_to_rgb(h):
+        h = h.lstrip("#")
+        return tuple(int(h[j:j + 2], 16) for j in (0, 2, 4))
+
+    r1, g1, b1 = _hex_to_rgb(_HEATMAP_RAMP[i])
+    r2, g2, b2 = _hex_to_rgb(_HEATMAP_RAMP[i + 1])
+    r = round(r1 + (r2 - r1) * frac)
+    g = round(g1 + (g2 - g1) * frac)
+    b = round(b1 + (b2 - b1) * frac)
+    return "#%02x%02x%02x" % (r, g, b)
+
+
+def _project_local_meters(rows):
+    """Equirectangular projection of each row's (latitude, longitude) onto
+    flat local meters, centered on the centroid of the points. Good enough
+    for survey-plot-scale trajectories (tens to low hundreds of meters);
+    avoids needing the ESKF's ENU odometry (not persisted to count_history)
+    just to draw a static report after the fact.
+    """
+    lats = [row["latitude"] for row in rows]
+    lons = [row["longitude"] for row in rows]
+    center_lat = sum(lats) / len(lats)
+    center_lon = sum(lons) / len(lons)
+    meters_per_deg_lat = 111_320.0
+    meters_per_deg_lon = 111_320.0 * math.cos(math.radians(center_lat))
+
+    points = []
+    for row in rows:
+        x = (row["longitude"] - center_lon) * meters_per_deg_lon
+        y = (row["latitude"] - center_lat) * meters_per_deg_lat
+        points.append((x, y))
+    return points
+
+
+def _heatmap_section(geo_rows, class_labels=None):
+    """Renders an inline-SVG heatmap of detection density along the robot's
+    GNSS trajectory: a faint polyline traces the path actually driven, and a
+    glow is drawn at each saved point sized/colored by how many objects were
+    detected there -- so dense detection areas stand out visually against the
+    route, without needing any external charting library in the exported
+    HTML file.
+    """
+    class_labels = class_labels or {}
+    if len(geo_rows) < 2:
+        return (
+            "<h2>Detection heatmap <span class='count neutral'>(trajectory)</span></h2>"
+            "<p class='desc'>Detection density plotted against the GNSS trajectory.</p>"
+            "<p class='ok'>Not enough GNSS-tagged saves to plot a trajectory yet "
+            "(need at least 2).</p>"
+        )
+
+    points = _project_local_meters(geo_rows)
+    totals = [row["total"] for row in geo_rows]
+    max_total = max(totals) or 1
+
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span = max(max_x - min_x, max_y - min_y, 1.0)  # avoid divide-by-zero on a near-stationary run
+
+    width, height, pad = 880, 560, 40
+    plot_w, plot_h = width - 2 * pad, height - 2 * pad
+    scale = min(plot_w, plot_h) / span
+    mid_x, mid_y = (min_x + max_x) / 2, (min_y + max_y) / 2
+
+    def to_svg(x, y):
+        # SVG y grows downward; flip so north (+lat) draws upward.
+        return (
+            width / 2 + (x - mid_x) * scale,
+            height / 2 + (y - mid_y) * scale,
+        )
+
+    path_d_parts = []
+    blobs = []
+    defs = []
+    for i, (row, (x, y)) in enumerate(zip(geo_rows, points)):
+        sx, sy = to_svg(x, y)
+        path_d_parts.append("%s%.1f,%.1f" % ("M" if i == 0 else "L", sx, sy))
+
+        intensity = row["total"] / max_total
+        radius = 10 + 26 * intensity
+        color = _heatmap_ramp_color(intensity)
+        gradient_id = "heat-glow-%d" % row["id"]
+        defs.append(
+            "<radialGradient id='%s' cx='50%%' cy='50%%' r='50%%'>"
+            "<stop offset='0%%' stop-color='%s' stop-opacity='0.85'/>"
+            "<stop offset='100%%' stop-color='%s' stop-opacity='0'/>"
+            "</radialGradient>" % (gradient_id, color, color)
+        )
+
+        try:
+            counts = json.loads(row["counts_json"])
+        except (TypeError, ValueError):
+            counts = {}
+        breakdown = ", ".join(
+            "%s: %s" % (class_labels.get(str(cid), "Class %s" % cid), n)
+            for cid, n in sorted(counts.items())
+        ) or "no detections"
+        title = "%s &#10;%d objects (%s) &#10;%.6f, %.6f" % (
+            row["recorded_at"], row["total"], breakdown, row["latitude"], row["longitude"],
+        )
+        blobs.append(
+            "<circle cx='%.1f' cy='%.1f' r='%.1f' fill='url(#%s)'>"
+            "<title>%s</title></circle>"
+            "<circle cx='%.1f' cy='%.1f' r='2.4' fill='%s' stroke='#fff' stroke-width='0.8'/>"
+            % (sx, sy, radius, gradient_id, title, sx, sy, color)
+        )
+
+    legend_stops = "".join(
+        "<stop offset='%d%%' stop-color='%s'/>" % (round(i / (len(_HEATMAP_RAMP) - 1) * 100), c)
+        for i, c in enumerate(_HEATMAP_RAMP)
+    )
+
+    svg = (
+        "<svg viewBox='0 0 %d %d' width='100%%' height='auto' role='img' "
+        "aria-label='Detection heatmap along GNSS trajectory' "
+        "style='background:#0b0e14;border-radius:10px'>"
+        "<defs>%s"
+        "<linearGradient id='heat-legend' x1='0' y1='0' x2='1' y2='0'>%s</linearGradient>"
+        "</defs>"
+        "<path d='%s' fill='none' stroke='#4a5568' stroke-width='2' stroke-dasharray='4 4' opacity='0.7'/>"
+        "%s"
+        "<rect x='%d' y='%d' width='160' height='10' fill='url(#heat-legend)' rx='3'/>"
+        "<text x='%d' y='%d' fill='#cbd5e0' font-size='10'>Low</text>"
+        "<text x='%d' y='%d' fill='#cbd5e0' font-size='10' text-anchor='end'>High</text>"
+        "<text x='%d' y='%d' fill='#a0aec0' font-size='10'>objects detected per saved point</text>"
+        "</svg>"
+        % (
+            width, height, "".join(defs), legend_stops,
+            "".join(path_d_parts), "".join(blobs),
+            pad, height - pad + 14,
+            pad, height - pad + 4,
+            pad + 160, height - pad + 4,
+            pad, height - pad + 34,
+        )
+    )
+
+    return (
+        "<h2>Detection heatmap <span class='count neutral'>(trajectory)</span></h2>"
+        "<p class='desc'>Detection density plotted against the GNSS trajectory -- "
+        "%d saved points, brighter/larger glow means more objects detected at that "
+        "location. Dashed line is the path actually driven between saves.</p>"
+        "%s" % (len(geo_rows), svg)
+    )
+
+
 def _build_qa_report(rows):
     """Flag data-quality issues across all saved-frame rows (oldest first).
 
@@ -1698,8 +1878,9 @@ def _build_qa_report(rows):
     }
 
 
-def _report_html(rows, flags, class_labels=None):
+def _report_html(rows, flags, class_labels=None, geo_rows=None):
     class_labels = class_labels or {}
+    geo_rows = geo_rows if geo_rows is not None else []
 
     def esc(value):
         return (
