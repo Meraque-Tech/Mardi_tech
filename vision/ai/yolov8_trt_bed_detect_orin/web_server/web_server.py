@@ -1674,30 +1674,36 @@ def _class_totals(rows):
     return ordered, sum(ordered.values())
 
 
-# Warm low->high intensity ramp (5 stops) for the heatmap glow color -- kept
-# separate from the class-color palette below since intensity here means
-# "how many objects at this point", not "which class".
-_HEATMAP_RAMP = ["#2b6cb0", "#38a169", "#d69e2e", "#dd6b20", "#e53e3e"]
+# Categorical palette for per-class heatmap coloring -- deliberately distinct
+# hues (not the dashboard's red/gray brand palette) since the whole point
+# here is to tell classes apart at a glance. Cycles if there are more classes
+# than colors; assignment is by sorted class-id order so it's stable across
+# report regenerations for the same class set.
+_HEATMAP_CLASS_COLORS = [
+    "#4299e1",  # blue
+    "#f56565",  # red
+    "#48bb78",  # green
+    "#ecc94b",  # yellow
+    "#9f7aea",  # purple
+    "#ed8936",  # orange
+    "#38b2ac",  # teal
+    "#ed64a6",  # pink
+]
 
 
-def _heatmap_ramp_color(t):
-    # type: (float) -> str
-    """t in [0, 1] -> hex color, interpolated across _HEATMAP_RAMP."""
-    t = max(0.0, min(1.0, t))
-    scaled = t * (len(_HEATMAP_RAMP) - 1)
-    i = min(int(scaled), len(_HEATMAP_RAMP) - 2)
-    frac = scaled - i
+def _class_sort_key(class_id):
+    try:
+        return (0, int(class_id))
+    except (TypeError, ValueError):
+        return (1, str(class_id))
 
-    def _hex_to_rgb(h):
-        h = h.lstrip("#")
-        return tuple(int(h[j:j + 2], 16) for j in (0, 2, 4))
 
-    r1, g1, b1 = _hex_to_rgb(_HEATMAP_RAMP[i])
-    r2, g2, b2 = _hex_to_rgb(_HEATMAP_RAMP[i + 1])
-    r = round(r1 + (r2 - r1) * frac)
-    g = round(g1 + (g2 - g1) * frac)
-    b = round(b1 + (b2 - b1) * frac)
-    return "#%02x%02x%02x" % (r, g, b)
+def _class_color_map(class_ids):
+    ordered = sorted(class_ids, key=_class_sort_key)
+    return {
+        class_id: _HEATMAP_CLASS_COLORS[i % len(_HEATMAP_CLASS_COLORS)]
+        for i, class_id in enumerate(ordered)
+    }
 
 
 def _project_local_meters(rows):
@@ -1723,12 +1729,14 @@ def _project_local_meters(rows):
 
 
 def _heatmap_section(geo_rows, class_labels=None):
-    """Renders an inline-SVG heatmap of detection density along the robot's
-    GNSS trajectory: a faint polyline traces the path actually driven, and a
-    glow is drawn at each saved point sized/colored by how many objects were
-    detected there -- so dense detection areas stand out visually against the
-    route, without needing any external charting library in the exported
-    HTML file.
+    """Renders an interactive, per-class inline-SVG heatmap of detections
+    along the robot's GNSS trajectory: a polyline traces the path actually
+    driven, and a glow is drawn at each saved point, colored by whichever
+    class was most frequent there (dominant-class coloring) and sized by the
+    point's total detection count. Class checkboxes let the viewer isolate
+    one class at a time; drag to pan, wheel/buttons to zoom, all via plain
+    inline SVG + JS so the report stays a single self-contained HTML file
+    with no charting library or network dependency.
     """
     class_labels = class_labels or {}
     if len(geo_rows) < 2:
@@ -1739,9 +1747,30 @@ def _heatmap_section(geo_rows, class_labels=None):
             "(need at least 2).</p>"
         )
 
+    def esc(value):
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def class_name(class_id):
+        return class_labels.get(str(class_id), "Class %s" % class_id)
+
+    # Parse each row's per-class counts once, and collect the full set of
+    # class ids actually present so colors/legend/toggles reflect whatever
+    # the user has currently defined -- never a hardcoded class list.
+    parsed_counts = []
+    all_class_ids = set()
+    for row in geo_rows:
+        try:
+            counts = {str(k): int(v) for k, v in json.loads(row["counts_json"]).items()}
+        except (TypeError, ValueError, AttributeError):
+            counts = {}
+        parsed_counts.append(counts)
+        all_class_ids.update(counts.keys())
+
+    color_map = _class_color_map(all_class_ids)
+    sorted_class_ids = sorted(all_class_ids, key=_class_sort_key)
+
     points = _project_local_meters(geo_rows)
-    totals = [row["total"] for row in geo_rows]
-    max_total = max(totals) or 1
+    max_total = max((row["total"] for row in geo_rows), default=0) or 1
 
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
@@ -1749,7 +1778,7 @@ def _heatmap_section(geo_rows, class_labels=None):
     min_y, max_y = min(ys), max(ys)
     span = max(max_x - min_x, max_y - min_y, 1.0)  # avoid divide-by-zero on a near-stationary run
 
-    width, height, pad = 880, 560, 40
+    width, height, pad = 900, 580, 44
     plot_w, plot_h = width - 2 * pad, height - 2 * pad
     scale = min(plot_w, plot_h) / span
     mid_x, mid_y = (min_x + max_x) / 2, (min_y + max_y) / 2
@@ -1761,16 +1790,45 @@ def _heatmap_section(geo_rows, class_labels=None):
             height / 2 + (y - mid_y) * scale,
         )
 
+    # Faint metric grid every ~20m (in screen px) so the map reads as a
+    # measured plot rather than a bare scatter -- purely decorative, no
+    # coordinate labels needed since the legend already gives scale via
+    # blob size and the tooltip gives exact lat/lon per point.
+    grid_step = 20 * scale
+    grid_lines = []
+    if grid_step >= 12:  # skip an unreadably dense grid on very large spans
+        x_cursor = width / 2
+        while x_cursor > 0:
+            grid_lines.append("<line x1='%.1f' y1='0' x2='%.1f' y2='%d'/>" % (x_cursor, x_cursor, height))
+            x_cursor -= grid_step
+        x_cursor = width / 2 + grid_step
+        while x_cursor < width:
+            grid_lines.append("<line x1='%.1f' y1='0' x2='%.1f' y2='%d'/>" % (x_cursor, x_cursor, height))
+            x_cursor += grid_step
+        y_cursor = height / 2
+        while y_cursor > 0:
+            grid_lines.append("<line x1='0' y1='%.1f' x2='%d' y2='%.1f'/>" % (y_cursor, width, y_cursor))
+            y_cursor -= grid_step
+        y_cursor = height / 2 + grid_step
+        while y_cursor < height:
+            grid_lines.append("<line x1='0' y1='%.1f' x2='%d' y2='%.1f'/>" % (y_cursor, width, y_cursor))
+            y_cursor += grid_step
+
     path_d_parts = []
     blobs = []
     defs = []
-    for i, (row, (x, y)) in enumerate(zip(geo_rows, points)):
+    for i, (row, counts, (x, y)) in enumerate(zip(geo_rows, parsed_counts, points)):
         sx, sy = to_svg(x, y)
         path_d_parts.append("%s%.1f,%.1f" % ("M" if i == 0 else "L", sx, sy))
 
+        if counts:
+            dominant_class = max(counts, key=lambda cid: (counts[cid], cid))
+        else:
+            dominant_class = None
+        color = color_map.get(dominant_class, "#718096")  # gray for no-detection points
+
         intensity = row["total"] / max_total
-        radius = 10 + 26 * intensity
-        color = _heatmap_ramp_color(intensity)
+        radius = 9 + 24 * intensity
         gradient_id = "heat-glow-%d" % row["id"]
         defs.append(
             "<radialGradient id='%s' cx='50%%' cy='50%%' r='50%%'>"
@@ -1779,59 +1837,74 @@ def _heatmap_section(geo_rows, class_labels=None):
             "</radialGradient>" % (gradient_id, color, color)
         )
 
-        try:
-            counts = json.loads(row["counts_json"])
-        except (TypeError, ValueError):
-            counts = {}
         breakdown = ", ".join(
-            "%s: %s" % (class_labels.get(str(cid), "Class %s" % cid), n)
-            for cid, n in sorted(counts.items())
+            "%s: %s" % (class_name(cid), n) for cid, n in sorted(counts.items(), key=lambda kv: _class_sort_key(kv[0]))
         ) or "no detections"
-        title = "%s &#10;%d objects (%s) &#10;%.6f, %.6f" % (
+        title = "%s&#10;%d objects (%s)&#10;%.6f, %.6f" % (
             row["recorded_at"], row["total"], breakdown, row["latitude"], row["longitude"],
         )
+        class_attr = esc(dominant_class) if dominant_class is not None else ""
         blobs.append(
-            "<circle cx='%.1f' cy='%.1f' r='%.1f' fill='url(#%s)'>"
-            "<title>%s</title></circle>"
-            "<circle cx='%.1f' cy='%.1f' r='2.4' fill='%s' stroke='#fff' stroke-width='0.8'/>"
-            % (sx, sy, radius, gradient_id, title, sx, sy, color)
+            "<g class='heat-point' data-class='%s'>"
+            "<circle cx='%.1f' cy='%.1f' r='%.1f' fill='url(#%s)'><title>%s</title></circle>"
+            "<circle cx='%.1f' cy='%.1f' r='2.6' fill='%s' stroke='#fff' stroke-width='0.8'><title>%s</title></circle>"
+            "</g>"
+            % (class_attr, sx, sy, radius, gradient_id, esc(title), sx, sy, color, esc(title))
         )
 
-    legend_stops = "".join(
-        "<stop offset='%d%%' stop-color='%s'/>" % (round(i / (len(_HEATMAP_RAMP) - 1) * 100), c)
-        for i, c in enumerate(_HEATMAP_RAMP)
+    legend_items = "".join(
+        "<label class='heat-legend-item'>"
+        "<input type='checkbox' class='heat-class-toggle' data-class='%s' checked>"
+        "<span class='heat-swatch' style='background:%s'></span>"
+        "<span>%s</span></label>"
+        % (esc(cid), color_map[cid], esc(class_name(cid)))
+        for cid in sorted_class_ids
     )
+    if not legend_items:
+        legend_items = "<span class='heat-legend-empty'>No classes detected yet.</span>"
+
+    container_id = "heatmap-%x" % (hash((width, height, len(geo_rows))) & 0xFFFFFF)
 
     svg = (
-        "<svg viewBox='0 0 %d %d' width='100%%' height='auto' role='img' "
-        "aria-label='Detection heatmap along GNSS trajectory' "
-        "style='background:#0b0e14;border-radius:10px'>"
-        "<defs>%s"
-        "<linearGradient id='heat-legend' x1='0' y1='0' x2='1' y2='0'>%s</linearGradient>"
-        "</defs>"
-        "<path d='%s' fill='none' stroke='#4a5568' stroke-width='2' stroke-dasharray='4 4' opacity='0.7'/>"
+        "<svg id='%s-svg' viewBox='0 0 %d %d' width='100%%' height='auto' role='img' "
+        "aria-label='Per-class detection heatmap along GNSS trajectory' "
+        "class='heatmap-svg'>"
+        "<defs>%s</defs>"
+        "<rect x='0' y='0' width='%d' height='%d' class='heatmap-bg'/>"
+        "<g class='heatmap-grid'>%s</g>"
+        "<g id='%s-viewport'>"
+        "<path d='%s' fill='none' class='heatmap-trail'/>"
         "%s"
-        "<rect x='%d' y='%d' width='160' height='10' fill='url(#heat-legend)' rx='3'/>"
-        "<text x='%d' y='%d' fill='#cbd5e0' font-size='10'>Low</text>"
-        "<text x='%d' y='%d' fill='#cbd5e0' font-size='10' text-anchor='end'>High</text>"
-        "<text x='%d' y='%d' fill='#a0aec0' font-size='10'>objects detected per saved point</text>"
+        "</g>"
         "</svg>"
         % (
-            width, height, "".join(defs), legend_stops,
-            "".join(path_d_parts), "".join(blobs),
-            pad, height - pad + 14,
-            pad, height - pad + 4,
-            pad + 160, height - pad + 4,
-            pad, height - pad + 34,
+            container_id, width, height, "".join(defs),
+            width, height, "".join(grid_lines),
+            container_id, "".join(path_d_parts), "".join(blobs),
         )
+    )
+
+    controls = (
+        "<div class='heatmap-toolbar'>"
+        "<div class='heat-legend'>%s</div>"
+        "<div class='heat-zoom-controls'>"
+        "<button type='button' class='heat-btn' onclick=\"heatmapZoom('%s',1.3)\">+</button>"
+        "<button type='button' class='heat-btn' onclick=\"heatmapZoom('%s',1/1.3)\">&minus;</button>"
+        "<button type='button' class='heat-btn' onclick=\"heatmapReset('%s')\">Reset view</button>"
+        "</div>"
+        "</div>"
+        % (legend_items, container_id, container_id, container_id)
     )
 
     return (
         "<h2>Detection heatmap <span class='count neutral'>(trajectory)</span></h2>"
-        "<p class='desc'>Detection density plotted against the GNSS trajectory -- "
-        "%d saved points, brighter/larger glow means more objects detected at that "
-        "location. Dashed line is the path actually driven between saves.</p>"
-        "%s" % (len(geo_rows), svg)
+        "<p class='desc'>%d saved points along the GNSS trajectory, colored by the "
+        "most frequent class detected at each point and sized by total objects "
+        "there. Drag to pan, scroll or use the buttons to zoom, and toggle classes "
+        "below to isolate one at a time.</p>"
+        "%s"
+        "<div class='heatmap-wrap' id='%s-wrap'>%s</div>"
+        % (len(geo_rows), controls, container_id, svg)
     )
 
 
@@ -2009,6 +2082,23 @@ th,td{text-align:left;padding:5px 8px;border-bottom:1px solid #eee}
 th{color:#666;font-weight:600}
 .run-header{background:#fff6e5;font-weight:600;color:#8a5a00}
 .grand-total td{border-top:2px solid #ccc;font-weight:700}
+.heatmap-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:10px}
+.heat-legend{display:flex;flex-wrap:wrap;gap:6px 16px}
+.heat-legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:#333;cursor:pointer;user-select:none}
+.heat-legend-item input{accent-color:#3a5fc9;cursor:pointer}
+.heat-legend-empty{font-size:12.5px;color:#888}
+.heat-swatch{width:11px;height:11px;border-radius:50%%;display:inline-block;box-shadow:0 0 0 1px rgba(0,0,0,.15)}
+.heat-zoom-controls{display:flex;gap:6px}
+.heat-btn{border:1px solid #ccc;background:#fff;color:#333;border-radius:6px;padding:4px 11px;font-size:13px;cursor:pointer;line-height:1.4}
+.heat-btn:hover{background:#f2f2f2;border-color:#aaa}
+.heatmap-wrap{border-radius:10px;overflow:hidden;box-shadow:0 1px 0 rgba(0,0,0,.04)}
+.heatmap-svg{display:block;touch-action:none;cursor:grab;background:#0b0e14}
+.heatmap-svg.grabbing{cursor:grabbing}
+.heatmap-bg{fill:#0b0e14}
+.heatmap-grid line{stroke:#1c212c;stroke-width:1}
+.heatmap-trail{stroke:#4a5568;stroke-width:2;stroke-dasharray:4 4;opacity:.7}
+.heat-point{transition:opacity .15s ease}
+.heat-point.heat-dim{opacity:.08}
 </style></head>
 <body>
 <h1>Data Quality Report</h1>
@@ -2027,6 +2117,75 @@ th{color:#666;font-weight:600}
 %s
 %s
 %s
+<script>
+(function(){
+  // Per-heatmap pan/zoom state, keyed by container id -- a report can only
+  // have one heatmap today, but this stays correct if that ever changes.
+  var heatState={};
+  function state(id){
+    if(!heatState[id])heatState[id]={x:0,y:0,scale:1};
+    return heatState[id];
+  }
+  function apply(id){
+    var s=state(id),vp=document.getElementById(id+'-viewport');
+    if(vp)vp.setAttribute('transform','translate('+s.x+','+s.y+') scale('+s.scale+')');
+  }
+  window.heatmapZoom=function(id,factor){
+    var s=state(id);
+    s.scale=Math.min(12,Math.max(0.5,s.scale*factor));
+    apply(id);
+  };
+  window.heatmapReset=function(id){
+    heatState[id]={x:0,y:0,scale:1};
+    apply(id);
+  };
+  function initPanZoom(svg){
+    var id=svg.id.replace(/-svg$/,'');
+    var dragging=false,startX=0,startY=0,origX=0,origY=0;
+    svg.addEventListener('wheel',function(e){
+      e.preventDefault();
+      window.heatmapZoom(id,e.deltaY<0?1.15:1/1.15);
+    },{passive:false});
+    svg.addEventListener('pointerdown',function(e){
+      dragging=true;svg.classList.add('grabbing');svg.setPointerCapture(e.pointerId);
+      startX=e.clientX;startY=e.clientY;
+      var s=state(id);origX=s.x;origY=s.y;
+    });
+    svg.addEventListener('pointermove',function(e){
+      if(!dragging)return;
+      // Screen-pixel drag deltas must be converted to SVG viewBox units --
+      // the SVG renders at CSS width 100%% while its viewBox is a fixed
+      // internal size, so 1 screen px often != 1 SVG unit.
+      var vb=svg.viewBox.baseVal,rect=svg.getBoundingClientRect();
+      var unitsPerPx=rect.width?vb.width/rect.width:1;
+      var s=state(id);
+      s.x=origX+(e.clientX-startX)*unitsPerPx;
+      s.y=origY+(e.clientY-startY)*unitsPerPx;
+      apply(id);
+    });
+    function endDrag(){dragging=false;svg.classList.remove('grabbing');}
+    svg.addEventListener('pointerup',endDrag);
+    svg.addEventListener('pointercancel',endDrag);
+    svg.addEventListener('dblclick',function(){window.heatmapReset(id);});
+  }
+  document.querySelectorAll('.heatmap-svg').forEach(initPanZoom);
+
+  document.querySelectorAll('.heat-class-toggle').forEach(function(box){
+    box.addEventListener('change',function(){
+      var activeClasses=Array.prototype.slice.call(
+        document.querySelectorAll('.heat-class-toggle:checked')
+      ).map(function(cb){return cb.getAttribute('data-class');});
+      var allOn=document.querySelectorAll('.heat-class-toggle:checked').length
+        ===document.querySelectorAll('.heat-class-toggle').length;
+      document.querySelectorAll('.heat-point').forEach(function(pt){
+        var cls=pt.getAttribute('data-class');
+        var dim=!allOn&&activeClasses.indexOf(cls)===-1;
+        pt.classList.toggle('heat-dim',dim);
+      });
+    });
+  });
+})();
+</script>
 </body></html>""" % (
         esc(generated_at), total_frames,
         len(class_totals), class_grand_total,
