@@ -40,6 +40,7 @@ struct TrtParams {
     int         camera_width;
     int         camera_height;
     bool        is_track;
+    std::string video_source;
 };
 
 TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
@@ -61,6 +62,10 @@ TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
     p.camera_height     = n->declare_parameter<int>        ("camera_height",     720);
     conf_score_value    = n->declare_parameter<double>     ("conf_score_value",  0.8);
     p.is_track          = n->declare_parameter<bool>       ("is_track",          false);
+    // "camera" reads /dev/video<camera_index> as before; any other value is
+    // treated as a video file path (see open_video_file below), letting the
+    // dashboard point the same TensorRT pipeline at an uploaded video.
+    p.video_source      = n->declare_parameter<std::string>("video_source",      "camera");
     return p;
 }
 
@@ -100,6 +105,19 @@ cv::VideoCapture open_camera(int preferred_index, int &opened_index, int max_sca
     }
     opened_index = -1;
     return cv::VideoCapture();
+}
+
+// Opens an uploaded video file rather than a live camera. Kept separate from
+// open_camera() because a file source never needs the multi-index scan and
+// EOF means "loop back to the start", not "camera unplugged".
+cv::VideoCapture open_video_file(const std::string &path) {
+    cv::VideoCapture cap(path, cv::CAP_FFMPEG);
+    if (!cap.isOpened()) {
+        RCLCPP_WARN(node->get_logger(), "failed to open video source '%s'", path.c_str());
+        return cv::VideoCapture();
+    }
+    RCLCPP_INFO(node->get_logger(), "video source '%s' opened", path.c_str());
+    return cap;
 }
 
 
@@ -237,17 +255,26 @@ int main(int argc, char *argv[]) {
 
     int model_bboxes;
 
+    // current_source tracks what's actually open right now, so the main loop
+    // can detect a source change requested via the "video_source" ROS param
+    // (see /api/video/source in web_server.py) and reopen accordingly.
+    std::string current_source = p.video_source;
+    bool using_camera = (current_source == "camera");
     int opened_camera_index = -1;
-    cv::VideoCapture cap = open_camera(p.camera_index, opened_camera_index);
+    cv::VideoCapture cap = using_camera
+        ? open_camera(p.camera_index, opened_camera_index)
+        : open_video_file(current_source);
     if (!cap.isOpened()) {
-        std::cout << "Failed to open webcam." << std::endl;
+        std::cout << "Failed to open video source '" << current_source << "'." << std::endl;
         return 1;
     }
-    cap.set(cv::CAP_PROP_FRAME_WIDTH,  p.camera_width);
-    cap.set(cv::CAP_PROP_FRAME_HEIGHT, p.camera_height);
+    if (using_camera) {
+        cap.set(cv::CAP_PROP_FRAME_WIDTH,  p.camera_width);
+        cap.set(cv::CAP_PROP_FRAME_HEIGHT, p.camera_height);
+    }
 
     std_msgs::msg::Int32 camera_index_msg;
-    camera_index_msg.data = opened_camera_index;
+    camera_index_msg.data = using_camera ? opened_camera_index : -1;
     camera_index_pub->publish(camera_index_msg);
 
     auto configure_camera = [&p](cv::VideoCapture &camera) {
@@ -290,19 +317,40 @@ int main(int argc, char *argv[]) {
         // Process web/ROS controls before starting the next inference cycle.
         rclcpp::spin_some(node);
 
+        const std::string requested_source = node->get_parameter("video_source").as_string();
+        if (requested_source != current_source) {
+            RCLCPP_INFO(node->get_logger(), "switching video source: '%s' -> '%s'",
+                current_source.c_str(), requested_source.c_str());
+            cap.release();
+            current_source = requested_source;
+            using_camera = (current_source == "camera");
+            cap = using_camera
+                ? open_camera(p.camera_index, opened_camera_index)
+                : open_video_file(current_source);
+            if (cap.isOpened()) {
+                if (using_camera) configure_camera(cap);
+                tracker_reset_requested = true;
+                last_good_frame_at = std::chrono::steady_clock::now();
+                camera_index_msg.data = using_camera ? opened_camera_index : -1;
+                camera_index_pub->publish(camera_index_msg);
+            } else {
+                opened_camera_index = -1;
+                next_camera_retry_at = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            }
+        }
+
         if (!cap.isOpened()) {
             const auto now = std::chrono::steady_clock::now();
             if (now >= next_camera_retry_at) {
-                cap = open_camera(p.camera_index, opened_camera_index);
+                cap = using_camera ? open_camera(p.camera_index, opened_camera_index)
+                                    : open_video_file(current_source);
                 if (cap.isOpened()) {
-                    configure_camera(cap);
-                    camera_index_msg.data = opened_camera_index;
+                    if (using_camera) configure_camera(cap);
+                    camera_index_msg.data = using_camera ? opened_camera_index : -1;
                     camera_index_pub->publish(camera_index_msg);
                     tracker_reset_requested = true;
                     last_good_frame_at = now;
-                    RCLCPP_INFO(
-                        node->get_logger(),
-                        "camera stream recovered on /dev/video%d", opened_camera_index);
+                    RCLCPP_INFO(node->get_logger(), "video source recovered: '%s'", current_source.c_str());
                 } else {
                     next_camera_retry_at = now + std::chrono::seconds(1);
                 }
@@ -314,6 +362,13 @@ int main(int argc, char *argv[]) {
         cap >> frame;
         const auto frame_received_at = std::chrono::steady_clock::now();
         if (frame.empty()) {
+            if (!using_camera) {
+                // Uploaded video reached EOF -- loop it rather than treating
+                // this as a dropped source (that reopen path is camera-only).
+                cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+                last_good_frame_at = frame_received_at;
+                continue;
+            }
             if (frame_received_at - last_good_frame_at >= std::chrono::seconds(2)) {
                 RCLCPP_WARN(
                     node->get_logger(),

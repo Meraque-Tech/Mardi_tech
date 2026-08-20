@@ -7,7 +7,7 @@ yolov8_trt:
     # engine_name: "/weights/yolov8n_x86.engine"        # path to serialised TRT engine
     # engine_name: "/weights/yolov8n_x86_ros2_jazzy.engine"        # path to serialised TRT engine
     # engine_name: "/weights/yolov8n_orien_v1.engine"        # path to serialised TRT engine
-    engine_name: "/weights/yolov8n_x86_64.engine"
+    engine_name: "/weights/yolov8ndebs_x86_64.engine"
     # engine_name: "/weights/yolov8n_416.engine"        # path to serialised TRT engine
 
     # ── Serialize mode (only used when launched with -s) ──────────────────────
@@ -69,6 +69,12 @@ yolov8_trt:
     camera_index:  -1
     camera_width:  1280
     camera_height:  720
+
+    # ── Video source ────────────────────────────────────────────────────────
+    # "camera" → read the live camera (camera_index above).
+    # Any other value is treated as a video file path, and the dashboard's
+    # Live/Video toggle switches this at runtime via /api/video/source.
+    video_source: "camera"
 
 
 # 24 FPS: ≈ 42 ms (Standard for cinematic movies)

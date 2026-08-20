@@ -125,6 +125,18 @@
     <div class="stack">
       <section class="card">
         <div class="card-head"><div><h2>Live vision feed</h2><span class="section-meta">Camera inference output</span></div><span id="stream-state" class="live connecting">● CONNECTING</span></div>
+        <div class="toggle-row" style="padding-top:0">
+          <div class="toggle-label">
+            <strong id="source-mode-title">Live camera</strong>
+            <div class="sub" id="source-mode-desc">Streaming from the camera in real time</div>
+          </div>
+          <label class="switch"><input id="source-mode-toggle" type="checkbox" onchange="setSourceMode(this.checked)"><span class="slider"></span></label>
+        </div>
+        <div id="video-source-row" class="upload-row" style="display:none;margin-bottom:12px">
+          <input id="video-file-input" type="file" accept="video/*" aria-label="Select a video file">
+          <button id="upload-video-btn" onclick="uploadVideo()">Use as source</button>
+        </div>
+        <div id="video-source-status" class="sub" style="display:none;margin:-4px 0 12px"></div>
         <div class="stream-wrap stream-connecting">
           <img id="stream" alt="Live camera detection stream">
           <div class="stream-overlay" aria-hidden="true"><span class="stream-tag">TensorRT</span><span class="stream-tag">ROS 2</span></div>
@@ -374,6 +386,12 @@
   let lastStreamFrameAt=0, streamWatchdogTimer=0;
   const STREAM_STALE_MS=4000, WS_STALE_MS=12000;
   let lastMotionPosDeadband=0.3, motionPosDeadbandSynced=false;
+  // True while the user has opened the Video panel to pick/upload a file but
+  // the backend hasn't confirmed a file source yet. Snapshot polling (every
+  // 3s) reports the *actual* pipeline source, which is still "camera" at
+  // that point -- without this flag, applySourceMode would flip the toggle
+  // back to Live and hide the upload row out from under the user mid-pick.
+  let videoPanelPinned=false;
 
   // Class label mapping — stored in localStorage
   let classLabels = {};
@@ -476,6 +494,7 @@
     applyDirectionBadge('backward-badge',data.is_backward,Boolean(data.direction_valid));
     renderCounts(data.counts||{});
     if(typeof data.is_track==='boolean')applyTracking(data.is_track);
+    if(typeof data.video_source==='string')applySourceMode(data.video_source);
     applyAutoSaveStatus(data,running);
     document.getElementById('start-btn').disabled=running;
     document.getElementById('stop-btn').disabled=!running;
@@ -516,6 +535,17 @@
     document.getElementById('sb-mode-label').textContent=enabled?'Unique track':'Per-frame';
   }
 
+  function applySourceMode(source) {
+    const isVideo=source!=='camera';
+    if(isVideo)videoPanelPinned=false;  // backend confirmed a file source -- stop pinning
+    else if(videoPanelPinned)return;    // user is still picking a file; ignore the stale "camera" snapshot
+    document.getElementById('source-mode-toggle').checked=isVideo;
+    document.getElementById('source-mode-title').textContent=isVideo?'Uploaded video':'Live camera';
+    document.getElementById('source-mode-desc').textContent=isVideo
+      ?`Playing back ${source.split('/').pop()}`:'Streaming from the camera in real time';
+    document.getElementById('video-source-row').style.display=isVideo?'grid':'none';
+  }
+
   async function setDetection(start) {
     const button=document.getElementById(start?'start-btn':'stop-btn');button.disabled=true;
     try { const result=await api(start?'/api/start':'/api/stop',{method:'POST'});toast(result.message);if(start)connectStream(true); }
@@ -533,6 +563,61 @@
   async function setTracking(enabled) {
     try { const result=await api('/api/set_track',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});applyTracking(enabled);toast(result.message); }
     catch(error){applyTracking(!enabled);toast(error.message,true);}
+  }
+
+  function setSourceMode(isVideo) {
+    // Switching to Video mode just reveals the upload row -- the actual
+    // source only changes once a video is uploaded and "Use as source" is
+    // clicked (setVideoSource below). Switching back to Live reverts at once.
+    document.getElementById('video-source-row').style.display=isVideo?'grid':'none';
+    if(!isVideo){
+      videoPanelPinned=false;
+      setVideoSource({mode:'camera'});
+    } else {
+      videoPanelPinned=true;  // hold the toggle/panel open until a file source is confirmed
+      document.getElementById('source-mode-title').textContent='Uploaded video';
+      document.getElementById('source-mode-desc').textContent='Choose a video file below';
+    }
+  }
+
+  async function setVideoSource(body) {
+    const statusEl=document.getElementById('video-source-status');
+    statusEl.style.display='block';statusEl.textContent='Switching source…';
+    try {
+      const result=await api('/api/video/source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(body.mode==='file')videoPanelPinned=false;  // applySnapshot can now safely reflect the confirmed source
+      statusEl.textContent=result.message;
+      toast(result.message);
+      await loadStatus();
+    } catch(error) {
+      statusEl.textContent=error.message;
+      toast(error.message,true);
+      if(body.mode==='camera')document.getElementById('source-mode-toggle').checked=true;
+      if(body.mode==='file')videoPanelPinned=true;  // switch failed -- keep the panel open for retry
+    }
+  }
+
+  async function uploadVideo() {
+    const input=document.getElementById('video-file-input');
+    const file=input.files[0];
+    if(!file){toast('Choose a video file first.',true);return;}
+    const formData=new FormData();
+    formData.append('video',file);
+    const btn=document.getElementById('upload-video-btn');
+    btn.disabled=true;
+    const statusEl=document.getElementById('video-source-status');
+    statusEl.style.display='block';statusEl.textContent='Uploading…';
+    try {
+      const data=await api('/api/video/upload',{method:'POST',body:formData});
+      statusEl.textContent=`Uploaded ${data.filename}`;
+      input.value='';
+      await setVideoSource({mode:'file',filename:data.filename});
+    } catch(error) {
+      statusEl.textContent=error.message;
+      toast(error.message,true);
+    } finally {
+      btn.disabled=false;
+    }
   }
 
   async function setAutoSave(enabled) {

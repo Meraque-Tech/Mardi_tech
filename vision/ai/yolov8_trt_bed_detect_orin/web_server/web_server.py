@@ -30,6 +30,8 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, Int32, String, UInt8
 from std_srvs.srv import SetBool, Trigger
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_sock import Sock
@@ -38,6 +40,10 @@ from flask_sock import Sock
 # Configuration
 SAVE_DIR = os.environ.get("SAVE_DIR", "/saved_frames")
 WEIGHTS_DIR = os.environ.get("WEIGHTS_DIR", "/weights")
+VIDEO_DIR = os.environ.get("VIDEO_DIR", "/uploaded_videos")
+# Name of the yolov8_trt node whose "video_source" parameter the dashboard
+# flips between "camera" and an uploaded file path (see bed_detect.launch.py).
+TRT_NODE_NAME = os.environ.get("TRT_NODE_NAME", "yolov8_trt")
 CONVERT_IMAGE = os.environ.get("CONVERT_IMAGE", "meraquetech/tensorrt-yolov8:ultralytics")
 # docker run below talks to the *host* daemon via the mounted docker.sock, so
 # its -v bind mounts must be host paths, not paths inside this container --
@@ -104,6 +110,7 @@ if not math.isfinite(MOTION_POS_DEADBAND_M) or MOTION_POS_DEADBAND_M <= 0:
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
+os.makedirs(VIDEO_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(HISTORY_DB) or ".", exist_ok=True)
 
 
@@ -115,6 +122,7 @@ state = {
     "detecting": False,
     "is_track": False,
     "auto_save": False,
+    "video_source": "camera",
     "motion_pos_deadband_m": MOTION_POS_DEADBAND_M,
     "last_updated": None,
     "camera_index": None,
@@ -408,6 +416,9 @@ class BridgeNode(Node):
         self._stop_cli = self.create_client(Trigger, "/bed_detection_stop")
         self._reset_cli = self.create_client(Trigger, "/reset_tracker")
         self._track_cli = self.create_client(SetBool, "/set_tracking")
+        self._set_params_cli = self.create_client(
+            SetParameters, "/%s/set_parameters" % TRT_NODE_NAME
+        )
         self._control_lock = threading.Lock()
         self._last_direction_broadcast = (None, None, False)
         self.get_logger().info(
@@ -551,24 +562,32 @@ class BridgeNode(Node):
             state["is_track"] = bool(msg.data)
         broadcast_state("status")
 
-    def _call(self, client, request_message):
+    def _call_raw(self, client, request_message):
         # The node is already spinning in _ros_spin. Waiting on an Event here
         # avoids trying to add it to a second executor from a Flask thread.
+        # Returns (response_or_None, error_message_or_None).
         with self._control_lock:
             if not client.wait_for_service(timeout_sec=2.0):
-                return False, "ROS service is not available"
+                return None, "ROS service is not available"
             future = client.call_async(request_message)
             completed = threading.Event()
             future.add_done_callback(lambda _future: completed.set())
             if not completed.wait(timeout=4.0):
-                return False, "ROS service timed out"
+                return None, "ROS service timed out"
             try:
                 result = future.result()
             except Exception as exc:
-                return False, "ROS service failed: %s" % exc
+                return None, "ROS service failed: %s" % exc
             if result is None:
-                return False, "ROS service returned no response"
-            return bool(result.success), result.message
+                return None, "ROS service returned no response"
+            return result, None
+
+    def _call(self, client, request_message):
+        # For Trigger/SetBool-style services that respond with .success/.message.
+        result, error = self._call_raw(client, request_message)
+        if result is None:
+            return False, error
+        return bool(result.success), result.message
 
     def call_start(self):
         if IS_JETSON:
@@ -605,6 +624,27 @@ class BridgeNode(Node):
         if ok:
             with state_lock:
                 state["is_track"] = bool(enabled)
+            broadcast_state("status")
+        return ok, detail
+
+    def call_set_video_source(self, source):
+        # "camera" reverts the yolov8_trt node to the live camera; any other
+        # value is a video file path it opens with cv::VideoCapture instead
+        # (see main.cpp's video_source parameter and open_video_file()).
+        param = Parameter(
+            name="video_source",
+            value=ParameterValue(type=ParameterType.PARAMETER_STRING, string_value=str(source)),
+        )
+        request_message = SetParameters.Request(parameters=[param])
+        response, error = self._call_raw(self._set_params_cli, request_message)
+        if response is None:
+            return False, error
+        result = response.results[0]
+        ok = bool(result.successful)
+        detail = result.reason or ("video source set to %s" % source)
+        if ok:
+            with state_lock:
+                state["video_source"] = str(source)
             broadcast_state("status")
         return ok, detail
 
@@ -1110,14 +1150,15 @@ def save_frame():
     return jsonify({"success": True, "filename": filename})
 
 
-def _save_upload(directory, extension):
-    if "model" not in request.files:
+def _save_upload(directory, extension, field="model"):
+    if field not in request.files:
         return None, (jsonify({"success": False, "message": "no file uploaded"}), 400)
-    file = request.files["model"]
+    file = request.files[field]
     filename = Path(file.filename or "").name  # strip any path components
-    if not filename.lower().endswith(extension):
-        return None, (jsonify({"success": False, "message": "only %s files are accepted" % extension}), 400)
-    if filename in ("", extension):
+    extensions = (extension,) if isinstance(extension, str) else tuple(extension)
+    if not filename.lower().endswith(extensions):
+        return None, (jsonify({"success": False, "message": "only %s files are accepted" % ", ".join(extensions)}), 400)
+    if filename in ("", *extensions):
         return None, (jsonify({"success": False, "message": "invalid filename"}), 400)
     dest_path = Path(directory) / filename
     with storage_lock:
@@ -1149,6 +1190,51 @@ def upload_pt_model():
         "filename": dest_path.name,
         "size": dest_path.stat().st_size,
     })
+
+
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+
+
+@app.route("/api/video/upload", methods=["POST"])
+def upload_video():
+    dest_path, error = _save_upload(VIDEO_DIR, VIDEO_EXTENSIONS, field="video")
+    if error:
+        return error
+    return jsonify({
+        "success": True,
+        "message": "video uploaded",
+        "filename": dest_path.name,
+        "size": dest_path.stat().st_size,
+    })
+
+
+@app.route("/api/video/list")
+def list_videos():
+    return jsonify(_list_dir(VIDEO_DIR, "*"))
+
+
+@app.route("/api/video/source", methods=["POST"])
+def set_video_source():
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode")
+    if mode not in ("camera", "file"):
+        return jsonify({"success": False, "message": "mode must be 'camera' or 'file'"}), 400
+
+    if mode == "camera":
+        source = "camera"
+    else:
+        filename = Path(str(data.get("filename") or "")).name
+        if not filename:
+            return jsonify({"success": False, "message": "filename is required for file mode"}), 400
+        candidate = Path(VIDEO_DIR) / filename
+        if not candidate.is_file():
+            return jsonify({"success": False, "message": "no such uploaded video: %s" % filename}), 404
+        source = str(candidate)
+
+    if ros_node is None:
+        return jsonify({"success": False, "message": "ROS bridge is not ready"}), 503
+    ok, message = ros_node.call_set_video_source(source)
+    return jsonify({"success": ok, "message": message, "video_source": mode}), (200 if ok else 503)
 
 
 def _list_dir(directory, pattern):
