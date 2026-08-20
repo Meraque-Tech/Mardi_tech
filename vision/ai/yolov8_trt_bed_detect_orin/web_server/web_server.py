@@ -1987,6 +1987,8 @@ def _report_html(rows, flags, class_labels=None, geo_rows=None):
     else:
         no_detection_section += "<p class='ok'>None found.</p>"
 
+    heatmap_section = _heatmap_section(geo_rows, class_labels)
+
     return """<!doctype html>
 <html><head><meta charset="utf-8"><title>Data Quality Report</title>
 <style>
@@ -2024,12 +2026,13 @@ th{color:#666;font-weight:600}
 %s
 %s
 %s
+%s
 </body></html>""" % (
         esc(generated_at), total_frames,
         len(class_totals), class_grand_total,
         len(flags["low_confidence"]), len(flags["missing_gnss"]),
         len(flags["near_duplicates"]), len(flags["no_detection_runs"]),
-        class_totals_section, low_conf_section, missing_gnss_section,
+        class_totals_section, heatmap_section, low_conf_section, missing_gnss_section,
         near_dup_section, no_detection_section,
     )
 
@@ -2055,7 +2058,8 @@ def get_report():
         class_labels = {}
 
     flags = _build_qa_report(rows)
-    html = _report_html(rows, flags, class_labels)
+    geo_rows = _geo_rows()
+    html = _report_html(rows, flags, class_labels, geo_rows)
     report_name = "quality_report_%s.html" % datetime.datetime.now().strftime(
         "%Y%m%d_%H%M%S"
     )

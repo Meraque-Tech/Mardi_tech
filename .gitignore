@@ -10,3 +10,4 @@ install/
 log/
 __pycache__/
 *.py[cod]
+!/bags
