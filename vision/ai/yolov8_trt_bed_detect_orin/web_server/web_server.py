@@ -338,6 +338,24 @@ def _geo_rows():
     return [dict(row) for row in rows]
 
 
+def _all_history_rows():
+    """Every saved-count row (frame or not, GNSS fix or not), in capture
+    order -- the dataset for report statistics that aren't tied to location:
+    the class bar chart, per-class stats table, and the time-bucketed
+    detection matrix all want the full run, not just the subsets
+    _report_rows() (frame-only) or _geo_rows() (GNSS-only) cover.
+    """
+    with db_lock, _db_connect() as db:
+        rows = db.execute(
+            """
+            SELECT id, recorded_at, counts_json, total, confidence
+            FROM count_history
+            ORDER BY id ASC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def broadcast(payload: str):
     with ws_lock:
         dead = []
@@ -1641,6 +1659,13 @@ def list_images():
     ])
 
 
+def _class_sort_key(class_id):
+    try:
+        return (0, int(class_id))
+    except (TypeError, ValueError):
+        return (1, str(class_id))
+
+
 def _class_totals(rows):
     """Sum each class's count across all saved-frame rows.
 
@@ -1660,12 +1685,6 @@ def _class_totals(rows):
                 totals[class_id] += int(count)
             except (TypeError, ValueError):
                 continue
-
-    def _class_sort_key(class_id):
-        try:
-            return (0, int(class_id))
-        except ValueError:
-            return (1, class_id)
 
     ordered = {
         class_id: totals[class_id]
@@ -1691,19 +1710,58 @@ _HEATMAP_CLASS_COLORS = [
 ]
 
 
-def _class_sort_key(class_id):
-    try:
-        return (0, int(class_id))
-    except (TypeError, ValueError):
-        return (1, str(class_id))
-
-
 def _class_color_map(class_ids):
     ordered = sorted(class_ids, key=_class_sort_key)
     return {
         class_id: _HEATMAP_CLASS_COLORS[i % len(_HEATMAP_CLASS_COLORS)]
         for i, class_id in enumerate(ordered)
     }
+
+
+def _class_stats(rows):
+    """Per-class count statistics across all saved rows (frame or not).
+
+    For each class that appears at least once: how many saves included it,
+    the total/mean/min/max count *among the saves where it appeared* (a save
+    with 0 of a class isn't counted toward its own mean -- otherwise every
+    class's average would be dragged toward zero by all the saves where
+    something else was detected instead), its share of the grand total
+    across all classes, and how often it was the dominant (highest-count)
+    class in a save. There's no per-class confidence: the pipeline only
+    publishes one max-confidence value per frame (see main.cpp's conf_pub),
+    not one per detected class, so stats stay count-based rather than
+    fabricating a number the data doesn't have.
+    """
+    per_class_counts = collections.defaultdict(list)
+    dominant_tally = collections.defaultdict(int)
+    for row in rows:
+        try:
+            counts = {str(k): int(v) for k, v in json.loads(row["counts_json"]).items()}
+        except (TypeError, ValueError, AttributeError):
+            continue
+        for class_id, count in counts.items():
+            if count > 0:
+                per_class_counts[class_id].append(count)
+        if counts:
+            dominant = max(counts, key=lambda cid: (counts[cid], cid))
+            if counts[dominant] > 0:
+                dominant_tally[dominant] += 1
+
+    grand_total = sum(sum(v) for v in per_class_counts.values()) or 1
+    stats = {}
+    for class_id in sorted(per_class_counts, key=_class_sort_key):
+        values = per_class_counts[class_id]
+        total = sum(values)
+        stats[class_id] = {
+            "saves_present": len(values),
+            "total": total,
+            "mean": total / len(values),
+            "min": min(values),
+            "max": max(values),
+            "share": total / grand_total,
+            "dominant_count": dominant_tally.get(class_id, 0),
+        }
+    return stats
 
 
 def _project_local_meters(rows):
@@ -1908,6 +1966,236 @@ def _heatmap_section(geo_rows, class_labels=None):
     )
 
 
+def _class_bar_chart_section(all_rows, class_labels=None):
+    """Horizontal bar chart of total detections per class (sorted highest
+    first) plus a stats table -- count-based since that's what the pipeline
+    actually records (see _class_stats' docstring on why there's no
+    per-class confidence column).
+    """
+    class_labels = class_labels or {}
+
+    def esc(value):
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def class_name(class_id):
+        return class_labels.get(str(class_id), "Class %s" % class_id)
+
+    stats = _class_stats(all_rows)
+    if not stats:
+        return (
+            "<h2>Class statistics</h2>"
+            "<p class='desc'>Per-class detection counts and distribution across all saves.</p>"
+            "<p class='ok'>No class counts recorded yet.</p>"
+        )
+
+    color_map = _class_color_map(stats.keys())
+    ranked = sorted(stats.items(), key=lambda kv: kv[1]["total"], reverse=True)
+    max_total = ranked[0][1]["total"] or 1
+
+    row_h, label_w, bar_max_w, gap = 30, 190, 430, 10
+    chart_w = label_w + bar_max_w + 70
+    chart_h = row_h * len(ranked) + gap
+
+    bars = []
+    for i, (class_id, s) in enumerate(ranked):
+        y = i * row_h + gap / 2
+        bar_w = (s["total"] / max_total) * bar_max_w
+        color = color_map[class_id]
+        bars.append(
+            "<text x='%d' y='%d' class='bar-label' text-anchor='end'>%s</text>"
+            "<rect x='%d' y='%d' width='%.1f' height='%d' rx='4' fill='%s'/>"
+            "<text x='%.1f' y='%d' class='bar-value'>%d</text>"
+            % (
+                label_w - 10, y + row_h * 0.65, esc(class_name(class_id)),
+                label_w, y + 4, bar_w, row_h - 8, color,
+                label_w + bar_w + 8, y + row_h * 0.65, s["total"],
+            )
+        )
+
+    bar_svg = (
+        "<svg viewBox='0 0 %d %d' width='100%%' height='auto' class='bar-chart-svg' "
+        "role='img' aria-label='Total detections per class'>%s</svg>"
+        % (chart_w, chart_h, "".join(bars))
+    )
+
+    # Donut chart -- built from stroke-dasharray arc segments on a circle,
+    # the standard dependency-free SVG technique (no charting library).
+    donut_size, donut_r, donut_stroke = 220, 78, 34
+    circumference = 2 * math.pi * donut_r
+    cx = cy = donut_size / 2
+    grand_total = sum(s["total"] for _, s in ranked) or 1
+    arcs, cursor = [], 0.0
+    for class_id, s in ranked:
+        fraction = s["total"] / grand_total
+        dash = fraction * circumference
+        arcs.append(
+            "<circle cx='%.1f' cy='%.1f' r='%d' fill='none' stroke='%s' stroke-width='%d' "
+            "stroke-dasharray='%.2f %.2f' stroke-dashoffset='%.2f' transform='rotate(-90 %.1f %.1f)'>"
+            "<title>%s: %d (%.1f%%)</title></circle>"
+            % (
+                cx, cy, donut_r, color_map[class_id], donut_stroke,
+                dash, circumference - dash, -cursor * circumference,
+                cx, cy, esc(class_name(class_id)), s["total"], fraction * 100,
+            )
+        )
+        cursor += fraction
+    donut_svg = (
+        "<svg viewBox='0 0 %d %d' width='%d' height='%d' class='donut-svg' "
+        "role='img' aria-label='Share of total detections per class'>"
+        "%s"
+        "<text x='%.1f' y='%.1f' class='donut-total-n' text-anchor='middle'>%d</text>"
+        "<text x='%.1f' y='%.1f' class='donut-total-l' text-anchor='middle'>total</text>"
+        "</svg>"
+        % (donut_size, donut_size, donut_size, donut_size, "".join(arcs),
+           cx, cy - 2, grand_total, cx, cy + 16)
+    )
+
+    stat_rows = "".join(
+        "<tr><td><span class='heat-swatch' style='background:%s'></span>%s</td>"
+        "<td>%d</td><td>%.1f%%</td><td>%d</td><td>%.2f</td><td>%d</td><td>%d</td><td>%d</td></tr>"
+        % (
+            color_map[class_id], esc(class_name(class_id)),
+            s["total"], s["share"] * 100, s["saves_present"],
+            s["mean"], s["min"], s["max"], s["dominant_count"],
+        )
+        for class_id, s in ranked
+    )
+
+    table = (
+        "<table><thead><tr>"
+        "<th>Class</th><th>Total count</th><th>Share</th><th>Saves present in</th>"
+        "<th>Mean per save</th><th>Min</th><th>Max</th><th>Dominant in</th>"
+        "</tr></thead><tbody>%s</tbody></table>" % stat_rows
+    )
+
+    return (
+        "<h2>Class statistics</h2>"
+        "<p class='desc'>Total detections per class across all %d saves, and how each "
+        "class's count is distributed. \"Mean/Min/Max\" are computed only over saves "
+        "where that class was actually present. \"Dominant in\" counts saves where "
+        "this class had the highest count.</p>"
+        "<div class='class-charts-row'>"
+        "<div class='bar-chart-wrap'>%s</div>"
+        "<div class='donut-wrap'>%s</div>"
+        "</div>"
+        "%s" % (len(all_rows), bar_svg, donut_svg, table)
+    )
+
+
+def _time_bucket_matrix_section(all_rows, class_labels=None, bucket_count=12):
+    """Class x time-bucket matrix heatmap: splits the run into up to
+    `bucket_count` equal time windows and shows each class's detection count
+    per window as a color-coded table cell -- the classic "data science"
+    heatmap layout, answering "when in the run did each class show up",
+    independent of where on the map it happened (that's the trajectory
+    heatmap's job).
+    """
+    class_labels = class_labels or {}
+
+    def esc(value):
+        return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def class_name(class_id):
+        return class_labels.get(str(class_id), "Class %s" % class_id)
+
+    def parse_time(value):
+        try:
+            return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+    timed_rows = []
+    all_class_ids = set()
+    for row in all_rows:
+        ts = parse_time(row["recorded_at"])
+        if ts is None:
+            continue
+        try:
+            counts = {str(k): int(v) for k, v in json.loads(row["counts_json"]).items()}
+        except (TypeError, ValueError, AttributeError):
+            counts = {}
+        timed_rows.append((ts, counts))
+        all_class_ids.update(counts.keys())
+
+    if len(timed_rows) < 2 or not all_class_ids:
+        return (
+            "<h2>Detections over time <span class='count neutral'>(by class)</span></h2>"
+            "<p class='desc'>Class activity across the run, bucketed by time.</p>"
+            "<p class='ok'>Not enough timestamped detections yet to bucket by time.</p>"
+        )
+
+    timed_rows.sort(key=lambda item: item[0])
+    start, end = timed_rows[0][0], timed_rows[-1][0]
+    span_s = max((end - start).total_seconds(), 1.0)
+    n_buckets = max(1, min(bucket_count, len(timed_rows)))
+    bucket_s = span_s / n_buckets
+
+    sorted_class_ids = sorted(all_class_ids, key=_class_sort_key)
+    matrix = {cid: [0] * n_buckets for cid in sorted_class_ids}
+    for ts, counts in timed_rows:
+        offset = (ts - start).total_seconds()
+        bucket = min(n_buckets - 1, int(offset / bucket_s)) if bucket_s > 0 else 0
+        for cid, count in counts.items():
+            if cid in matrix:
+                matrix[cid][bucket] += count
+
+    max_cell = max((v for row_vals in matrix.values() for v in row_vals), default=0) or 1
+
+    def cell_style(value):
+        if value == 0:
+            return "background:#f4f6fa;color:#c3c9d4"
+        t = value / max_cell
+        # Single-hue sequential ramp (not the categorical class palette --
+        # this matrix is read column-by-column/row-by-row, so a consistent
+        # "how much" ramp reads better here than class-differentiating hues).
+        # Light blue-tint (low) -> indigo (mid) -> deep red (high), all
+        # light-background-safe -- no near-black cells like a dark theme.
+        stops = [(0.0, (223, 230, 250)), (0.5, (90, 120, 214)), (1.0, (196, 45, 62))]
+        for (t0, c0), (t1, c1) in zip(stops, stops[1:]):
+            if t0 <= t <= t1:
+                frac = (t - t0) / (t1 - t0) if t1 > t0 else 0
+                rgb = tuple(round(c0[j] + (c1[j] - c0[j]) * frac) for j in range(3))
+                break
+        else:
+            rgb = stops[-1][1]
+        text_color = "#fff" if t > 0.55 else "#1a1d24"
+        return "background:#%02x%02x%02x;color:%s" % (*rgb, text_color)
+
+    bucket_labels = []
+    for b in range(n_buckets):
+        bucket_start = start + datetime.timedelta(seconds=b * bucket_s)
+        bucket_labels.append(bucket_start.strftime("%H:%M:%S"))
+
+    header_cells = "".join("<th class='matrix-time'>%s</th>" % esc(t) for t in bucket_labels)
+    body_rows = []
+    for cid in sorted_class_ids:
+        cells = "".join(
+            "<td style='%s' title='%s: %d in this window'>%d</td>"
+            % (cell_style(v), esc(class_name(cid)), v, v)
+            for v in matrix[cid]
+        )
+        body_rows.append(
+            "<tr><th class='matrix-row-label'>%s</th>%s</tr>" % (esc(class_name(cid)), cells)
+        )
+
+    table = (
+        "<div class='matrix-scroll'><table class='matrix-table'>"
+        "<thead><tr><th class='matrix-corner'></th>%s</tr></thead>"
+        "<tbody>%s</tbody>"
+        "</table></div>"
+        % (header_cells, "".join(body_rows))
+    )
+
+    return (
+        "<h2>Detections over time <span class='count neutral'>(by class)</span></h2>"
+        "<p class='desc'>Each class's detection count across %d equal time windows spanning "
+        "the run (%s &rarr; %s). Darker/red cells mean more detections of that class in that "
+        "window -- read across a row to see when a class was most active.</p>"
+        "%s"
+        % (n_buckets, esc(start.strftime("%Y-%m-%d %H:%M:%S")), esc(end.strftime("%H:%M:%S")), table)
+    )
+
+
 def _build_qa_report(rows):
     """Flag data-quality issues across all saved-frame rows (oldest first).
 
@@ -1951,9 +2239,10 @@ def _build_qa_report(rows):
     }
 
 
-def _report_html(rows, flags, class_labels=None, geo_rows=None):
+def _report_html(rows, flags, class_labels=None, geo_rows=None, all_rows=None):
     class_labels = class_labels or {}
     geo_rows = geo_rows if geo_rows is not None else []
+    all_rows = all_rows if all_rows is not None else rows
 
     def esc(value):
         return (
@@ -2061,48 +2350,95 @@ def _report_html(rows, flags, class_labels=None, geo_rows=None):
         no_detection_section += "<p class='ok'>None found.</p>"
 
     heatmap_section = _heatmap_section(geo_rows, class_labels)
+    bar_chart_section = _class_bar_chart_section(all_rows, class_labels)
+    time_matrix_section = _time_bucket_matrix_section(all_rows, class_labels)
 
     return """<!doctype html>
 <html><head><meta charset="utf-8"><title>Data Quality Report</title>
 <style>
-body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:960px;margin:32px auto;padding:0 16px;color:#1a1d24;background:#fff}
-h1{margin-bottom:4px}
-.meta{color:#666;font-size:13px;margin-bottom:28px}
-.summary{display:flex;gap:16px;margin-bottom:32px;flex-wrap:wrap}
-.stat{border:1px solid #ddd;border-radius:8px;padding:10px 16px;min-width:140px}
-.stat .n{font-size:22px;font-weight:700}
-.stat .l{font-size:12px;color:#666}
-h2{margin-top:36px;border-top:1px solid #eee;padding-top:20px}
-.count{color:#c0392b;font-weight:600}
-.count.neutral{color:#3a5fc9}
-.desc{color:#555;font-size:13px;margin:4px 0 12px}
-.ok{color:#1e8e4e;font-weight:600}
+:root{
+  --ink:#161a23;--ink-soft:#4a5262;--line:#e6e8ee;--line-soft:#f0f1f5;
+  --bg:#fbfbfd;--card:#ffffff;--panel:#e4e8f0;--accent:#3a5fc9;--accent-soft:#eef2fc;
+  --danger:#c0392b;--danger-soft:#fdf1ef;--good:#1e8e4e;--good-soft:#eaf7ef;
+  --warn:#8a5a00;--warn-soft:#fff6e5;--radius:14px;
+  --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -12px rgba(15,23,42,.10);
+}
+*{box-sizing:border-box}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  max-width:1040px;margin:0 auto;padding:0 20px 64px;color:var(--ink);background:var(--bg);
+  -webkit-font-smoothing:antialiased;line-height:1.5;
+}
+.report-header{margin:0 -20px 32px;padding:40px 20px 28px;background:
+  radial-gradient(1200px 320px at 12%% -20%%,rgba(58,95,201,.08),transparent 60%%),var(--card);
+  border-bottom:1px solid var(--line)}
+.eyebrow{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+h1{margin:0 0 6px;font-size:26px;letter-spacing:-.01em}
+.meta{color:var(--ink-soft);font-size:13px}
+.summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:40px;box-shadow:var(--shadow)}
+.stat{background:var(--card);padding:16px 14px}
+.stat .n{font-size:24px;font-weight:800;letter-spacing:-.02em;line-height:1.15}
+.stat .l{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft);margin-top:4px}
+section.report-section{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:24px 26px 26px;margin-bottom:22px;box-shadow:var(--shadow)}
+h2{margin:0 0 4px;font-size:16px;letter-spacing:-.005em;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.count{color:var(--danger);font-weight:700;font-size:13px}
+.count.neutral{color:var(--accent);font-size:13px}
+.desc{color:var(--ink-soft);font-size:13px;margin:2px 0 16px;max-width:74ch}
+.ok{color:var(--good);font-weight:600;font-size:13px;background:var(--good-soft);
+  display:inline-block;padding:6px 12px;border-radius:8px}
 table{width:100%%;border-collapse:collapse;font-size:12.5px}
-th,td{text-align:left;padding:5px 8px;border-bottom:1px solid #eee}
-th{color:#666;font-weight:600}
-.run-header{background:#fff6e5;font-weight:600;color:#8a5a00}
-.grand-total td{border-top:2px solid #ccc;font-weight:700}
-.heatmap-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:10px}
-.heat-legend{display:flex;flex-wrap:wrap;gap:6px 16px}
-.heat-legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:#333;cursor:pointer;user-select:none}
-.heat-legend-item input{accent-color:#3a5fc9;cursor:pointer}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line-soft)}
+th{color:var(--ink-soft);font-weight:700;font-size:10.5px;letter-spacing:.03em;text-transform:uppercase;
+  border-bottom:1.5px solid var(--line)}
+tbody tr:hover{background:var(--line-soft)}
+.run-header{background:var(--warn-soft);font-weight:600;color:var(--warn)}
+.grand-total td{border-top:1.5px solid var(--ink);font-weight:800}
+.heatmap-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.heat-legend{display:flex;flex-wrap:wrap;gap:8px 18px}
+.heat-legend-item{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--ink);cursor:pointer;user-select:none}
+.heat-legend-item input{accent-color:var(--accent);cursor:pointer}
 .heat-legend-empty{font-size:12.5px;color:#888}
-.heat-swatch{width:11px;height:11px;border-radius:50%%;display:inline-block;box-shadow:0 0 0 1px rgba(0,0,0,.15)}
+.heat-swatch{width:11px;height:11px;border-radius:50%%;display:inline-block;box-shadow:0 0 0 1px rgba(0,0,0,.15);flex-shrink:0}
 .heat-zoom-controls{display:flex;gap:6px}
-.heat-btn{border:1px solid #ccc;background:#fff;color:#333;border-radius:6px;padding:4px 11px;font-size:13px;cursor:pointer;line-height:1.4}
-.heat-btn:hover{background:#f2f2f2;border-color:#aaa}
-.heatmap-wrap{border-radius:10px;overflow:hidden;box-shadow:0 1px 0 rgba(0,0,0,.04)}
-.heatmap-svg{display:block;touch-action:none;cursor:grab;background:#0b0e14}
+.heat-btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;
+  padding:5px 13px;font-size:13px;font-weight:600;cursor:pointer;line-height:1.4;transition:background .12s,border-color .12s}
+.heat-btn:hover{background:var(--accent-soft);border-color:var(--accent)}
+.heatmap-wrap{border-radius:10px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--line)}
+.heatmap-svg{display:block;touch-action:none;cursor:grab;background:var(--panel)}
 .heatmap-svg.grabbing{cursor:grabbing}
-.heatmap-bg{fill:#0b0e14}
-.heatmap-grid line{stroke:#1c212c;stroke-width:1}
-.heatmap-trail{stroke:#4a5568;stroke-width:2;stroke-dasharray:4 4;opacity:.7}
+.heatmap-bg{fill:var(--panel)}
+.heatmap-grid line{stroke:#cfd5e2;stroke-width:1}
+.heatmap-trail{stroke:#7a869c;stroke-width:2;stroke-dasharray:4 4;opacity:.85}
 .heat-point{transition:opacity .15s ease}
 .heat-point.heat-dim{opacity:.08}
+.class-charts-row{display:flex;gap:32px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
+.bar-chart-wrap{flex:1 1 420px;min-width:0;overflow-x:auto}
+.bar-chart-svg{min-width:380px}
+.bar-chart-svg .bar-label{font-size:12px;font-weight:600;fill:var(--ink)}
+.bar-chart-svg .bar-value{font-size:12px;font-weight:700;fill:var(--ink-soft)}
+.donut-wrap{flex:0 0 auto;display:flex;justify-content:center}
+.donut-svg{max-width:220px}
+.donut-svg circle{transition:opacity .15s ease}
+.donut-total-n{font-size:30px;font-weight:800;fill:var(--ink)}
+.donut-total-l{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;fill:var(--ink-soft)}
+.matrix-scroll{overflow-x:auto;border-radius:10px}
+table.matrix-table{border-collapse:separate;border-spacing:3px;font-size:11.5px;width:auto;min-width:100%%}
+table.matrix-table th,table.matrix-table td{border-bottom:none;padding:0}
+.matrix-corner{width:130px}
+.matrix-row-label{text-align:right;padding:6px 12px 6px 4px !important;font-weight:700;font-size:11.5px;
+  color:var(--ink);white-space:nowrap;text-transform:none;letter-spacing:0}
+.matrix-time{font-size:9.5px;color:var(--ink-soft);font-weight:600;padding-bottom:6px !important;
+  writing-mode:vertical-rl;transform:rotate(180deg);text-align:left;height:56px;white-space:nowrap}
+table.matrix-table td{text-align:center;font-weight:700;border-radius:6px;padding:8px 4px !important;min-width:34px}
 </style></head>
 <body>
-<h1>Data Quality Report</h1>
+<div class="report-header">
+<div class="eyebrow">Pineapple Detection System</div>
+<h1>Data Quality &amp; Analytics Report</h1>
 <div class="meta">Generated %s &middot; %d saved frames analyzed</div>
+</div>
 <div class="summary">
   <div class="stat"><div class="n">%d</div><div class="l">Distinct classes</div></div>
   <div class="stat"><div class="n">%d</div><div class="l">All-class total</div></div>
@@ -2111,12 +2447,14 @@ th{color:#666;font-weight:600}
   <div class="stat"><div class="n">%d</div><div class="l">Near-duplicates</div></div>
   <div class="stat"><div class="n">%d</div><div class="l">No-detection runs</div></div>
 </div>
-%s
-%s
-%s
-%s
-%s
-%s
+<section class="report-section">%s</section>
+<section class="report-section">%s</section>
+<section class="report-section">%s</section>
+<section class="report-section">%s</section>
+<section class="report-section">%s</section>
+<section class="report-section">%s</section>
+<section class="report-section">%s</section>
+<section class="report-section">%s</section>
 <script>
 (function(){
   // Per-heatmap pan/zoom state, keyed by container id -- a report can only
@@ -2191,8 +2529,8 @@ th{color:#666;font-weight:600}
         len(class_totals), class_grand_total,
         len(flags["low_confidence"]), len(flags["missing_gnss"]),
         len(flags["near_duplicates"]), len(flags["no_detection_runs"]),
-        class_totals_section, heatmap_section, low_conf_section, missing_gnss_section,
-        near_dup_section, no_detection_section,
+        class_totals_section, bar_chart_section, time_matrix_section, heatmap_section,
+        low_conf_section, missing_gnss_section, near_dup_section, no_detection_section,
     )
 
 
@@ -2218,7 +2556,8 @@ def get_report():
 
     flags = _build_qa_report(rows)
     geo_rows = _geo_rows()
-    html = _report_html(rows, flags, class_labels, geo_rows)
+    all_rows = _all_history_rows()
+    html = _report_html(rows, flags, class_labels, geo_rows, all_rows)
     report_name = "quality_report_%s.html" % datetime.datetime.now().strftime(
         "%Y%m%d_%H%M%S"
     )
