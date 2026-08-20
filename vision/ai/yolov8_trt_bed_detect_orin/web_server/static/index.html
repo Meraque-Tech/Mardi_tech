@@ -393,13 +393,21 @@
   // back to Live and hide the upload row out from under the user mid-pick.
   let videoPanelPinned=false;
 
-  // Class label mapping — stored in localStorage
+  // Class label mapping — stored in localStorage, pushed to the backend so
+  // the live video overlay (drawn in the C++ node) can use it too.
   let classLabels = {};
   function loadLabels() {
     try { classLabels = JSON.parse(localStorage.getItem('classLabels') || '{}'); } catch(_e) { classLabels = {}; }
     renderLabelList();
+    // Silent on initial load -- the ROS bridge may not be up yet, and that's
+    // not a real failure worth alarming the user over on page open.
+    pushClassLabels(false);
   }
-  function saveLabels() { localStorage.setItem('classLabels', JSON.stringify(classLabels)); }
+  function saveLabels() { localStorage.setItem('classLabels', JSON.stringify(classLabels)); pushClassLabels(true); }
+  async function pushClassLabels(notifyOnError) {
+    try { await api('/api/class_labels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({labels:classLabels})}); }
+    catch(error){ if(notifyOnError)toast(`Video overlay labels not updated: ${error.message}`,true); }
+  }
   function labelFor(id) { const n = classLabels[String(id)]; return n ? `${n} (${id})` : `Class ${id}`; }
   function addLabel() {
     const idEl=document.getElementById('lbl-id'), nameEl=document.getElementById('lbl-name');
@@ -1010,7 +1018,11 @@
     catch(error){toast(error.message,true);}
   }
   async function loadImages() { try{const images=await api('/api/images');const gallery=document.getElementById('gallery');document.getElementById('download-images-btn').disabled=!images.length;document.getElementById('generate-report-btn').disabled=!images.length;gallery.innerHTML=images.length?images.map(item=>`<div class="thumb"><img src="${item.url}" alt="${escapeHtml(item.filename)}" onclick="openImage('${item.url}')"><button onclick="deleteImage('${escapeHtml(item.filename)}')">×</button><small>${escapeHtml(formatTime(item.time))}</small></div>`).join(''):'<span class="muted">No saved frames yet.</span>';}catch(error){document.getElementById('download-images-btn').disabled=true;document.getElementById('generate-report-btn').disabled=true;toast(error.message,true);} }
-  function downloadAllImages() { if(!document.getElementById('download-images-btn').disabled)window.location.assign('/api/images/download'); }
+  function downloadAllImages() {
+    if(document.getElementById('download-images-btn').disabled)return;
+    const labels=encodeURIComponent(JSON.stringify(classLabels));
+    window.location.assign(`/api/images/download?labels=${labels}`);
+  }
   function generateReport() {
     if(document.getElementById('generate-report-btn').disabled)return;
     const labels=encodeURIComponent(JSON.stringify(classLabels));

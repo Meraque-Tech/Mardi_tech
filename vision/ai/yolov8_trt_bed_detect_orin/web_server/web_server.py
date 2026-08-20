@@ -648,6 +648,25 @@ class BridgeNode(Node):
             broadcast_state("status")
         return ok, detail
 
+    def call_set_class_labels(self, labels):
+        # Pushes the dashboard's "Class Labels" mapping (id -> name) down to
+        # the yolov8_trt node so the MJPEG overlay's cv::putText calls can
+        # draw names instead of raw class indices (see main.cpp's
+        # class_labels_json parameter and parse_class_labels_json()).
+        payload = json.dumps({str(k): str(v) for k, v in labels.items()})
+        param = Parameter(
+            name="class_labels_json",
+            value=ParameterValue(type=ParameterType.PARAMETER_STRING, string_value=payload),
+        )
+        request_message = SetParameters.Request(parameters=[param])
+        response, error = self._call_raw(self._set_params_cli, request_message)
+        if response is None:
+            return False, error
+        result = response.results[0]
+        ok = bool(result.successful)
+        detail = result.reason or "class labels updated"
+        return ok, detail
+
     def set_motion_pos_deadband(self, value):
         message = Float32()
         message.data = float(value)
@@ -1235,6 +1254,23 @@ def set_video_source():
         return jsonify({"success": False, "message": "ROS bridge is not ready"}), 503
     ok, message = ros_node.call_set_video_source(source)
     return jsonify({"success": ok, "message": message, "video_source": mode}), (200 if ok else 503)
+
+
+@app.route("/api/class_labels", methods=["POST"])
+def set_class_labels():
+    # The id -> name mapping is edited entirely client-side (the dashboard's
+    # "Class Labels" panel, persisted in localStorage) -- this just forwards
+    # the current mapping to the yolov8_trt node so its video overlay can use
+    # it too. Not stored server-side; the frontend is the source of truth.
+    data = request.get_json(silent=True) or {}
+    labels = data.get("labels")
+    if not isinstance(labels, dict):
+        return jsonify({"success": False, "message": "labels must be an object"}), 400
+
+    if ros_node is None:
+        return jsonify({"success": False, "message": "ROS bridge is not ready"}), 503
+    ok, message = ros_node.call_set_class_labels(labels)
+    return jsonify({"success": ok, "message": message}), (200 if ok else 503)
 
 
 def _list_dir(directory, pattern):
@@ -1852,6 +1888,23 @@ def get_report():
 def download_images():
     archive_buffer = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)
 
+    # Same client-side "Class Labels" mapping /api/report accepts (labels are
+    # only known in the browser's localStorage) -- lets the manifest's column
+    # headers and JSON blobs show names instead of raw class indices.
+    class_labels = {}
+    try:
+        parsed = json.loads(request.args.get("labels", "{}"))
+        if isinstance(parsed, dict):
+            class_labels = {str(k): str(v) for k, v in parsed.items()}
+    except (TypeError, ValueError):
+        class_labels = {}
+
+    def _class_column_name(class_id):
+        name = class_labels.get(str(class_id))
+        # CSV headers must stay stable/ASCII-safe identifiers, so a label is
+        # appended alongside the index rather than replacing it outright.
+        return "class_%s_%s" % (class_id, name) if name else "class_%s" % class_id
+
     try:
         with storage_lock:
             image_paths = sorted(Path(SAVE_DIR).glob("*.jpg"))
@@ -1887,7 +1940,7 @@ def download_images():
                     return (1, class_id)
 
             sorted_class_ids = sorted(all_class_ids, key=_class_sort_key)
-            class_columns = ["class_%s" % class_id for class_id in sorted_class_ids]
+            class_columns = [_class_column_name(class_id) for class_id in sorted_class_ids]
 
             manifest_buffer = io.StringIO(newline="")
             fieldnames = [
@@ -1897,6 +1950,7 @@ def download_images():
                 "history_id",
                 "detection_recorded_at",
                 "class_counts_json",
+                "class_names_json",
                 *class_columns,
                 "total_objects",
                 "object_detected",
@@ -1914,6 +1968,14 @@ def download_images():
                     file_stat = image_path.stat()
                     history = history_by_filename.get(image_path.name)
                     counts = counts_by_filename.get(image_path.name, {})
+                    names_json = (
+                        json.dumps({
+                            class_id: class_labels[str(class_id)]
+                            for class_id in counts
+                            if str(class_id) in class_labels
+                        })
+                        if history else ""
+                    )
                     row = {
                         "filename": image_path.name,
                         "file_size_bytes": file_stat.st_size,
@@ -1923,6 +1985,7 @@ def download_images():
                         "history_id": history["id"] if history else "",
                         "detection_recorded_at": history["recorded_at"] if history else "",
                         "class_counts_json": history["counts_json"] if history else "",
+                        "class_names_json": names_json,
                         "total_objects": history["total"] if history else "",
                         "object_detected": history["bed_status"] if history else "",
                         "confidence": history["confidence"] if history else "",

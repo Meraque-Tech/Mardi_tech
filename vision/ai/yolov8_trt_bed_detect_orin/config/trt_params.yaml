@@ -76,6 +76,12 @@ yolov8_trt:
     # Live/Video toggle switches this at runtime via /api/video/source.
     video_source: "camera"
 
+    # ── Class labels ─────────────────────────────────────────────────────────
+    # Flat {"<class_id>":"<name>"} JSON map drawn on the MJPEG overlay instead
+    # of raw class indices. Pushed at runtime by the dashboard's "Class
+    # Labels" panel via /api/class_labels -- not meant to be hand-edited here.
+    class_labels_json: "{}"
+
 
 # 24 FPS: ≈ 42 ms (Standard for cinematic movies)
 # 30 FPS: ≈ 33.3 ms (Common for console games and social media)

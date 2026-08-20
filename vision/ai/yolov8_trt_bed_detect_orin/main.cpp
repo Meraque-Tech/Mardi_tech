@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <map>
+#include <unordered_map>
 #include <thread>
 #include "simple_tracker.h"
 
@@ -41,7 +42,45 @@ struct TrtParams {
     int         camera_height;
     bool        is_track;
     std::string video_source;
+    std::string class_labels_json;
 };
+
+// Parses the flat {"0":"name","1":"name"} object the dashboard's "Class
+// Labels" panel sends via /api/class_labels (see web_server.py
+// call_set_class_labels). Deliberately minimal -- avoids pulling in a JSON
+// library for a shape this constrained and fully producer-controlled.
+std::unordered_map<int, std::string> parse_class_labels_json(const std::string &text) {
+    std::unordered_map<int, std::string> labels;
+    size_t pos = 0;
+    while (true) {
+        size_t key_start = text.find('"', pos);
+        if (key_start == std::string::npos) break;
+        size_t key_end = text.find('"', key_start + 1);
+        if (key_end == std::string::npos) break;
+        std::string key = text.substr(key_start + 1, key_end - key_start - 1);
+
+        size_t colon = text.find(':', key_end + 1);
+        if (colon == std::string::npos) break;
+        size_t val_start = text.find('"', colon + 1);
+        if (val_start == std::string::npos) break;
+        size_t val_end = val_start + 1;
+        std::string value;
+        while (val_end < text.size() && text[val_end] != '"') {
+            if (text[val_end] == '\\' && val_end + 1 < text.size()) val_end++;
+            value += text[val_end];
+            val_end++;
+        }
+        if (val_end >= text.size()) break;
+
+        try {
+            labels[std::stoi(key)] = value;
+        } catch (const std::exception &) {
+            // non-numeric key -- skip, keep scanning the rest of the object
+        }
+        pos = val_end + 1;
+    }
+    return labels;
+}
 
 TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
     TrtParams p;
@@ -66,6 +105,10 @@ TrtParams declare_and_get_params(rclcpp::Node::SharedPtr n) {
     // treated as a video file path (see open_video_file below), letting the
     // dashboard point the same TensorRT pipeline at an uploaded video.
     p.video_source      = n->declare_parameter<std::string>("video_source",      "camera");
+    // Flat {"<class_id>":"<name>"} map, pushed by the dashboard's "Class
+    // Labels" panel via /api/class_labels -- lets the MJPEG overlay draw
+    // names instead of raw indices (see parse_class_labels_json above).
+    p.class_labels_json = n->declare_parameter<std::string>("class_labels_json", "{}");
     return p;
 }
 
@@ -313,9 +356,18 @@ int main(int argc, char *argv[]) {
 
     publish_active(false);
 
+    std::string current_class_labels_json = p.class_labels_json;
+    std::unordered_map<int, std::string> class_labels = parse_class_labels_json(current_class_labels_json);
+
     while (rclcpp::ok()) {
         // Process web/ROS controls before starting the next inference cycle.
         rclcpp::spin_some(node);
+
+        const std::string requested_class_labels_json = node->get_parameter("class_labels_json").as_string();
+        if (requested_class_labels_json != current_class_labels_json) {
+            current_class_labels_json = requested_class_labels_json;
+            class_labels = parse_class_labels_json(current_class_labels_json);
+        }
 
         const std::string requested_source = node->get_parameter("video_source").as_string();
         if (requested_source != current_source) {
@@ -443,7 +495,7 @@ int main(int argc, char *argv[]) {
             count_msg.data = counts_str;
             class_count_pub->publish(count_msg);
 
-            draw_bbox(img_batch, res_batch);
+            draw_bbox(img_batch, res_batch, class_labels);
             frame = img_batch[0];  // annotated frame for the MJPEG stream
         }
 

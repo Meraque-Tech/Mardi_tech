@@ -155,14 +155,21 @@ void batch_process(std::vector<std::vector<Detection>>& res_batch, const float* 
     }
 }
 
-void draw_bbox(std::vector<cv::Mat>& img_batch, std::vector<std::vector<Detection>>& res_batch) {
+void draw_bbox(std::vector<cv::Mat>& img_batch, std::vector<std::vector<Detection>>& res_batch,
+               const std::unordered_map<int, std::string>& labels_map) {
     for (size_t i = 0; i < img_batch.size(); i++) {
         auto& res = res_batch[i];
         cv::Mat img = img_batch[i];
         for (size_t j = 0; j < res.size(); j++) {
             cv::Rect r = get_rect(img, res[j].bbox);
             cv::rectangle(img, r, cv::Scalar(0x27, 0xC1, 0x36), 2);
-            cv::putText(img, std::to_string((int)res[j].class_id), cv::Point(r.x, r.y - 1), cv::FONT_HERSHEY_PLAIN, 1.2,
+            const int class_id = (int)res[j].class_id;
+            // Falls back to the raw index when the dashboard's "Class
+            // Labels" mapping (pushed via /api/class_labels) doesn't cover
+            // this id yet -- see main.cpp's class_labels_json parameter.
+            auto it = labels_map.find(class_id);
+            const std::string &text = (it != labels_map.end()) ? it->second : std::to_string(class_id);
+            cv::putText(img, text, cv::Point(r.x, r.y - 1), cv::FONT_HERSHEY_PLAIN, 1.2,
                         cv::Scalar(0xFF, 0xFF, 0xFF), 2);
         }
     }
