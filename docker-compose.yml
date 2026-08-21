@@ -153,7 +153,7 @@ services:
       - CYCLONEDDS_URI=file:///dds_ws/cyclone_dds_profile.xml
 
   yolov8-trt-bed-detect-orin:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v5
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-orin-nano.v8
     container_name: yolov8-trt-bed-detect-orin-nano
     build:
       context: ./vision/ai/
@@ -199,7 +199,7 @@ services:
                ros2 launch yolov8_trt_bed_detect_orin yolov8_web.launch.py"
   
   yolov8-trt-bed-detect-x86-jazzy:
-    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v8
+    image: meraquetech/race_nav:yolov8-trt-bed-detect-x86.ros2.jazzy.v22
     container_name: yolov8-trt-bed-detect-x86-jazzy
     build:
       context: ./vision/ai/
