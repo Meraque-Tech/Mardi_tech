@@ -307,6 +307,7 @@ docker run -it --rm --net=host \
 CSI cameras on Jetson go through `nvargus-daemon` on the **host**, not through `/dev/video*`.
 Start the daemon on the host first, then pass the socket into the container:
 
+
 ```bash
 # On the host (once per boot)
 sudo systemctl start nvargus-daemon
