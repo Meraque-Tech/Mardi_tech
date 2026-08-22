@@ -281,14 +281,20 @@ Live counts update continuously in the dashboard. They are persisted when `POST 
 
 The dashboard is self-contained and does not require internet access or CDN scripts.
 
-The live view reads and decodes the MJPEG response frame-by-frame. If no complete
-frame arrives for four seconds, the dashboard aborts the stale TCP request and
-opens a fresh stream automatically. WebSocket state uses a separate ping/pong
-watchdog and reloads `/api/status` after reconnecting, so a temporary Wi-Fi loss
-is shown as a connection interruption rather than stopping detection. Slow MJPEG
-clients have independent sender threads on the detector and cannot block other
-viewers or inference. Camera capture also reopens the configured V4L2 device after
-two seconds of empty frames while preserving the current detection-enabled state.
+The live view first reads and decodes the MJPEG response frame-by-frame. If no
+complete frame arrives for four seconds, the dashboard aborts the stale TCP
+request and opens a fresh stream automatically. Browsers that repeatedly reject
+that streaming `fetch()` path before rendering their first frame automatically
+fall back to the browser's native MJPEG image decoder (needed by some iOS/WebKit
+versions). Native mode reconnects after image errors, network restoration, and
+returning from the background. The detector reads and validates each HTTP request
+before sending its response, which keeps the stream compatible with strict mobile
+HTTP clients. WebSocket state uses a separate ping/pong watchdog and reloads
+`/api/status` after reconnecting, so a temporary Wi-Fi loss is shown as a
+connection interruption rather than stopping detection. Slow MJPEG clients have
+independent sender threads on the detector and cannot block other viewers or
+inference. Camera capture also reopens the configured V4L2 device after two
+seconds of empty frames while preserving the current detection-enabled state.
 
 ### Serialize / deserialize from the dashboard
 

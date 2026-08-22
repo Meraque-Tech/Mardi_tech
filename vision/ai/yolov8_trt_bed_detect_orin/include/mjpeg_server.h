@@ -11,10 +11,13 @@
 #include <condition_variable>
 #include <vector>
 #include <atomic>
+#include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 
 // Minimal MJPEG-over-HTTP streamer: connect a browser to
@@ -117,6 +120,104 @@ private:
         return true;
     }
 
+    static std::string trim(const std::string &value) {
+        const auto first = value.find_first_not_of(" \t");
+        if (first == std::string::npos) return "";
+        const auto last = value.find_last_not_of(" \t");
+        return value.substr(first, last - first + 1);
+    }
+
+    static std::string lower(std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return value;
+    }
+
+    static std::string log_safe(std::string value) {
+        for (char &ch : value) {
+            const auto byte = static_cast<unsigned char>(ch);
+            if (byte < 32 || byte == 127) ch = ' ';
+        }
+        constexpr size_t max_log_length = 180;
+        if (value.size() > max_log_length) {
+            value.resize(max_log_length);
+            value += "...";
+        }
+        return value;
+    }
+
+    static bool read_http_request(
+        int fd, std::string &method, std::string &target,
+        std::string &user_agent, std::string &failure) {
+        constexpr size_t max_header_bytes = 16 * 1024;
+        std::string request;
+        request.reserve(2048);
+        char chunk[2048];
+
+        size_t header_end = std::string::npos;
+        while ((header_end = request.find("\r\n\r\n")) == std::string::npos) {
+            const ssize_t received = recv(fd, chunk, sizeof(chunk), 0);
+            if (received > 0) {
+                request.append(chunk, static_cast<size_t>(received));
+                if (request.size() > max_header_bytes) {
+                    failure = "request headers too large";
+                    return false;
+                }
+                continue;
+            }
+            if (received == 0) {
+                failure = "client closed before request";
+                return false;
+            }
+            if (errno == EINTR) continue;
+            failure = (errno == EAGAIN || errno == EWOULDBLOCK)
+                ? "request timeout"
+                : std::string("request read failed: ") + std::strerror(errno);
+            return false;
+        }
+
+        const size_t request_line_end = request.find("\r\n");
+        if (request_line_end == std::string::npos || request_line_end > header_end) {
+            failure = "malformed request line";
+            return false;
+        }
+
+        std::string version;
+        std::istringstream request_line(request.substr(0, request_line_end));
+        if (!(request_line >> method >> target >> version) ||
+            version.rfind("HTTP/", 0) != 0 || target.empty() || target[0] != '/') {
+            failure = "malformed request line";
+            return false;
+        }
+
+        size_t cursor = request_line_end + 2;
+        while (cursor < header_end) {
+            size_t line_end = request.find("\r\n", cursor);
+            if (line_end == std::string::npos || line_end > header_end) line_end = header_end;
+            const std::string line = request.substr(cursor, line_end - cursor);
+            const size_t colon = line.find(':');
+            if (colon != std::string::npos &&
+                lower(trim(line.substr(0, colon))) == "user-agent") {
+                user_agent = trim(line.substr(colon + 1));
+            }
+            cursor = line_end + 2;
+        }
+        return true;
+    }
+
+    static bool send_empty_response(
+        int fd, const char *status, const char *extra_headers = "") {
+        const std::string response =
+            std::string("HTTP/1.1 ") + status + "\r\n" +
+            "Access-Control-Allow-Origin: *\r\n" +
+            "Access-Control-Allow-Methods: GET, OPTIONS\r\n" +
+            extra_headers +
+            "Content-Length: 0\r\n"
+            "Connection: close\r\n\r\n";
+        return send_all(fd, response.data(), response.size());
+    }
+
     void worker_loop() {
         cv::Mat frame;
         std::vector<uchar> jpg;
@@ -145,12 +246,46 @@ private:
     }
 
     void client_loop(const std::shared_ptr<Client> &client) {
+        std::string method;
+        std::string target;
+        std::string user_agent;
+        std::string request_failure;
+        if (!read_http_request(
+                client->fd, method, target, user_agent, request_failure)) {
+            errno = 0;
+            finish_client(client, request_failure.c_str());
+            return;
+        }
+
+        std::cout << "MJPEG request: " << client->peer
+                  << " method=" << log_safe(method)
+                  << " target=" << log_safe(target)
+                  << " user_agent=\"" << log_safe(user_agent) << "\""
+                  << std::endl;
+
+        if (method == "OPTIONS") {
+            send_empty_response(
+                client->fd, "204 No Content",
+                "Access-Control-Allow-Headers: *\r\n");
+            errno = 0;
+            finish_client(client, "preflight complete");
+            return;
+        }
+        if (method != "GET") {
+            send_empty_response(client->fd, "405 Method Not Allowed", "Allow: GET, OPTIONS\r\n");
+            errno = 0;
+            finish_client(client, "method not allowed");
+            return;
+        }
+
         static const char *response =
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
             "Cache-Control: no-store, no-cache, must-revalidate\r\n"
             "Pragma: no-cache\r\n"
             "Access-Control-Allow-Origin: *\r\n"
+            "Access-Control-Allow-Methods: GET, OPTIONS\r\n"
+            "Cross-Origin-Resource-Policy: cross-origin\r\n"
             "X-Content-Type-Options: nosniff\r\n"
             "Connection: close\r\n\r\n";
 
@@ -239,6 +374,12 @@ private:
             timeval tv{};
             tv.tv_sec = 1;
             setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+            timeval receive_timeout{};
+            receive_timeout.tv_sec = 3;
+            setsockopt(
+                client_fd, SOL_SOCKET, SO_RCVTIMEO,
+                &receive_timeout, sizeof(receive_timeout));
 
             int keepalive = 1;
             setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));

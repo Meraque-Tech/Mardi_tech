@@ -384,7 +384,9 @@
   let streamPort=8080, streamRetries=0, streamRetryTimer=0;
   let streamController=null, streamGeneration=0, streamConnectStartedAt=0;
   let lastStreamFrameAt=0, streamWatchdogTimer=0;
-  const STREAM_STALE_MS=4000, WS_STALE_MS=12000;
+  let streamTransport='fetch',streamFetchFailures=0,streamFetchEverRendered=false;
+  let nativeStreamReadyTimer=0;
+  const STREAM_STALE_MS=4000, WS_STALE_MS=12000, STREAM_FETCH_FAILURE_LIMIT=2;
   let lastMotionPosDeadband=0.3, motionPosDeadbandSynced=false;
   // True while the user has opened the Video panel to pick/upload a file but
   // the backend hasn't confirmed a file source yet. Snapshot polling (every
@@ -912,6 +914,8 @@
     // frame owns its URL, so rapid updates cannot revoke the next frame.
     setTimeout(()=>URL.revokeObjectURL(objectUrl),2000);
     lastStreamFrameAt=Date.now();
+    streamFetchEverRendered=true;
+    streamFetchFailures=0;
     streamRetries=0;
     setStreamState('online');
   }
@@ -961,7 +965,11 @@
     }
   }
 
-  async function startStreamConnection(generation) {
+  function cameraStreamUrl() {
+    return `http://${location.hostname}:${streamPort}/?t=${Date.now()}`;
+  }
+
+  async function startFetchStreamConnection(generation) {
     if(generation!==streamGeneration)return;
     const controller=new AbortController();
     streamController=controller;
@@ -969,34 +977,88 @@
     setStreamState('connecting',streamRetries?'Retrying camera connection…':'Waiting for the camera stream…');
     try {
       const response=await fetch(
-        `http://${location.hostname}:${streamPort}/?t=${Date.now()}`,
+        cameraStreamUrl(),
         {signal:controller.signal,cache:'no-store',mode:'cors'}
       );
       await readMjpegStream(response,generation,controller.signal);
     } catch(error) {
       if(generation!==streamGeneration||controller.signal.aborted)return;
-      streamController=null;streamRetries++;
+      streamController=null;
+      if(!streamFetchEverRendered)streamFetchFailures++;
+      if(!streamFetchEverRendered&&streamFetchFailures>=STREAM_FETCH_FAILURE_LIMIT){
+        streamTransport='native';streamRetries=0;
+        connectStream(true,'Using browser-compatible camera stream…');
+        return;
+      }
+      streamRetries++;
       setStreamState('offline',`${error.message} — retrying automatically…`);
       connectStream(false);
     }
   }
 
+  function startNativeStreamConnection(generation) {
+    if(generation!==streamGeneration)return;
+    const img=document.getElementById('stream');
+    streamConnectStartedAt=Date.now();lastStreamFrameAt=0;
+    setStreamState('connecting','Using browser-compatible camera stream…');
+
+    img.onload=()=>{
+      if(generation!==streamGeneration||streamTransport!=='native')return;
+      clearTimeout(nativeStreamReadyTimer);
+      lastStreamFrameAt=Date.now();streamRetries=0;
+      setStreamState('online','Browser-compatible camera stream');
+    };
+    img.onerror=()=>{
+      if(generation!==streamGeneration||streamTransport!=='native')return;
+      clearTimeout(nativeStreamReadyTimer);
+      img.onload=null;img.onerror=null;
+      streamRetries++;
+      setStreamState('offline','Camera stream disconnected — retrying automatically…');
+      connectStream(false);
+    };
+    img.src=cameraStreamUrl();
+
+    // WebKit can display a multipart MJPEG image without firing a per-frame
+    // load event. The native image decoder owns this connection, so mark it
+    // visible after startup and rely on error/network/visibility events plus
+    // the server's socket timeout for recovery.
+    nativeStreamReadyTimer=setTimeout(()=>{
+      if(generation!==streamGeneration||streamTransport!=='native')return;
+      lastStreamFrameAt=Date.now();streamRetries=0;
+      setStreamState('online','Browser-compatible camera stream');
+    },750);
+  }
+
   function connectStream(immediate=false,detail='') {
     clearTimeout(streamRetryTimer);
+    clearTimeout(nativeStreamReadyTimer);
     streamGeneration++;
     if(streamController){streamController.abort();streamController=null;}
+    const img=document.getElementById('stream');
+    img.onload=null;img.onerror=null;
+    if(streamTransport==='native')img.removeAttribute('src');
     const generation=streamGeneration;
     const delay=immediate?0:Math.min(5000,500*2**Math.min(streamRetries,4));
     setStreamState('connecting',detail||(delay?'Retrying camera connection…':'Waiting for the camera stream…'));
-    streamRetryTimer=setTimeout(()=>startStreamConnection(generation),delay);
+    streamRetryTimer=setTimeout(()=>{
+      if(streamTransport==='native')startNativeStreamConnection(generation);
+      else startFetchStreamConnection(generation);
+    },delay);
   }
 
   function startStreamWatchdog() {
     clearInterval(streamWatchdogTimer);
     streamWatchdogTimer=setInterval(()=>{
+      if(streamTransport==='native')return;
       if(!streamController)return;
       const lastActivity=lastStreamFrameAt||streamConnectStartedAt;
       if(lastActivity&&Date.now()-lastActivity>STREAM_STALE_MS){
+        if(!streamFetchEverRendered)streamFetchFailures++;
+        if(!streamFetchEverRendered&&streamFetchFailures>=STREAM_FETCH_FAILURE_LIMIT){
+          streamTransport='native';streamRetries=0;
+          connectStream(true,'Using browser-compatible camera stream…');
+          return;
+        }
         setStreamState('offline','Camera stream stalled — reconnecting…');
         connectStream(true,'Camera stream stalled — reconnecting…');
       }
@@ -1231,9 +1293,12 @@
   });
   window.addEventListener('beforeunload',()=>{
     clearTimeout(wsReconnectTimer);clearTimeout(streamRetryTimer);
+    clearTimeout(nativeStreamReadyTimer);
     clearInterval(streamWatchdogTimer);
     if(activeSocket){clearInterval(activeSocket.keepalive);activeSocket.onclose=null;activeSocket.close();}
     if(streamController)streamController.abort();
+    const img=document.getElementById('stream');img.onload=null;img.onerror=null;
+    if(streamTransport==='native')img.removeAttribute('src');
   });
   window.addEventListener('resize',()=>drawChart(chartItems));
   window.addEventListener('resize',()=>drawPath(pathPoints));
