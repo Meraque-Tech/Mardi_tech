@@ -5,7 +5,7 @@ import math
 import queue
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import rclpy
 from rclpy.node import Node
@@ -173,64 +173,182 @@ def enrich_pvt(msg: Dict[str, Any]) -> Dict[str, Any]:
 class RoverGnssReader:
     """Blocking serial reader kept separate from ROS publishing."""
 
-    def __init__(self, port: str, baud: int, reconnect_interval: float):
+    def __init__(
+        self,
+        port: str,
+        baud: int,
+        reconnect_interval: float,
+        stale_reconnect_timeout: float,
+        event_callback: Optional[Callable[[str, str], None]] = None,
+        serial_factory: Callable[..., Serial] = Serial,
+        monotonic: Callable[[], float] = time.monotonic,
+    ):
         self.fixed_port = port
         self.baud = baud
         self.reconnect_interval = reconnect_interval
+        self.stale_reconnect_timeout = stale_reconnect_timeout
+        self.event_callback = event_callback
+        self.serial_factory = serial_factory
+        self.monotonic = monotonic
         self.serial_conn: Optional[Serial] = None
+        self.connected_port: Optional[str] = None
+        self.connected_monotonic: Optional[float] = None
+        self.last_valid_pvt_monotonic: Optional[float] = None
+        self.outage_started_monotonic: Optional[float] = None
+        self.reconnect_count = 0
+
+    def _emit(self, level: str, message: str) -> None:
+        if self.event_callback is not None:
+            self.event_callback(level, message)
+
+    def _begin_outage(self, now: Optional[float] = None) -> None:
+        if self.outage_started_monotonic is None:
+            self.outage_started_monotonic = (
+                self.monotonic() if now is None else now
+            )
 
     def connect(self, stop_event: threading.Event) -> bool:
         while not stop_event.is_set() and self.serial_conn is None:
             port = self.fixed_port or find_esp32_port()
             if port is None:
+                self._emit(
+                    "warning",
+                    "GNSS serial device not found; retrying in "
+                    f"{self.reconnect_interval:.1f} seconds",
+                )
                 stop_event.wait(self.reconnect_interval)
                 continue
             try:
-                self.serial_conn = Serial(port, self.baud, timeout=1)
+                connection = self.serial_factory(port, self.baud, timeout=1)
+                try:
+                    connection.reset_input_buffer()
+                except (SerialException, OSError, AttributeError) as error:
+                    self._emit(
+                        "warning",
+                        "GNSS serial input buffer reset failed on "
+                        f"{port}: {error}",
+                    )
+                self.serial_conn = connection
+                self.connected_port = port
+                self.connected_monotonic = self.monotonic()
+                self.last_valid_pvt_monotonic = None
+                self._emit("info", f"GNSS serial connected on {port}")
                 return True
-            except SerialException:
+            except (SerialException, OSError) as error:
+                self._emit(
+                    "warning",
+                    f"GNSS serial open failed on {port}: {error}; retrying in "
+                    f"{self.reconnect_interval:.1f} seconds",
+                )
                 stop_event.wait(self.reconnect_interval)
         return self.serial_conn is not None
 
     def disconnect(self) -> None:
-        if self.serial_conn is not None:
+        connection = self.serial_conn
+        self.serial_conn = None
+        self.connected_port = None
+        self.connected_monotonic = None
+        self.last_valid_pvt_monotonic = None
+        if connection is not None:
             try:
-                self.serial_conn.close()
-            except SerialException:
+                connection.close()
+            except (SerialException, OSError):
                 pass
-            self.serial_conn = None
+
+    def _stream_is_stale(self, now: float) -> bool:
+        reference = self.last_valid_pvt_monotonic
+        if reference is None:
+            reference = self.connected_monotonic
+        return (
+            reference is not None
+            and now - reference > self.stale_reconnect_timeout
+        )
+
+    def _recover_stale_connection(
+        self,
+        stop_event: threading.Event,
+        now: float,
+    ) -> None:
+        reference = self.last_valid_pvt_monotonic
+        if reference is None:
+            reference = self.connected_monotonic
+        stale_age = 0.0 if reference is None else max(0.0, now - reference)
+        port = (
+            self.connected_port
+            or self.fixed_port
+            or "auto-discovered device"
+        )
+        self._begin_outage(now)
+        self.reconnect_count += 1
+        self._emit(
+            "warning",
+            f"GNSS PVT stream stale for {stale_age:.1f} seconds on {port}; "
+            f"closing serial connection and reconnecting "
+            f"(attempt {self.reconnect_count})",
+        )
+        self.disconnect()
+        stop_event.wait(self.reconnect_interval)
+
+    def _record_valid_pvt(self, now: float) -> None:
+        self.last_valid_pvt_monotonic = now
+        if self.outage_started_monotonic is not None:
+            outage_duration = max(0.0, now - self.outage_started_monotonic)
+            self._emit(
+                "info",
+                "GNSS PVT stream recovered after "
+                f"{outage_duration:.1f} seconds",
+            )
+            self.outage_started_monotonic = None
+            self.reconnect_count = 0
 
     def stream(self, stop_event: threading.Event):
         while not stop_event.is_set():
             if self.serial_conn is None and not self.connect(stop_event):
                 break
             try:
-                line = self.serial_conn.readline().decode("ascii", errors="ignore").strip()
-            except (SerialException, OSError, AttributeError):
+                raw_line = self.serial_conn.readline()
+                line = raw_line.decode("ascii", errors="ignore").strip()
+            except (SerialException, OSError, AttributeError) as error:
+                self._begin_outage()
+                self.reconnect_count += 1
+                self._emit(
+                    "warning",
+                    f"GNSS serial read failed: {error}; closing connection "
+                    "and "
+                    f"reconnecting (attempt {self.reconnect_count})",
+                )
                 self.disconnect()
+                stop_event.wait(self.reconnect_interval)
                 continue
 
-            if not line.startswith("{"):
-                continue
-            try:
-                msg = json.loads(
-                    line,
-                    parse_constant=_reject_non_finite_json_constant,
-                )
-            except (json.JSONDecodeError, ValueError):
-                continue
-            if not isinstance(msg, dict):
-                continue
-            if msg.get("type") == "pvt":
+            parsed_msg = None
+            if line.startswith("{"):
                 try:
-                    yield enrich_pvt(msg)
-                except (KeyError, TypeError, ValueError):
-                    # Invalid PVT records are ignored, matching the original
-                    # stream's behavior for malformed JSON while keeping the
-                    # ROS node alive.
-                    continue
-            else:
-                yield msg
+                    candidate = json.loads(
+                        line,
+                        parse_constant=_reject_non_finite_json_constant,
+                    )
+                except (json.JSONDecodeError, ValueError):
+                    candidate = None
+                if isinstance(candidate, dict):
+                    if candidate.get("type") == "pvt":
+                        try:
+                            parsed_msg = enrich_pvt(candidate)
+                            self._record_valid_pvt(self.monotonic())
+                        except (KeyError, TypeError, ValueError):
+                            # Invalid PVT records are ignored. If they persist,
+                            # the valid-PVT watchdog below reopens the serial
+                            # device instead of leaving the stream wedged.
+                            parsed_msg = None
+                    else:
+                        parsed_msg = candidate
+
+            if parsed_msg is not None:
+                yield parsed_msg
+
+            now = self.monotonic()
+            if self._stream_is_stale(now):
+                self._recover_stale_connection(stop_event, now)
 
     def close(self) -> None:
         self.disconnect()
@@ -246,15 +364,34 @@ class RoverGnssNode(Node):
         self.declare_parameter("frame_id", "gps")
         self.declare_parameter("stale_timeout", 3.0)
         self.declare_parameter("reconnect_interval", 2.0)
+        self.declare_parameter("stale_reconnect_timeout", 5.0)
         self.declare_parameter("fix_topic", "/receiver/fix")
         self.declare_parameter("pvt_topic", "/gnss/pvt")
         self.declare_parameter("rtk_status_topic", "/gnss/rtk_status")
 
         port = self.get_parameter("port").value
         baud = int(self.get_parameter("baud").value)
-        reconnect_interval = float(self.get_parameter("reconnect_interval").value)
+        reconnect_interval = float(
+            self.get_parameter("reconnect_interval").value
+        )
+        stale_reconnect_timeout = float(
+            self.get_parameter("stale_reconnect_timeout").value
+        )
         self.frame_id = str(self.get_parameter("frame_id").value)
         self.stale_timeout = float(self.get_parameter("stale_timeout").value)
+
+        if reconnect_interval <= 0.0:
+            raise ValueError("reconnect_interval must be greater than zero")
+        if stale_reconnect_timeout <= 0.0:
+            raise ValueError(
+                "stale_reconnect_timeout must be greater than zero"
+            )
+        if stale_reconnect_timeout <= self.stale_timeout:
+            self.get_logger().warning(
+                "stale_reconnect_timeout should be greater than stale_timeout "
+                "so GNSS is marked stale before the serial connection is "
+                "reopened"
+            )
 
         self.fix_pub = self.create_publisher(
             NavSatFix, str(self.get_parameter("fix_topic").value), 10
@@ -268,19 +405,41 @@ class RoverGnssNode(Node):
 
         self._messages: queue.Queue = queue.Queue(maxsize=100)
         self._stop_event = threading.Event()
-        self._reader = RoverGnssReader(str(port), baud, reconnect_interval)
+        self._reader = RoverGnssReader(
+            str(port),
+            baud,
+            reconnect_interval,
+            stale_reconnect_timeout,
+            event_callback=self._log_reader_event,
+        )
         self._last_pvt_monotonic: Optional[float] = None
-        self._reader_thread = threading.Thread(target=self._read_serial, daemon=True)
+        self._reader_thread = threading.Thread(
+            target=self._read_serial,
+            daemon=True,
+        )
         self._reader_thread.start()
         self._timer = self.create_timer(0.02, self._drain_messages)
         self._stale_logged = False
         self._publish_rtk_status(False)
 
-        self.get_logger().info(f"Publishing NavSatFix on {self.fix_pub.topic_name}")
-        self.get_logger().info(f"Publishing PVT JSON on {self.pvt_pub.topic_name}")
+        self.get_logger().info(
+            f"Publishing NavSatFix on {self.fix_pub.topic_name}"
+        )
+        self.get_logger().info(
+            f"Publishing PVT JSON on {self.pvt_pub.topic_name}"
+        )
         self.get_logger().info(
             f"Publishing RTK status on {self.rtk_status_pub.topic_name}"
         )
+
+    def _log_reader_event(self, level: str, message: str) -> None:
+        logger = self.get_logger()
+        if level == "warning":
+            logger.warning(message)
+        elif level == "error":
+            logger.error(message)
+        else:
+            logger.info(message)
 
     def _read_serial(self) -> None:
         for msg in self._reader.stream(self._stop_event):
@@ -304,7 +463,12 @@ class RoverGnssNode(Node):
             if msg.get("type") == "pvt":
                 try:
                     self._publish_pvt(msg)
-                except (KeyError, TypeError, ValueError, OverflowError) as error:
+                except (
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    OverflowError,
+                ) as error:
                     self.get_logger().warning(
                         f"Dropping invalid GNSS PVT record: {error}"
                     )
@@ -313,7 +477,8 @@ class RoverGnssNode(Node):
 
         if (
             self._last_pvt_monotonic is not None
-            and time.monotonic() - self._last_pvt_monotonic > self.stale_timeout
+            and time.monotonic() - self._last_pvt_monotonic
+            > self.stale_timeout
             and not self._stale_logged
         ):
             self.get_logger().warning("GNSS PVT data is stale")
@@ -338,10 +503,13 @@ class RoverGnssNode(Node):
             fix.position_covariance[0] = float(hacc) ** 2
             fix.position_covariance[4] = float(hacc) ** 2
             fix.position_covariance[8] = float(vacc) ** 2
-            fix.position_covariance_type = NavSatFix.COVARIANCE_TYPE_DIAGONAL_KNOWN
+            fix.position_covariance_type = (
+                NavSatFix.COVARIANCE_TYPE_DIAGONAL_KNOWN
+            )
         else:
             # Do not fabricate vertical accuracy when the receiver does not
-            # provide it. The complete hacc value remains available in /gnss/pvt.
+            # provide it. The complete hacc value remains available in
+            # /gnss/pvt.
             fix.position_covariance_type = NavSatFix.COVARIANCE_TYPE_UNKNOWN
 
         self.fix_pub.publish(fix)

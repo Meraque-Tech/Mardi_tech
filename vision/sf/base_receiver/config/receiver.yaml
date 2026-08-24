@@ -5,6 +5,7 @@ base_receiver:
     frame_id: gps # ROS frame ID assigned to published GNSS messages.
     stale_timeout: 3.0 # Seconds without valid receiver data before its outputs are marked stale.
     reconnect_interval: 2.0 # Seconds to wait between serial reconnection attempts.
+    stale_reconnect_timeout: 5.0 # Seconds without valid PVT before forcing the GNSS serial port to reopen.
     rtk_status_topic: /gnss/rtk_status # Topic that reports whether the receiver has an RTK float or fixed solution.
 
 gnss_enu:

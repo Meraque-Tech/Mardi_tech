@@ -1,5 +1,9 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, EmitEvent, RegisterEventHandler
+from launch.actions import (
+    DeclareLaunchArgument,
+    EmitEvent,
+    RegisterEventHandler,
+)
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch_ros.actions import Node
@@ -20,6 +24,7 @@ def generate_launch_description():
     baud = LaunchConfiguration("baud")
     stale_timeout = LaunchConfiguration("stale_timeout")
     reconnect_interval = LaunchConfiguration("reconnect_interval")
+    stale_reconnect_timeout = LaunchConfiguration("stale_reconnect_timeout")
 
     receiver_node = Node(
         package="base_receiver",
@@ -37,6 +42,10 @@ def generate_launch_description():
                 ),
                 "reconnect_interval": ParameterValue(
                     reconnect_interval,
+                    value_type=float,
+                ),
+                "stale_reconnect_timeout": ParameterValue(
+                    stale_reconnect_timeout,
                     value_type=float,
                 ),
             },
@@ -84,6 +93,14 @@ def generate_launch_description():
             "reconnect_interval",
             default_value="2.0",
             description="Seconds between serial reconnect attempts",
+        ),
+        DeclareLaunchArgument(
+            "stale_reconnect_timeout",
+            default_value="5.0",
+            description=(
+                "Seconds without a valid PVT record before the serial device "
+                "is closed and reopened"
+            ),
         ),
         shutdown_when_node_exits(
             receiver_node,

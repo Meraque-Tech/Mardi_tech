@@ -41,8 +41,16 @@ ros2 launch base_receiver receiver.launch.py \
   port:=/dev/ttyUSB0 \
   baud:=115200 \
   stale_timeout:=3.0 \
-  reconnect_interval:=2.0
+  reconnect_interval:=2.0 \
+  stale_reconnect_timeout:=5.0
 ```
+
+`stale_timeout` marks ROS output unavailable and clears RTK status.
+`stale_reconnect_timeout` is the longer serial watchdog: if no valid PVT record
+arrives before it expires, the reader closes and reopens the configured device.
+This also recovers USB serial endpoints that remain present but silently stop
+returning data. Valid `NO_FIX` PVT records count as receiver activity and do not
+trigger a reconnect.
 
 To run only the ENU converter against an existing `/receiver/fix` publisher:
 
@@ -197,14 +205,9 @@ natively on `amd64` or `arm64`; no GPU runtime is required.
 
 **The receiver was unplugged and reconnected**
 
-The receiver performs USB auto-discovery and reconnects when supported devices
-reappear. If the container does not see a newly recreated device, restart it:
-
-```bash
-docker compose -f docker-compose.base_receiver.yaml restart
-```
-
-If deployment requires unattended hot-plug recovery, use a persistent udev
-device name and validate reconnect behavior on the target host. A narrowly
-scoped udev-triggered service restart is preferable to giving the container
-privileged access to all host devices.
+The receiver automatically reconnects after a serial exception and also forces
+a reopen when no valid PVT record arrives for `stale_reconnect_timeout` seconds.
+Use a persistent udev device name such as `/dev/gnss_rtk`; each reconnect resolves
+the symlink again, so Linux can renumber `ttyUSB` devices without requiring a
+container restart. Logs report the stale duration, reconnect attempt, selected
+device, and successful PVT recovery.
