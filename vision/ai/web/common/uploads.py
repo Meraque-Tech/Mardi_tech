@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import stat
@@ -97,6 +98,14 @@ def _safe_member_path(name: str) -> Path:
     return Path(*pure.parts)
 
 
+def _zip_entry_digest(archive: zipfile.ZipFile, entry: zipfile.ZipInfo) -> bytes:
+    digest = hashlib.sha256()
+    with archive.open(entry, "r") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.digest()
+
+
 def inspect_zip(archive: zipfile.ZipFile, limits: UploadLimits) -> tuple[list[tuple[zipfile.ZipInfo, Path]], int]:
     entries = archive.infolist()
     if len(entries) > limits.max_zip_entries:
@@ -106,17 +115,34 @@ def inspect_zip(archive: zipfile.ZipFile, limits: UploadLimits) -> tuple[list[tu
 
     inspected: list[tuple[zipfile.ZipInfo, Path]] = []
     total_uncompressed = 0
-    seen: set[Path] = set()
+    seen: dict[Path, zipfile.ZipInfo] = {}
     for entry in entries:
         relative = _safe_member_path(entry.filename)
-        if relative in seen:
-            raise UploadValidationError(f"ZIP contains a duplicate member: {entry.filename}")
-        seen.add(relative)
         mode = entry.external_attr >> 16
         if stat.S_ISLNK(mode):
             raise UploadValidationError(f"ZIP symbolic links are not accepted: {entry.filename}")
         if entry.flag_bits & 0x1:
             raise UploadValidationError(f"Encrypted ZIP entries are not accepted: {entry.filename}")
+
+        previous = seen.get(relative)
+        if previous is not None:
+            both_directories = previous.is_dir() and entry.is_dir()
+            same_metadata = (
+                previous.is_dir() == entry.is_dir()
+                and previous.file_size == entry.file_size
+                and previous.CRC == entry.CRC
+            )
+            same_content = both_directories or (
+                same_metadata
+                and _zip_entry_digest(archive, previous) == _zip_entry_digest(archive, entry)
+            )
+            if not same_content:
+                raise UploadValidationError(
+                    f"ZIP contains a conflicting duplicate member: {entry.filename}"
+                )
+            continue
+
+        seen[relative] = entry
         total_uncompressed += max(0, int(entry.file_size))
         if total_uncompressed > limits.max_zip_uncompressed_bytes:
             raise UploadValidationError(

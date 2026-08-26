@@ -124,6 +124,25 @@ def test_safe_zip_extraction_enforces_ratio_and_reports_progress(tmp_path: Path)
     assert progress[-1][:2] == (1, 1)
 
 
+def test_safe_zip_extraction_skips_only_identical_duplicate_members(tmp_path: Path):
+    identical = tmp_path / "identical-duplicate.zip"
+    with zipfile.ZipFile(identical, "w") as archive:
+        archive.writestr("data.yaml", "path: .\ntrain: train/images\n")
+        archive.writestr("data.yaml", "path: .\ntrain: train/images\n")
+
+    output = tmp_path / "identical-output"
+    extract_zip_safely(identical, output, small_limits())
+    assert (output / "data.yaml").read_text(encoding="utf-8") == "path: .\ntrain: train/images\n"
+
+    conflicting = tmp_path / "conflicting-duplicate.zip"
+    with zipfile.ZipFile(conflicting, "w") as archive:
+        archive.writestr("data.yaml", "train: train/images\n")
+        archive.writestr("data.yaml", "train: valid/images\n")
+
+    with pytest.raises(UploadValidationError, match="conflicting duplicate member: data.yaml"):
+        extract_zip_safely(conflicting, tmp_path / "conflicting-output", small_limits())
+
+
 def test_resource_coordinator_is_atomic_and_owner_scoped():
     coordinator = ResourceCoordinator()
     coordinator.acquire("dataset:corn", "job-one", "first preparation")
