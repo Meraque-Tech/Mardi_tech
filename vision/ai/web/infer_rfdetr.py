@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import threading
 import time
 from pathlib import Path
@@ -20,10 +21,13 @@ from .infer_yolo import (
     encode_preview_jpeg,
     write_json_atomic,
 )
+from .common.model_cache import BoundedModelCache
 
 
-MODEL_CACHE: dict[tuple[str, str], dict] = {}
-MODEL_CACHE_LOCK = threading.Lock()
+MODEL_CACHE_MAX_ITEMS = max(1, int(os.getenv("WEB_INFERENCE_MODEL_CACHE_SIZE", "2")))
+MODEL_CACHE_MANAGER = BoundedModelCache(max_items=MODEL_CACHE_MAX_ITEMS)
+MODEL_CACHE = MODEL_CACHE_MANAGER.entries
+MODEL_CACHE_LOCK = MODEL_CACHE_MANAGER.lock
 MODEL_CLASSES = {
     "rfdetr-nano": "RFDETRNano",
     "rfdetr-small": "RFDETRSmall",
@@ -149,16 +153,14 @@ def get_rfdetr_model(weights_path: Path, use_cache: bool):
         return import_model_class(model_id)(pretrain_weights=str(weights_path)), threading.Lock(), False
 
     key = (str(weights_path.resolve()), model_id)
-    with MODEL_CACHE_LOCK:
-        entry = MODEL_CACHE.get(key)
-        if entry is None:
-            entry = {
+    entry, cached = MODEL_CACHE_MANAGER.get_or_create(
+        key,
+        lambda: {
                 "model": import_model_class(model_id)(pretrain_weights=str(weights_path)),
                 "lock": threading.Lock(),
-            }
-            MODEL_CACHE[key] = entry
-            return entry["model"], entry["lock"], False
-        return entry["model"], entry["lock"], True
+        },
+    )
+    return entry["model"], entry["lock"], cached
 
 
 def detection_arrays(detections):

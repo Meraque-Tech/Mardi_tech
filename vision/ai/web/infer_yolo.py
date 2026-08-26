@@ -7,6 +7,7 @@ import argparse
 import inspect
 import json
 import math
+import os
 import shutil
 import subprocess
 import threading
@@ -16,11 +17,18 @@ from typing import Callable
 
 import cv2
 
+try:
+    from .common.model_cache import BoundedModelCache
+except ImportError:  # Support direct execution from the repository root.
+    from vision.ai.web.common.model_cache import BoundedModelCache
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-MODEL_CACHE: dict[tuple[str, str], dict] = {}
-MODEL_CACHE_LOCK = threading.Lock()
+MODEL_CACHE_MAX_ITEMS = max(1, int(os.getenv("WEB_INFERENCE_MODEL_CACHE_SIZE", "2")))
+MODEL_CACHE_MANAGER = BoundedModelCache(max_items=MODEL_CACHE_MAX_ITEMS)
+MODEL_CACHE = MODEL_CACHE_MANAGER.entries
+MODEL_CACHE_LOCK = MODEL_CACHE_MANAGER.lock
 
 
 class InferenceStopped(Exception):
@@ -117,16 +125,14 @@ def get_yolo_model(weights_path: Path, device: str, use_cache: bool):
         return YOLO(str(weights_path)), threading.Lock(), False
 
     key = (str(weights_path.resolve()), device)
-    with MODEL_CACHE_LOCK:
-        entry = MODEL_CACHE.get(key)
-        if entry is None:
-            entry = {
+    entry, cached = MODEL_CACHE_MANAGER.get_or_create(
+        key,
+        lambda: {
                 "model": YOLO(str(weights_path)),
                 "lock": threading.Lock(),
-            }
-            MODEL_CACHE[key] = entry
-            return entry["model"], entry["lock"], False
-        return entry["model"], entry["lock"], True
+        },
+    )
+    return entry["model"], entry["lock"], cached
 
 
 def media_type(path: Path) -> str:

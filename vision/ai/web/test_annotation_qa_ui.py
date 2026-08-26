@@ -9,6 +9,15 @@ WEB_DIR = Path(__file__).parent
 INDEX_HTML = WEB_DIR / "static" / "index.html"
 APP_JS = WEB_DIR / "static" / "app.js"
 APP_PY = WEB_DIR / "app.py"
+ANNOTATION_QA_SERVICE = WEB_DIR / "services" / "annotation_qa.py"
+ANNOTATION_QA_ROUTER = WEB_DIR / "routers" / "annotation_qa.py"
+
+
+def annotation_qa_backend_source() -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (APP_PY, ANNOTATION_QA_SERVICE, ANNOTATION_QA_ROUTER)
+    )
 
 
 class IdParser(HTMLParser):
@@ -74,7 +83,7 @@ def test_review_dialog_supports_fast_safe_decisions():
 def test_preview_assets_and_safe_bulk_review_are_supported():
     markup = INDEX_HTML.read_text(encoding="utf-8")
     script = APP_JS.read_text(encoding="utf-8")
-    app_source = APP_PY.read_text(encoding="utf-8")
+    app_source = annotation_qa_backend_source()
 
     assert 'id="annotation-qa-bulk-accept-sam"' in markup
     assert "function issueCanBulkAcceptSamBox" in script
@@ -87,7 +96,7 @@ def test_preview_assets_and_safe_bulk_review_are_supported():
 def test_roboflow_publish_is_bound_previewed_and_confirmed():
     markup = INDEX_HTML.read_text(encoding="utf-8")
     script = APP_JS.read_text(encoding="utf-8")
-    app_source = APP_PY.read_text(encoding="utf-8")
+    app_source = annotation_qa_backend_source()
 
     for control in (
         "annotation-qa-roboflow-target",
@@ -107,7 +116,7 @@ def test_roboflow_publish_is_bound_previewed_and_confirmed():
 def test_sam3_is_exposed_with_memory_and_safety_controls():
     markup = INDEX_HTML.read_text(encoding="utf-8")
     script = APP_JS.read_text(encoding="utf-8")
-    app_source = APP_PY.read_text(encoding="utf-8")
+    app_source = annotation_qa_backend_source()
 
     assert '<option value="sam3">SAM 3' in markup
     assert 'id="annotation-qa-model-status"' in markup

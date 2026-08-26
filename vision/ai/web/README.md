@@ -11,7 +11,12 @@ vision/ai/train/train_yolov8.py
 ## Files
 
 ```text
-app.py                       FastAPI backend
+app.py                       FastAPI composition, shared runtime state, and frozen Magic metrics
+routers/                     Dataset, inference, QA, testing, and training HTTP routes
+services/                    Dataset, inference, QA, and non-Magic metrics domain logic
+schemas.py                   Request models shared by domain routers
+common/                      Bounded caches, file helpers, and upload safety
+runtime/                     Persistent jobs and compute-resource coordination
 report_generator.py          Training and combined test PDF reports
 static/                      HTML, CSS, and JavaScript UI
 requirements.txt             Python dependencies
@@ -34,6 +39,14 @@ ROBOFLOW_PROJECT=
 ROBOFLOW_VERSION=
 
 WEB_DATA_ROOT=
+WEB_MAX_UPLOAD_BYTES=10737418240
+WEB_MAX_FOLDER_UPLOAD_BYTES=26843545600
+WEB_MAX_FOLDER_FILES=100000
+WEB_MAX_ZIP_ENTRIES=100000
+WEB_MAX_ZIP_UNCOMPRESSED_BYTES=53687091200
+WEB_MAX_ZIP_COMPRESSION_RATIO=500
+WEB_INFERENCE_MODEL_CACHE_SIZE=2
+WEB_HOST=127.0.0.1
 TRAINING_PYTHON=python3
 TRAINING_DEVICE=
 SAM_QA_DEVICE=
@@ -51,6 +64,20 @@ Roboflow from environment defaults. `ROBOFLOW_PROJECT` and
 ```text
 vision/ai/web/datasets/
 ```
+
+The `WEB_MAX_*` values protect uploads and ZIP extraction from exhausting disk
+or memory. Their defaults allow large vision datasets while rejecting archive
+path traversal, symbolic links, excessive entry counts, and suspicious
+compression ratios. `WEB_INFERENCE_MODEL_CACHE_SIZE` bounds the number of
+loaded inference models retained in memory; the default is two.
+
+The Compose service binds to loopback by default through `WEB_HOST=127.0.0.1`.
+Set `WEB_HOST=0.0.0.0` only when remote access is intentional and the host is
+protected by an appropriate firewall or authenticated reverse proxy.
+
+Completed and interrupted job metadata is retained under
+`datasets/runtime/jobs.json`. This history is available from `/api/jobs`; jobs
+that were active when the web process restarted are recorded as interrupted.
 
 `TRAINING_DEVICE` is optional. Use values like:
 
@@ -187,6 +214,28 @@ docker compose -f docker-compose.train_web.yml restart
 ```
 
 Rebuild only when dependencies, the Dockerfile, or image-level setup changes.
+
+Set `DFINE_REPO_REF` to a D-FINE commit or tag to make that checkout
+reproducible. If it is empty, the image continues to use the repository's
+current default branch for backward compatibility.
+
+### Runtime Performance
+
+Status polling is adaptive: it is frequent while work is active, slower while
+idle, and reduced further while the browser tab is hidden. Training log tails
+are read from the end of the file, normalized metrics are cached until their
+source artifacts change, and inference models use a bounded LRU cache.
+
+With the service running, collect repeatable endpoint latency measurements:
+
+```bash
+python3 vision/ai/web/scripts/benchmark_web.py --base-url http://127.0.0.1:8000
+```
+
+These changes reduce web-process CPU, filesystem activity, API latency, and
+long-running inference memory growth. They do not alter model kernels, so
+training time per epoch and single-frame inference time should not regress but
+are not expected to improve materially from the web refactor alone.
 
 ### Baked Pretrained Weights
 

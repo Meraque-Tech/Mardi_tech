@@ -5,6 +5,7 @@ ARG HOST_GID=1000
 ARG BAKE_PRETRAINED_WEIGHTS=1
 ARG INSTALL_DFINE=1
 ARG DFINE_REPO_URL=https://github.com/Peterande/D-FINE.git
+ARG DFINE_REPO_REF=
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -27,6 +28,7 @@ RUN pip3 install --no-cache-dir -r /app/vision/ai/web/requirements.txt
 
 RUN if [ "${INSTALL_DFINE}" = "1" ]; then \
         git clone --depth 1 "${DFINE_REPO_URL}" /opt/D-FINE \
+        && if [ -n "${DFINE_REPO_REF}" ]; then git -C /opt/D-FINE fetch --depth 1 origin "${DFINE_REPO_REF}" && git -C /opt/D-FINE checkout --detach FETCH_HEAD; fi \
         && if [ -f /opt/D-FINE/requirements.txt ]; then \
             pip3 install --no-cache-dir -r /opt/D-FINE/requirements.txt; \
         fi; \

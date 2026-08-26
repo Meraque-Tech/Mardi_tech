@@ -14,7 +14,7 @@ import numpy as np
 
 
 def load_qa_helpers():
-    source_path = Path(__file__).with_name("app.py")
+    source_path = Path(__file__).with_name("services") / "annotation_qa.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
     names = {
         "sam_masks_for_image",

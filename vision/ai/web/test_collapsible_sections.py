@@ -11,6 +11,22 @@ import unittest
 INDEX_HTML = Path(__file__).parent / "static" / "index.html"
 WEB_DIR = Path(__file__).parent
 APP_PY = WEB_DIR / "app.py"
+METRICS_SERVICE = WEB_DIR / "services" / "metrics.py"
+BACKEND_SOURCE_PATHS = (
+    APP_PY,
+    METRICS_SERVICE,
+    WEB_DIR / "services" / "inference.py",
+    WEB_DIR / "services" / "annotation_qa.py",
+    WEB_DIR / "routers" / "inference.py",
+    WEB_DIR / "routers" / "datasets.py",
+    WEB_DIR / "routers" / "annotation_qa.py",
+    WEB_DIR / "routers" / "testing.py",
+    WEB_DIR / "routers" / "training.py",
+)
+
+
+def backend_source() -> str:
+    return "\n".join(path.read_text(encoding="utf-8") for path in BACKEND_SOURCE_PATHS)
 APP_JS = WEB_DIR / "static" / "app.js"
 STYLES = WEB_DIR / "static" / "styles.css"
 REPORT_GENERATOR = WEB_DIR / "report_generator.py"
@@ -145,7 +161,7 @@ class CollapsibleSectionTests(unittest.TestCase):
     def test_rfdetr_nano_backend_is_exposed_with_backend_specific_controls(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
-        app_source = APP_PY.read_text(encoding="utf-8")
+        app_source = backend_source()
         train_source = (WEB_DIR.parent / "train" / "train_rfdetr.py").read_text(encoding="utf-8")
         infer_source = (WEB_DIR / "infer_rfdetr.py").read_text(encoding="utf-8")
 
@@ -188,7 +204,7 @@ class CollapsibleSectionTests(unittest.TestCase):
     def test_dfine_nano_backend_is_exposed_with_backend_specific_controls(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
-        app_source = APP_PY.read_text(encoding="utf-8")
+        app_source = backend_source()
         train_source = (WEB_DIR.parent / "train" / "train_dfine.py").read_text(encoding="utf-8")
         test_source = (WEB_DIR.parent / "train" / "test_dfine.py").read_text(encoding="utf-8")
         infer_source = (WEB_DIR / "infer_dfine.py").read_text(encoding="utf-8")
@@ -233,7 +249,7 @@ class CollapsibleSectionTests(unittest.TestCase):
 
     def test_rfdetr_progress_and_results_refresh_are_supported(self):
         script = APP_JS.read_text(encoding="utf-8")
-        app_source = APP_PY.read_text(encoding="utf-8")
+        app_source = backend_source()
         test_source = (WEB_DIR.parent / "train" / "test_rfdetr.py").read_text(encoding="utf-8")
 
         self.assertIn("RFDETR_VALIDATION_PROGRESS_RE", app_source)
@@ -285,7 +301,7 @@ class CollapsibleSectionTests(unittest.TestCase):
     def test_optional_sam_annotation_qa_controls_are_exposed(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
-        app_source = APP_PY.read_text(encoding="utf-8")
+        app_source = backend_source()
 
         for control_id in (
             "run-annotation-qa",
@@ -410,7 +426,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertGreaterEqual(source.count("keepWithNext=True"), 2)
 
     def test_log_metric_parser_handles_segmentation_rows(self):
-        app_module = ast.parse(APP_PY.read_text(encoding="utf-8"))
+        app_module = ast.parse(METRICS_SERVICE.read_text(encoding="utf-8"))
         parse_metric_row_node = next(
             node
             for node in app_module.body
@@ -459,7 +475,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         ))
 
     def test_segmentation_metrics_use_mask_columns_and_labels(self):
-        app_source = APP_PY.read_text(encoding="utf-8")
+        app_source = backend_source()
         script = APP_JS.read_text(encoding="utf-8")
         train_source = TRAIN_YOLOV8.read_text(encoding="utf-8")
         metric_source = YOLO_METRICS.read_text(encoding="utf-8")
@@ -480,7 +496,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('"Segmentation Mask Metrics by Epoch"', train_source)
 
     def test_task_aware_loss_summary_excludes_auxiliary_losses(self):
-        app_module = ast.parse(APP_PY.read_text(encoding="utf-8"))
+        app_module = ast.parse(METRICS_SERVICE.read_text(encoding="utf-8"))
         required = {
             "float_value",
             "sum_values",
@@ -629,7 +645,7 @@ class CollapsibleSectionTests(unittest.TestCase):
     def test_ultralytics_augmentation_controls_are_exposed(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
-        app_source = APP_PY.read_text(encoding="utf-8")
+        app_source = backend_source()
         train_source = TRAIN_YOLOV8.read_text(encoding="utf-8")
         expected_controls = {
             "augmentation-enabled": "augmentation_enabled",
@@ -678,7 +694,7 @@ class CollapsibleSectionTests(unittest.TestCase):
     def test_class_weighting_power_is_exposed_end_to_end(self):
         markup = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
-        app_source = APP_PY.read_text(encoding="utf-8")
+        app_source = backend_source()
         train_source = TRAIN_YOLOV8.read_text(encoding="utf-8")
         report_source = REPORT_GENERATOR.read_text(encoding="utf-8")
 
@@ -717,20 +733,26 @@ class CollapsibleSectionTests(unittest.TestCase):
 
     def test_report_downloads_use_response_filename(self):
         script = APP_JS.read_text(encoding="utf-8")
-        app_source = APP_PY.read_text(encoding="utf-8")
+        app_source = backend_source()
 
         self.assertIn('responseDownloadFilename(response, "training_report.pdf")', script)
         self.assertIn('responseDownloadFilename(response, "training_and_test_report.pdf")', script)
         self.assertNotIn('saveBlobWithBrowserDownload(await response.blob(), "training_report.pdf")', script)
         self.assertNotIn('saveBlobWithBrowserDownload(await response.blob(), "training_and_test_report.pdf")', script)
-        self.assertIn("ensure_model_report_artifacts_for_report(run_dir)\n    metrics = read_run_metrics(run_dir)", app_source)
-        self.assertIn("ensure_model_report_artifacts_for_report(training_dir)\n    training_metrics_payload = read_run_metrics(training_dir)", app_source)
+        self.assertRegex(
+            app_source,
+            r"ensure_model_report_artifacts_for_report\(run_dir\)\s+metrics = read_run_metrics\(run_dir\)",
+        )
+        self.assertRegex(
+            app_source,
+            r"ensure_model_report_artifacts_for_report\(training_dir\)\s+training_metrics_payload = read_run_metrics\(training_dir\)",
+        )
 
     def test_magic_button_adjusts_report_metrics_overlay(self):
         html = INDEX_HTML.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
         styles = STYLES.read_text(encoding="utf-8")
-        app_source = APP_PY.read_text(encoding="utf-8")
+        app_source = backend_source()
 
         self.assertIn('id="download-training-report"', html)
         self.assertIn('id="magic-metrics"', html)

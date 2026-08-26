@@ -1,3 +1,5 @@
+import { nextStatusPollDelay } from "./js/polling.js";
+
 const state = {
   source: "upload",
   datasetYaml: "",
@@ -81,6 +83,7 @@ const state = {
   annotationQaSelected: new Set(),
   annotationQaCanvasRevision: 0,
   annotationQaModels: [],
+  modelCapabilities: {},
   annotationQaRoboflowPreview: null,
   annotationQaRoboflowPreviewing: false,
   annotationQaRoboflowPublishing: false,
@@ -4658,7 +4661,8 @@ function syncInferenceControls() {
   const source = selectedInferenceWeightSource();
   $("inference-selected-weight-wrap").hidden = source !== "selected";
   $("inference-upload-weight-wrap").hidden = source !== "upload";
-  const hasSelectedWeight = $("inference-weight-select").value !== "";
+  const selectedWeightOption = $("inference-weight-select").selectedOptions[0];
+  const hasSelectedWeight = $("inference-weight-select").value !== "" && !selectedWeightOption?.disabled;
   const uploadedWeight = $("inference-weight-file").files[0];
   const uploadedSuffix = inferenceWeightSuffix(uploadedWeight);
   const uploadFamily = $("inference-upload-family").value;
@@ -4706,7 +4710,9 @@ function renderInferenceWeights(weights) {
     const option = document.createElement("option");
     option.value = weight.path;
     const format = weight.format ? weight.format.toUpperCase() : "PT";
-    option.textContent = `${weight.label} [${format}] (${formatBytes(weight.size)})`;
+    option.disabled = weight.inference_supported === false;
+    option.textContent = `${weight.label} [${format}] (${formatBytes(weight.size)})${option.disabled ? " — inference unavailable" : ""}`;
+    option.title = weight.unsupported_reason || "";
     select.appendChild(option);
   });
   $("inference-weights-status").textContent = `${weights.length} .pt/.onnx weight file${weights.length === 1 ? "" : "s"} available from runs.`;
@@ -5388,6 +5394,9 @@ async function clearStorageTarget(key, options = {}) {
 async function loadConfig() {
   const config = await apiJson("/api/config");
   state.annotationQaModels = Array.isArray(config.annotation_qa_models) ? config.annotation_qa_models : [];
+  state.modelCapabilities = Object.fromEntries(
+    (Array.isArray(config.models) ? config.models : []).map((model) => [model.id, model.capabilities || {}]),
+  );
   $("data-root").textContent = `Dataset workspace: ${config.data_root}`;
   $("device").value = config.default_device || "";
   $("test-device").value = config.default_device || "";
@@ -6590,6 +6599,33 @@ async function pollStatus() {
   }
 }
 
+function statusPollingBusy() {
+  return state.running
+    || state.isPreparing
+    || state.isStarting
+    || state.isStopping
+    || state.testRunning
+    || state.testStarting
+    || state.testStopping
+    || state.annotationQaRunning
+    || state.annotationQaStopping
+    || state.inferenceRunning
+    || state.inferenceStopping;
+}
+
+function scheduleStatusPoll() {
+  if (state.pollTimer) {
+    window.clearTimeout(state.pollTimer);
+  }
+  state.pollTimer = window.setTimeout(async () => {
+    await pollStatus();
+    scheduleStatusPoll();
+  }, nextStatusPollDelay({
+    hidden: document.hidden,
+    busy: statusPollingBusy(),
+  }));
+}
+
 async function refreshLogs() {
   const button = $("refresh-logs");
   button.disabled = true;
@@ -7004,6 +7040,13 @@ presetControlIds.forEach((id) => {
   }
 });
 window.addEventListener("resize", redrawChartsSoon);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    pollStatus().finally(scheduleStatusPoll);
+  } else {
+    scheduleStatusPoll();
+  }
+});
 
 const trainingGuide = $("training-guide");
 try {
@@ -7038,5 +7081,4 @@ renderEpochProgress();
 syncActionStates();
 loadTrainingSessions().catch((error) => setTrainingSessionStatus(trainingSessionErrorMessage(error), true));
 loadInferenceWeights().catch((error) => setInferenceMessage(error.message, true));
-state.pollTimer = window.setInterval(pollStatus, 2500);
-pollStatus();
+pollStatus().finally(scheduleStatusPoll);
