@@ -1,6 +1,6 @@
 """Tests for the YOLO training augmentation configuration."""
 
-from argparse import Namespace
+from argparse import ArgumentTypeError, Namespace
 
 from vision.ai.train.train_yolov8 import (
     DISABLED_TRAINING_AUGMENTATIONS,
@@ -11,11 +11,23 @@ from vision.ai.train.train_yolov8 import (
     get_training_config,
     should_disable_ultralytics_albumentations,
     training_augmentation_summary,
+    unit_interval,
 )
 
 
 def test_default_optimizer_uses_ultralytics_auto_selection():
     assert TRAINING_CONFIG["optimizer"] == "auto"
+    assert TRAINING_CONFIG["cls_pw"] == 0.0
+
+
+def test_class_weighting_power_accepts_only_unit_interval_values():
+    assert unit_interval("0.25") == 0.25
+    assert unit_interval("1") == 1.0
+
+    import pytest
+
+    with pytest.raises(ArgumentTypeError):
+        unit_interval("1.1")
 
 
 def test_augmentation_is_disabled_by_default():

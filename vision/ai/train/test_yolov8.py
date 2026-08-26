@@ -8,12 +8,22 @@ import os
 import time
 from pathlib import Path
 
-from train_yolov8 import (
-    IMAGE_EXTENSIONS,
-    ROC_AUC_BATCH_SIZE,
-    iter_batched_predictions,
-    use_actual_confusion_matrix_axis_label,
-)
+try:
+    from .train_yolov8 import (
+        IMAGE_EXTENSIONS,
+        ROC_AUC_BATCH_SIZE,
+        iter_batched_predictions,
+        use_actual_confusion_matrix_axis_label,
+    )
+    from .yolo_metrics import build_yolo_metric_families
+except ImportError:
+    from train_yolov8 import (
+        IMAGE_EXTENSIONS,
+        ROC_AUC_BATCH_SIZE,
+        iter_batched_predictions,
+        use_actual_confusion_matrix_axis_label,
+    )
+    from yolo_metrics import build_yolo_metric_families
 
 
 WEB_TEST_PROGRESS_PREFIX = "WEB_TEST_PROGRESS"
@@ -107,44 +117,8 @@ def build_speed_payload(metrics, image_count: int | None, evaluation_seconds, ro
     }
 
 
-def build_per_class_metrics(metrics) -> dict:
-    if metrics is None or not hasattr(metrics, "summary"):
-        return {"macro_f1": None, "weighted_f1": None, "per_class": []}
-
-    classes = []
-    for row in metrics.summary():
-        precision = rounded_metric(row.get("Box-P"))
-        recall = rounded_metric(row.get("Box-R"))
-        f1 = rounded_metric(row.get("Box-F1"))
-        images = int(row.get("Images") or 0)
-        instances = int(row.get("Instances") or 0)
-        classes.append(
-            {
-                "class_name": str(row.get("Class", "")),
-                "images": images,
-                "instances": instances,
-                "precision": precision,
-                "recall": recall,
-                "f1": f1,
-                "map50": rounded_metric(row.get("mAP50")),
-                "map50_95": rounded_metric(row.get("mAP50-95")),
-            }
-        )
-
-    macro_f1 = None
-    if classes:
-        macro_f1 = sum(row["f1"] or 0 for row in classes) / len(classes)
-
-    total_instances = sum(row["instances"] for row in classes)
-    weighted_f1 = None
-    if total_instances:
-        weighted_f1 = sum((row["f1"] or 0) * row["instances"] for row in classes) / total_instances
-
-    return {
-        "macro_f1": rounded_metric(macro_f1),
-        "weighted_f1": rounded_metric(weighted_f1),
-        "per_class": classes,
-    }
+def build_per_class_metrics(metrics, task: str | None = None) -> dict:
+    return build_yolo_metric_families(metrics, task)
 
 
 def normalize_class_names(names) -> dict[int, str]:
@@ -433,13 +407,26 @@ def main():
 
     image_count = len(collect_split_images(resolve_dataset_entries(data_config, args.split))) if data_config else None
 
-    payload = build_per_class_metrics(metrics)
+    task = "segment" if getattr(metrics, "seg", None) is not None else "detect"
+    payload = build_per_class_metrics(metrics, task)
+    for overall in payload.get("overall_by_type", {}).values():
+        if overall:
+            overall["source"] = f"{args.split}_checkpoint_validation"
+    if payload.get("overall"):
+        payload["overall"]["source"] = f"{args.split}_checkpoint_validation"
+    payload["per_class_source"] = f"{args.split}_checkpoint_validation"
+    payload["per_class_note"] = (
+        f"Per-class {payload.get('primary_metric_type', 'box')} metrics were calculated on the {args.split} split."
+    )
+    if payload.get("metric_warnings"):
+        payload["per_class_note"] += " " + " ".join(payload["metric_warnings"])
+    print(f"Ultralytics metric summary keys: {payload.get('metric_summary_keys', [])}", flush=True)
     payload.update(
         {
-            "precision": rounded_metric(getattr(metrics.box, "mp", None)),
-            "recall": rounded_metric(getattr(metrics.box, "mr", None)),
-            "map50": rounded_metric(getattr(metrics.box, "map50", None)),
-            "map50_95": rounded_metric(getattr(metrics.box, "map", None)),
+            "precision": payload.get("overall", {}).get("precision"),
+            "recall": payload.get("overall", {}).get("recall"),
+            "map50": payload.get("overall", {}).get("map50"),
+            "map50_95": payload.get("overall", {}).get("map50_95"),
             "split": args.split,
             "weights": str(weights_path),
             "dataset_yaml": str(data_path),

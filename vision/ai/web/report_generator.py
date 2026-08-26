@@ -434,6 +434,7 @@ def _short_config_rows(context: dict, run_dir: Path) -> list[list]:
             ("Optimizer", "optimizer"),
             ("Initial LR", "lr0"),
             ("Final LR factor", "lrf"),
+            ("Class weighting power", "cls_pw"),
             ("Cosine LR", "cos_lr"),
             ("Early-stopping patience", "patience"),
             ("Transfer-learning checkpoint", "model"),
@@ -564,16 +565,18 @@ def _has_metric_value(rows: list[dict], key: str) -> bool:
 
 def _per_class_table_rows(metrics: dict) -> tuple[list[list], list[float]]:
     classes = metrics.get("per_class") or []
+    metric_type = str(metrics.get("primary_metric_type") or metrics.get("metric_type") or "").lower()
+    metric_prefix = "Mask " if metric_type == "mask" else "Box " if metric_type == "box" else ""
     columns = [
         ("class_name", "Class", 42 * 1.0, "text"),
         ("instances", "Instances", 24 * 1.0, "count"),
     ]
     optional = (
-        ("precision", "Precision", 26 * 1.0),
-        ("recall", "Recall", 24 * 1.0),
-        ("f1", "F1", 22 * 1.0),
-        ("map50", "AP50", 24 * 1.0),
-        ("map50_95", "AP50-95", 28 * 1.0),
+        ("precision", f"{metric_prefix}Precision", 26 * 1.0),
+        ("recall", f"{metric_prefix}Recall", 24 * 1.0),
+        ("f1", f"{metric_prefix}F1", 22 * 1.0),
+        ("map50", f"{metric_prefix}AP50", 24 * 1.0),
+        ("map50_95", f"{metric_prefix}AP50-95", 28 * 1.0),
     )
     for key, label, width in optional:
         if _has_metric_value(classes, key):
@@ -1193,11 +1196,21 @@ def _add_validation_performance(builder: _ReportBuilder, run_dir: Path, metrics:
             "Small",
         )
     if classes:
+        metric_type = str(metrics.get("primary_metric_type") or metrics.get("metric_type") or "").title()
+        if metric_type:
+            builder.heading(f"Per-Class {metric_type} Validation Metrics", 3)
         rows, widths = _per_class_table_rows(metrics)
         if rows:
             builder.table(rows, widths=[width * builder.mm for width in widths])
         elif metrics.get("per_class_note"):
             builder.paragraph(_text(metrics.get("per_class_note")), "Small")
+    secondary_box = metrics.get("per_class_box") or []
+    if metrics.get("primary_metric_type") == "mask" and secondary_box:
+        builder.heading("Per-Class Box Validation Metrics", 3)
+        box_metrics = dict(metrics, per_class=secondary_box, primary_metric_type="box")
+        rows, widths = _per_class_table_rows(box_metrics)
+        if rows:
+            builder.table(rows, widths=[width * builder.mm for width in widths])
 
     for filename, caption in (
         ("confusion_matrix_normalized.png", "Normalized validation confusion matrix"),
@@ -1454,7 +1467,8 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
     ], widths=[70 * builder.mm, 52 * builder.mm, 53 * builder.mm])
     classes = metrics.get("per_class") or []
     if classes:
-        builder.heading("Per-Class Test Metrics")
+        metric_type = str(metrics.get("primary_metric_type") or metrics.get("metric_type") or "").title()
+        builder.heading(f"Per-Class {metric_type + ' ' if metric_type else ''}Test Metrics")
         weak = _weak_classes(metrics)
         if weak:
             builder.paragraph(
@@ -1470,6 +1484,13 @@ def _add_test(builder: _ReportBuilder, test_dir: Path, context: dict, metrics: d
             builder.table(rows, widths=[width * builder.mm for width in widths])
         elif metrics.get("per_class_note"):
             builder.paragraph(_text(metrics.get("per_class_note")), "Small")
+    secondary_box = metrics.get("per_class_box") or []
+    if metrics.get("primary_metric_type") == "mask" and secondary_box:
+        builder.heading("Per-Class Box Test Metrics")
+        box_metrics = dict(metrics, per_class=secondary_box, primary_metric_type="box")
+        rows, widths = _per_class_table_rows(box_metrics)
+        if rows:
+            builder.table(rows, widths=[width * builder.mm for width in widths])
     auc_classes = (metrics.get("roc_auc") or {}).get("classes") or []
     if auc_classes:
         builder.heading("Per-Class Test ROC-AUC")

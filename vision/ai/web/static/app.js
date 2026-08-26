@@ -138,6 +138,7 @@ const CONTROL_DEFAULTS = {
   lr0: 0.001,
   lrf: 0.01,
   "weight-decay": 0.0005,
+  "cls-pw": 0.0,
   "warmup-epochs": 3.0,
   freeze: "",
   "cos-lr": false,
@@ -284,6 +285,7 @@ const TRAINING_PRESETS = {
     lr0: 0.01,
     lrf: 0.01,
     "weight-decay": 0.0005,
+    "cls-pw": 0.0,
     "warmup-epochs": 3.0,
     "cos-lr": false,
     ...AUGMENTATION_DEFAULTS,
@@ -299,6 +301,7 @@ const TRAINING_PRESETS = {
     lr0: 0.005,
     lrf: 0.01,
     "weight-decay": 0.0005,
+    "cls-pw": 0.0,
     "warmup-epochs": 3.0,
     "cos-lr": true,
     ...AUGMENTATION_DEFAULTS,
@@ -314,6 +317,7 @@ const TRAINING_PRESETS = {
     lr0: 0.01,
     lrf: 0.01,
     "weight-decay": 0.0005,
+    "cls-pw": 0.0,
     "warmup-epochs": 1.0,
     "cos-lr": false,
     ...AUGMENTATION_DEFAULTS,
@@ -329,6 +333,7 @@ const TRAINING_PRESETS = {
     lr0: 0.006,
     lrf: 0.01,
     "weight-decay": 0.0005,
+    "cls-pw": 0.0,
     "warmup-epochs": 3.0,
     "cos-lr": true,
     ...AUGMENTATION_DEFAULTS,
@@ -1795,42 +1800,100 @@ function renderTestRocAuc(rocAuc = {}, artifacts = {}) {
     : (rocAuc.note || "ROC-AUC will appear after the test evaluation finishes.");
 }
 
-function renderTestClassMetrics(classes) {
-  const container = $("test-class-metrics");
-  if (!Array.isArray(classes) || !classes.length) {
+function metricFamilyRows(payload, family) {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+  const explicit = payload[`per_class_${family}`];
+  if (Array.isArray(explicit)) {
+    return explicit;
+  }
+  const primary = payload.primary_metric_type || payload.metric_type || "box";
+  if (primary === "mask" && Number(payload.metric_schema_version || 0) < 2) {
+    return [];
+  }
+  return family === primary && Array.isArray(payload.per_class) ? payload.per_class : [];
+}
+
+function renderMetricFamilyTable(container, payload, titlePrefix = "Per-Class", selectedFamily = null) {
+  if (!container) {
+    return;
+  }
+  if (!payload || typeof payload !== "object") {
     container.innerHTML = "";
     return;
   }
+  const primary = payload.primary_metric_type || payload.metric_type || "box";
+  const isSegment = primary === "mask" || payload.task === "segment";
+  const schemaIsExplicit = Number(payload.metric_schema_version || 0) >= 2;
+  const families = isSegment ? ["mask", "box"] : ["box"];
+  const family = families.includes(selectedFamily) ? selectedFamily : primary;
+  const rows = metricFamilyRows(payload, family);
+  const familyLabel = family === "mask" ? "Mask" : "Box";
+  const warnings = Array.isArray(payload.metric_warnings) ? payload.metric_warnings : [];
+  const warningText = warnings.length
+    ? `<p class="field-help metric-family-warning">${escapeHtml(warnings.join(" "))}</p>`
+    : (!schemaIsExplicit && isSegment
+      ? '<p class="field-help metric-family-warning">Legacy per-class metrics are unverified. Revalidate best.pt to generate explicit mask and box metrics.</p>'
+      : "");
+  const controls = families.length > 1 ? `
+    <div class="button-row metric-family-tabs" role="tablist" aria-label="Per-class metric type">
+      ${families.map((item) => {
+        const label = item === "mask" ? "Mask" : "Box";
+        const available = metricFamilyRows(payload, item).length > 0;
+        return `<button class="secondary compact" type="button" data-metric-family="${item}" aria-pressed="${item === family}" ${available ? "" : "disabled"}>${label}</button>`;
+      }).join("")}
+    </div>` : "";
 
-  const rows = classes.map((item) => `
-    <tr>
-      <td>${escapeHtml(item.class_name)}</td>
-      <td>${item.instances}</td>
-      <td>${metricText(item.map50)}</td>
-      <td>${metricText(item.map50_95)}</td>
-      <td>${metricText(item.f1)}</td>
-      <td>${metricText(item.precision)}</td>
-      <td>${metricText(item.recall)}</td>
-    </tr>
-  `).join("");
+  if (!rows.length) {
+    container.innerHTML = `
+      <h4>${escapeHtml(titlePrefix)} ${familyLabel} Metrics</h4>
+      ${controls}
+      ${warningText}
+      <p>${familyLabel} per-class metrics are unavailable for this evaluation.</p>
+    `;
+  } else {
+    const body = rows.map((item) => `
+      <tr>
+        <td>${escapeHtml(item.class_name)}</td>
+        <td>${item.instances}</td>
+        <td>${metricText(item.map50)}</td>
+        <td>${metricText(item.map50_95)}</td>
+        <td>${metricText(item.f1)}</td>
+        <td>${metricText(item.precision)}</td>
+        <td>${metricText(item.recall)}</td>
+      </tr>
+    `).join("");
+    container.innerHTML = `
+      <h4>${escapeHtml(titlePrefix)} ${familyLabel} Metrics</h4>
+      ${controls}
+      ${warningText}
+      <table>
+        <thead>
+          <tr>
+            <th>Class</th>
+            <th>Instances</th>
+            <th>${familyLabel} AP50</th>
+            <th>${familyLabel} AP50-95</th>
+            <th>${familyLabel} F1</th>
+            <th>${familyLabel} Precision</th>
+            <th>${familyLabel} Recall</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    `;
+  }
+  container.querySelectorAll("[data-metric-family]").forEach((button) => {
+    button.addEventListener("click", () => {
+      renderMetricFamilyTable(container, payload, titlePrefix, button.dataset.metricFamily);
+    });
+  });
+}
 
-  container.innerHTML = `
-    <h4>Per-Class Test Metrics</h4>
-    <table>
-      <thead>
-        <tr>
-          <th>Class</th>
-          <th>Instances</th>
-          <th>AP50</th>
-          <th>AP50-95</th>
-          <th>F1</th>
-          <th>Precision</th>
-          <th>Recall</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+function renderTestClassMetrics(payload) {
+  const container = $("test-class-metrics");
+  renderMetricFamilyTable(container, payload, "Per-Class Test");
 }
 
 function setTestArtifactButtons(artifacts) {
@@ -1899,42 +1962,9 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function renderClassMetrics(classes) {
+function renderClassMetrics(payload) {
   const container = $("class-metrics");
-  if (!Array.isArray(classes) || !classes.length) {
-    container.innerHTML = "";
-    return;
-  }
-
-  const rows = classes.map((item) => `
-    <tr>
-      <td>${escapeHtml(item.class_name)}</td>
-      <td>${item.instances}</td>
-      <td>${metricText(item.map50)}</td>
-      <td>${metricText(item.map50_95)}</td>
-      <td>${metricText(item.f1)}</td>
-      <td>${metricText(item.precision)}</td>
-      <td>${metricText(item.recall)}</td>
-    </tr>
-  `).join("");
-
-  container.innerHTML = `
-    <h4>Per-Class Metrics</h4>
-    <table>
-      <thead>
-        <tr>
-          <th>Class</th>
-          <th>Instances</th>
-          <th>AP50</th>
-          <th>AP50-95</th>
-          <th>F1</th>
-          <th>Precision</th>
-          <th>Recall</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+  renderMetricFamilyTable(container, payload, "Per-Class");
 }
 
 function renderDatasetSummary(summary) {
@@ -5621,6 +5651,7 @@ async function startTraining() {
         lr0: numberValue("lr0"),
         lrf: numberValue("lrf"),
         weight_decay: numberValue("weight-decay"),
+        cls_pw: numberValue("cls-pw"),
         cos_lr: $("cos-lr").checked,
         warmup_epochs: numberValue("warmup-epochs"),
         freeze: optionalNumberValue("freeze"),
@@ -5760,7 +5791,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
       $("metric-map50").textContent = "-";
       $("metric-map").textContent = "-";
       renderBestMetrics(null);
-      renderClassMetrics([]);
+      renderClassMetrics(null);
       resetCharts();
       setArtifactButtons(metrics.artifacts || false);
       setMagicAdjustedState();
@@ -5783,7 +5814,7 @@ async function refreshMetrics(target = weightTarget(), revision = state.targetRe
     $("metric-map50").textContent = metricText(metrics.map50);
     $("metric-map").textContent = metricText(metrics.map50_95);
     renderBestMetrics(metrics.best, metrics.history, metrics.metric_labels);
-    renderClassMetrics(metrics.per_class);
+    renderClassMetrics(metrics);
     renderMetricCharts(metrics.history, metrics.metric_labels);
     setArtifactButtons(metrics.artifacts || true);
     setMagicAdjustedState(metrics);
@@ -6333,7 +6364,7 @@ async function refreshTestResults() {
       $("test-metric-map50").textContent = "-";
       $("test-metric-map").textContent = "-";
       renderTestTiming({});
-      renderTestClassMetrics([]);
+      renderTestClassMetrics(null);
       renderTestConfusionMatrices({});
       renderTestRocAuc({}, {});
       setTestArtifactButtons({});
@@ -6351,7 +6382,7 @@ async function refreshTestResults() {
     $("test-metric-map50").textContent = metricText(results.map50);
     $("test-metric-map").textContent = metricText(results.map50_95);
     renderTestTiming(results.timing);
-    renderTestClassMetrics(results.per_class);
+    renderTestClassMetrics(results);
     renderTestConfusionMatrices(results.artifacts || {});
     renderTestRocAuc(results.roc_auc || {}, results.artifacts || {});
     setTestArtifactButtons(results.artifacts || {});

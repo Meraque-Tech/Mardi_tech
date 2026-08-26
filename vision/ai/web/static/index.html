@@ -702,6 +702,10 @@
                 <span class="tooltip-label" tabindex="0" data-tooltip="Weight decay for a manually selected optimizer. With Auto, the Ultralytics default is used.">Weight decay</span>
                 <input id="weight-decay" type="number" min="0" step="0.0001" value="0.0005">
               </label>
+              <label data-ultralytics-only>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Inverse-frequency class weighting power. 0 disables weighting; values such as 0.25 or 0.5 progressively emphasize less frequent classes.">Class weighting power</span>
+                <input id="cls-pw" type="number" min="0" max="1" step="0.05" value="0">
+              </label>
             </div>
             </div>
 
@@ -972,7 +976,7 @@
               <div class="field-header">
                 <div>
                   <h4 id="roc-auc-title">ROC-AUC</h4>
-                  <p>Image-level one-vs-rest ROC on the validation split, alongside box-level per-class AP below.</p>
+                  <p>Image-level one-vs-rest ROC on the validation split. Segmentation runs show separate mask and box per-class metrics below.</p>
                 </div>
               </div>
               <div class="roc-auc-grid">

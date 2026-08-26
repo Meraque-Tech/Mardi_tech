@@ -10,6 +10,11 @@ import json
 import os
 from pathlib import Path
 
+try:
+    from .yolo_metrics import build_yolo_metric_families
+except ImportError:
+    from yolo_metrics import build_yolo_metric_families
+
 
 # Edit these defaults for normal training. Command-line flags can still
 # override any value here when you want to run a one-off experiment.
@@ -30,6 +35,7 @@ TRAINING_CONFIG = {
     "lr0": 0.001,
     "lrf": 0.01,
     "weight_decay": 0.0005,
+    "cls_pw": 0.0,
     "cos_lr": False,
     "warmup_epochs": 3.0,
     "freeze": None,
@@ -158,6 +164,13 @@ def none_or_text(value: str):
     return normalized
 
 
+def unit_interval(value: str) -> float:
+    parsed = float(value)
+    if not 0.0 <= parsed <= 1.0:
+        raise argparse.ArgumentTypeError("Expected a value from 0.0 to 1.0.")
+    return parsed
+
+
 def set_activation(name: str):
     normalized = (name or "silu").strip().lower().replace("-", "_")
     try:
@@ -258,6 +271,12 @@ def parse_args():
         type=float,
         default=None,
         help="Weight decay regularization. Overrides TRAINING_CONFIG.",
+    )
+    parser.add_argument(
+        "--cls-pw",
+        type=unit_interval,
+        default=None,
+        help="Inverse-frequency class weighting power from 0.0 to 1.0.",
     )
     parser.add_argument(
         "--cos-lr",
@@ -591,46 +610,9 @@ def normalize_class_names(names) -> dict[int, str]:
     return {}
 
 
-def build_per_class_metrics(metrics) -> dict:
-    if metrics is None or not hasattr(metrics, "summary"):
-        return {"macro_f1": None, "weighted_f1": None, "per_class": []}
-
-    classes = []
-    for row in metrics.summary():
-        use_mask = "Mask-P" in row or "Mask-R" in row or "Mask-F1" in row
-        metric_prefix = "Mask" if use_mask else "Box"
-        precision = rounded_metric(row.get(f"{metric_prefix}-P"))
-        recall = rounded_metric(row.get(f"{metric_prefix}-R"))
-        f1 = rounded_metric(row.get(f"{metric_prefix}-F1"))
-        images = int(row.get("Images") or 0)
-        instances = int(row.get("Instances") or 0)
-        classes.append(
-            {
-                "class_name": str(row.get("Class", "")),
-                "images": images,
-                "instances": instances,
-                "precision": precision,
-                "recall": recall,
-                "f1": f1,
-                "map50": rounded_metric(row.get(f"{metric_prefix}-mAP50", row.get("mAP50"))),
-                "map50_95": rounded_metric(row.get(f"{metric_prefix}-mAP50-95", row.get("mAP50-95"))),
-            }
-        )
-
-    macro_f1 = None
-    if classes:
-        macro_f1 = sum(row["f1"] or 0 for row in classes) / len(classes)
-
-    total_instances = sum(row["instances"] for row in classes)
-    weighted_f1 = None
-    if total_instances:
-        weighted_f1 = sum((row["f1"] or 0) * row["instances"] for row in classes) / total_instances
-
-    return {
-        "macro_f1": rounded_metric(macro_f1),
-        "weighted_f1": rounded_metric(weighted_f1),
-        "per_class": classes,
-    }
+def build_per_class_metrics(metrics, task: str | None = None) -> dict:
+    """Build explicit box/mask families with a task-appropriate primary alias."""
+    return build_yolo_metric_families(metrics, task)
 
 
 def resolve_dataset_entries(data_config: dict, split_name: str) -> list[Path]:
@@ -836,18 +818,13 @@ def build_image_level_roc_auc(run_dir: Path, weights_path: Path, data_config: di
     }
 
 
-def build_overall_metrics(metrics) -> dict:
-    """Return overall validation metrics for the evaluated checkpoint."""
-    box = getattr(metrics, "box", None)
-    if box is None:
-        return {}
-    return {
-        "precision": rounded_metric(getattr(box, "mp", None)),
-        "recall": rounded_metric(getattr(box, "mr", None)),
-        "map50": rounded_metric(getattr(box, "map50", None)),
-        "map50_95": rounded_metric(getattr(box, "map", None)),
-        "source": "best_checkpoint_validation",
-    }
+def validation_metric_task(metrics, config: dict) -> str:
+    model_name = str(config.get("model") or "").lower()
+    if getattr(metrics, "seg", None) is not None or "-seg" in model_name:
+        return "segment"
+    if "-cls" in model_name:
+        return "classify"
+    return "detect"
 
 
 def validate_best_checkpoint(weights_path: Path, config: dict):
@@ -893,16 +870,24 @@ def save_web_metrics(run_dir: Path, metrics, data_config: dict, config: dict):
         except Exception as exc:
             print(f"Could not validate best checkpoint for web metrics: {exc}", flush=True)
 
-    payload = build_per_class_metrics(evaluated_metrics)
-    payload["overall"] = build_overall_metrics(evaluated_metrics)
+    metric_task = validation_metric_task(evaluated_metrics, config)
+    payload = build_per_class_metrics(evaluated_metrics, metric_task)
+    for overall in payload.get("overall_by_type", {}).values():
+        if overall:
+            overall["source"] = "best_checkpoint_validation"
+    if payload.get("overall"):
+        payload["overall"]["source"] = "best_checkpoint_validation"
     payload["per_class_source"] = (
         "best_checkpoint_validation" if evaluated_metrics is not metrics else "training_final_metrics"
     )
     payload["per_class_note"] = (
-        "Per-class metrics were calculated by validating best.pt."
+        f"Per-class {payload.get('primary_metric_type', 'box')} metrics were calculated by validating best.pt."
         if evaluated_metrics is not metrics
         else "Per-class metrics came from the final training metrics because best.pt validation was unavailable."
     )
+    if payload.get("metric_warnings"):
+        payload["per_class_note"] += " " + " ".join(payload["metric_warnings"])
+    print(f"Ultralytics metric summary keys: {payload.get('metric_summary_keys', [])}", flush=True)
     payload["training_completed"] = True
     payload["best_checkpoint"] = str(weights_path) if weights_path.is_file() else None
 
@@ -1036,6 +1021,7 @@ def main():
         "project": config["project"],
         "name": config["name"],
         "resume": config["resume"],
+        "cls_pw": config["cls_pw"],
         **get_optimizer_train_kwargs(config),
         **get_training_augmentations(config),
     }

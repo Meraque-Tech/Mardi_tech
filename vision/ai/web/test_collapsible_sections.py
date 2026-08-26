@@ -18,6 +18,7 @@ DOCKERFILE_CUDA = WEB_DIR / "Dockerfile.cuda"
 TRAIN_WEB_COMPOSE = WEB_DIR / "docker-compose.train_web.yml"
 BAKE_WEIGHTS_SCRIPT = WEB_DIR / "scripts" / "bake_pretrained_weights.py"
 TRAIN_YOLOV8 = WEB_DIR.parent / "train" / "train_yolov8.py"
+YOLO_METRICS = WEB_DIR.parent / "train" / "yolo_metrics.py"
 EXPECTED_PANELS = {
     "dataset",
     "annotation-qa",
@@ -461,6 +462,7 @@ class CollapsibleSectionTests(unittest.TestCase):
         app_source = APP_PY.read_text(encoding="utf-8")
         script = APP_JS.read_text(encoding="utf-8")
         train_source = TRAIN_YOLOV8.read_text(encoding="utf-8")
+        metric_source = YOLO_METRICS.read_text(encoding="utf-8")
 
         self.assertIn('"metrics/mAP50(M)"', app_source)
         self.assertIn('"metrics/mAP50-95(M)"', app_source)
@@ -472,7 +474,9 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn('"metrics/mAP50(M)"', train_source)
         self.assertIn('"metrics/accuracy_top1"', train_source)
         self.assertIn('"Classification Metrics by Epoch"', train_source)
-        self.assertIn('"Mask" if use_mask else "Box"', train_source)
+        self.assertIn("build_yolo_metric_families(metrics, task)", train_source)
+        self.assertIn('primary_type = "mask" if normalized_task == "segment" else "box"', metric_source)
+        self.assertIn("box metrics were not substituted", metric_source)
         self.assertIn('"Segmentation Mask Metrics by Epoch"', train_source)
 
     def test_task_aware_loss_summary_excludes_auxiliary_losses(self):
@@ -670,6 +674,28 @@ class CollapsibleSectionTests(unittest.TestCase):
         self.assertIn("--auto-augment", app_source)
         self.assertIn("get_training_augmentations(config)", train_source)
         self.assertIn("nullcontext()", train_source)
+
+    def test_class_weighting_power_is_exposed_end_to_end(self):
+        markup = INDEX_HTML.read_text(encoding="utf-8")
+        script = APP_JS.read_text(encoding="utf-8")
+        app_source = APP_PY.read_text(encoding="utf-8")
+        train_source = TRAIN_YOLOV8.read_text(encoding="utf-8")
+        report_source = REPORT_GENERATOR.read_text(encoding="utf-8")
+
+        self.assertIn('id="cls-pw" type="number" min="0" max="1"', markup)
+        self.assertIn('cls_pw: numberValue("cls-pw")', script)
+        self.assertIn('cls_pw: float = Field(default=0.0, ge=0, le=1)', app_source)
+        self.assertIn('"--cls-pw", str(request.cls_pw)', app_source)
+        self.assertIn('"cls_pw": config["cls_pw"]', train_source)
+        self.assertIn('("Class weighting power", "cls_pw")', report_source)
+
+    def test_segmentation_metric_families_are_explicit_in_ui(self):
+        script = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn('payload[`per_class_${family}`]', script)
+        self.assertIn('families = isSegment ? ["mask", "box"] : ["box"]', script)
+        self.assertIn('${familyLabel} AP50-95', script)
+        self.assertIn('Legacy per-class metrics are unverified', script)
 
     def test_rfdetr_report_config_uses_backend_specific_rows(self):
         source = REPORT_GENERATOR.read_text(encoding="utf-8")

@@ -370,6 +370,19 @@ for train, then validation, then test, and are reported in the dataset summary.
 
 The backend runs `train_yolov8.py` in the background.
 
+### Revalidate per-class box and mask metrics
+
+Runs created before explicit box/mask metric families were introduced can be
+refreshed without retraining. From inside the training container, run:
+
+```bash
+python3 /app/vision/ai/train/revalidate_yolo_metrics.py \
+  --run-dir /app/runs/segment/<run-name>
+```
+
+The command validates `weights/best.pt` on the configured validation split and
+updates `web_metrics.json`. It preserves unrelated post-training artifacts.
+
 ## Training Parameters
 
 Basic controls:

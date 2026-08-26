@@ -408,6 +408,7 @@ class TrainRequest(BaseModel):
     lr0: float = Field(default=0.001, gt=0)
     lrf: float = Field(default=0.01, gt=0)
     weight_decay: float = Field(default=0.0005, ge=0)
+    cls_pw: float = Field(default=0.0, ge=0, le=1)
     cos_lr: bool = False
     warmup_epochs: float = Field(default=3.0, ge=0)
     freeze: Optional[int] = Field(default=None, ge=0)
@@ -2857,6 +2858,26 @@ def apply_magic_metrics_overlay(run_dir: Path, metrics: dict) -> dict:
         return metrics
     merged = dict(metrics)
     merged.update(adjusted)
+    primary_type = str(merged.get("primary_metric_type") or merged.get("metric_type") or "").lower()
+    if primary_type in {"box", "mask"} and isinstance(merged.get("per_class"), list):
+        merged[f"per_class_{primary_type}"] = merged["per_class"]
+        families = dict(merged.get("metric_families") or {})
+        primary_family = dict(families.get(primary_type) or {})
+        primary_family.update({
+            "per_class": merged["per_class"],
+            "macro_f1": merged.get("macro_f1"),
+            "weighted_f1": merged.get("weighted_f1"),
+        })
+        families[primary_type] = primary_family
+        merged["metric_families"] = families
+        primary_overall = {
+            key: merged.get(key)
+            for key in ("precision", "recall", "map50", "map50_95")
+        }
+        merged["overall"] = primary_overall
+        overall_by_type = dict(merged.get("overall_by_type") or {})
+        overall_by_type[primary_type] = primary_overall
+        merged["overall_by_type"] = overall_by_type
     merged["magic_adjusted"] = True
     merged["magic_created_at"] = overlay.get("created_at")
     merged["magic_original"] = overlay.get("original") if isinstance(overlay.get("original"), dict) else {}
@@ -3304,7 +3325,13 @@ def read_run_metrics(run_dir: Path, include_magic: bool = True) -> dict:
         "weighted_f1": web_metrics.get("weighted_f1"),
         "classes": web_metrics.get("per_class"),
     }
-    if not isinstance(class_metrics["classes"], list) or not class_metrics["classes"]:
+    explicit_metric_schema = int(web_metrics.get("metric_schema_version") or 0) >= 2
+    if task == "segment" and not explicit_metric_schema:
+        class_metrics = {"macro_f1": None, "weighted_f1": None, "classes": []}
+    if (
+        task != "segment"
+        and (not isinstance(class_metrics["classes"], list) or not class_metrics["classes"])
+    ):
         run_log = find_training_log_for_run(run_dir)
         if run_log is not None:
             class_metrics = parse_class_metrics_from_log(run_log)
@@ -3323,6 +3350,12 @@ def read_run_metrics(run_dir: Path, include_magic: bool = True) -> dict:
         else "Macro and weighted F1 are calculated from per-class validation rows when available. "
         + loss_note(losses)
     )
+    if task == "segment" and not explicit_metric_schema:
+        metrics_note = (
+            "Legacy per-class segmentation metrics are hidden because their box/mask family is unverified. "
+            "Revalidate best.pt to generate explicit mask and box metrics. "
+            + metrics_note
+        )
     training_completed = web_metrics.get("training_completed")
     if training_completed is False:
         metrics_note = "Training did not complete successfully; checkpoints and metrics may be partial. " + metrics_note
@@ -3337,6 +3370,15 @@ def read_run_metrics(run_dir: Path, include_magic: bool = True) -> dict:
         "metric_sources": web_metrics.get("metric_sources"),
         "per_class_source": web_metrics.get("per_class_source"),
         "per_class_note": web_metrics.get("per_class_note"),
+        "metric_schema_version": web_metrics.get("metric_schema_version"),
+        "primary_metric_type": web_metrics.get("primary_metric_type") or profile["metric_type"],
+        "metric_families": web_metrics.get("metric_families"),
+        "overall_by_type": web_metrics.get("overall_by_type"),
+        "per_class_box": web_metrics.get("per_class_box"),
+        "per_class_mask": web_metrics.get("per_class_mask"),
+        "metric_warnings": (
+            web_metrics.get("metric_warnings") or []
+        ) + (["Legacy segmentation metrics require best.pt revalidation."] if task == "segment" and not explicit_metric_schema else []),
         "epoch": int(float_value(row, "epoch") or 0),
         "task": profile["task"],
         "metric_type": profile["metric_type"],
@@ -8406,6 +8448,7 @@ def start_training(request: TrainRequest):
             "--optimizer", request.optimizer,
             "--pretrained", "true",
             "--activation", request.activation,
+            "--cls-pw", str(request.cls_pw),
             "--augmentation-enabled", str(request.augmentation_enabled).lower(),
             "--disable-ultralytics-albumentations", str(request.disable_ultralytics_albumentations).lower(),
             "--mosaic", str(request.mosaic),
