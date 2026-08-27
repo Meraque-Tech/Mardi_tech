@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from .dataset_provenance import roboflow_pre_augmentation_summary
 
 
 MYT = timezone(timedelta(hours=8), name="MYT")
+SAMPLE_RENDERER_VERSION = 2
 
 
 def _text(value) -> str:
@@ -747,6 +750,40 @@ def _class_names(config: dict, summary: dict) -> list[str]:
     return [str(item) for item in summary.get("classes") or []]
 
 
+def _report_task(context: dict | None, metrics: dict | None = None, run_dir: Path | None = None) -> str:
+    context = context if isinstance(context, dict) else {}
+    metrics = metrics if isinstance(metrics, dict) else {}
+    hyperparameters = context.get("hyperparameters") if isinstance(context.get("hyperparameters"), dict) else {}
+    for value in (
+        context.get("task"),
+        hyperparameters.get("task"),
+        metrics.get("task"),
+    ):
+        task = str(value or "").strip().lower()
+        if task in {"detect", "segment", "semantic", "classify"}:
+            return task
+
+    metric_type = str(metrics.get("primary_metric_type") or metrics.get("metric_type") or "").strip().lower()
+    if metric_type == "mask" or bool(metrics.get("per_class_mask")):
+        return "segment"
+
+    model = str(context.get("model") or hyperparameters.get("model") or "").strip().lower()
+    model_stem = Path(model).stem if model else ""
+    if model_stem.endswith("-seg"):
+        return "segment"
+    if model_stem.endswith("-cls"):
+        return "classify"
+    if model_stem.endswith("-sem"):
+        return "semantic"
+
+    if run_dir is not None:
+        path_parts = {part.lower() for part in run_dir.parts}
+        for task in ("segment", "semantic", "classify"):
+            if task in path_parts:
+                return task
+    return ""
+
+
 def _training_images(yaml_path: Path, config: dict, summary: dict) -> tuple[list[Path], Path | None]:
     split = (summary.get("splits") or {}).get("train") or {}
     image_path = Path(split.get("image_path")) if split.get("image_path") else None
@@ -805,35 +842,158 @@ def _sample_images_by_class(
     return names, selected
 
 
-def _annotated_thumbnail(image_path: Path, label_path: Path, names: list[str], output_path: Path) -> Path | None:
+def _infer_sample_task(selections: dict[int, list[tuple[Path, Path]]]) -> str:
+    row_shapes: set[str] = set()
+    seen_paths: set[Path] = set()
+    for items in selections.values():
+        for _image_path, label_path in items:
+            if label_path in seen_paths:
+                continue
+            seen_paths.add(label_path)
+            try:
+                lines = label_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for line in lines[:200]:
+                fields = line.split()
+                if len(fields) == 5:
+                    row_shapes.add("detect")
+                elif len(fields) >= 7 and (len(fields) - 1) % 2 == 0:
+                    # Nine-field rows are ambiguous between a four-point polygon and YOLO OBB.
+                    row_shapes.add("ambiguous" if len(fields) == 9 else "segment")
+            if "detect" in row_shapes and len(row_shapes) > 1:
+                return ""
+    if row_shapes == {"detect"}:
+        return "detect"
+    if "segment" in row_shapes and "detect" not in row_shapes:
+        return "segment"
+    return ""
+
+
+def _parse_yolo_sample_annotation(line: str, task: str, width: int, height: int) -> dict | None:
+    fields = line.split()
+    if not fields:
+        return None
+    try:
+        class_id = int(float(fields[0]))
+    except (TypeError, ValueError):
+        return None
+
+    if task == "detect":
+        if len(fields) != 5:
+            return None
+        try:
+            center_x, center_y, box_width, box_height = map(float, fields[1:5])
+        except (TypeError, ValueError):
+            return None
+        if not all(math.isfinite(value) for value in (center_x, center_y, box_width, box_height)):
+            return None
+        x1 = max(0.0, min(float(width), (center_x - box_width / 2) * width))
+        y1 = max(0.0, min(float(height), (center_y - box_height / 2) * height))
+        x2 = max(0.0, min(float(width), (center_x + box_width / 2) * width))
+        y2 = max(0.0, min(float(height), (center_y + box_height / 2) * height))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return {"class_id": class_id, "kind": "box", "box": [x1, y1, x2, y2]}
+
+    if task == "segment":
+        if len(fields) < 7 or (len(fields) - 1) % 2 != 0:
+            return None
+        try:
+            coordinates = [float(value) for value in fields[1:]]
+        except (TypeError, ValueError):
+            return None
+        if not all(math.isfinite(value) for value in coordinates):
+            return None
+        points = [
+            (
+                max(0.0, min(float(width - 1), coordinates[index] * width)),
+                max(0.0, min(float(height - 1), coordinates[index + 1] * height)),
+            )
+            for index in range(0, len(coordinates), 2)
+        ]
+        if len({(round(x, 4), round(y, 4)) for x, y in points}) < 3:
+            return None
+        twice_area = abs(sum(
+            points[index][0] * points[(index + 1) % len(points)][1]
+            - points[(index + 1) % len(points)][0] * points[index][1]
+            for index in range(len(points))
+        ))
+        if twice_area <= 0:
+            return None
+        return {"class_id": class_id, "kind": "polygon", "points": points}
+    return None
+
+
+def _sample_asset_signature(
+    image_path: Path,
+    label_path: Path,
+    task: str,
+    target_class_id: int,
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"v{SAMPLE_RENDERER_VERSION}:{task}:{target_class_id}".encode("utf-8"))
+    for path in (image_path, label_path):
+        try:
+            stat = path.stat()
+            digest.update(f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8"))
+        except OSError:
+            digest.update(str(path).encode("utf-8"))
+    try:
+        digest.update(label_path.read_bytes())
+    except OSError:
+        pass
+    return digest.hexdigest()[:12]
+
+
+def _annotated_thumbnail(
+    image_path: Path,
+    label_path: Path,
+    names: list[str],
+    output_path: Path,
+    task: str = "detect",
+    target_class_id: int | None = None,
+    warnings: list[str] | None = None,
+) -> Path | None:
     try:
         from PIL import Image as PILImage, ImageDraw, ImageFont, ImageOps
 
         with PILImage.open(image_path) as source:
             image = ImageOps.exif_transpose(source).convert("RGB")
-        draw = ImageDraw.Draw(image)
+        draw = ImageDraw.Draw(image, "RGBA")
         width, height = image.size
         line_width = max(2, round(min(width, height) / 180))
         font = ImageFont.load_default()
+        skipped_rows = 0
         for line in label_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            fields = line.split()
-            if len(fields) < 5:
+            if not line.strip():
                 continue
-            try:
-                class_id = int(float(fields[0]))
-                center_x, center_y, box_width, box_height = map(float, fields[1:5])
-            except ValueError:
+            annotation = _parse_yolo_sample_annotation(line, task, width, height)
+            if annotation is None:
+                skipped_rows += 1
                 continue
-            x1 = max(0, (center_x - box_width / 2) * width)
-            y1 = max(0, (center_y - box_height / 2) * height)
-            x2 = min(width, (center_x + box_width / 2) * width)
-            y2 = min(height, (center_y + box_height / 2) * height)
+            class_id = annotation["class_id"]
+            if target_class_id is not None and class_id != target_class_id:
+                continue
             color = (20, 145, 120)
-            draw.rectangle((x1, y1, x2, y2), outline=color, width=line_width)
+            if annotation["kind"] == "polygon":
+                points = annotation["points"]
+                draw.polygon(points, fill=(*color, 42))
+                draw.line([*points, points[0]], fill=(*color, 255), width=line_width, joint="curve")
+                label_x = min(point[0] for point in points)
+                label_y = min(point[1] for point in points)
+            else:
+                x1, y1, x2, y2 = annotation["box"]
+                draw.rectangle((x1, y1, x2, y2), outline=(*color, 255), width=line_width)
+                label_x, label_y = x1, y1
             label = names[class_id] if 0 <= class_id < len(names) else str(class_id)
-            text_box = draw.textbbox((x1, y1), label, font=font)
-            draw.rectangle(text_box, fill=color)
-            draw.text((x1, y1), label, fill="white", font=font)
+            text_box = draw.textbbox((label_x, label_y), label, font=font)
+            draw.rectangle(text_box, fill=(*color, 255))
+            draw.text((label_x, label_y), label, fill=(255, 255, 255, 255), font=font)
+        if skipped_rows and warnings is not None:
+            warning = f"{skipped_rows} malformed or unsupported {task or 'unknown'} annotation row(s) were skipped."
+            if warning not in warnings:
+                warnings.append(warning)
         image.thumbnail((800, 520))
         output_path.parent.mkdir(parents=True, exist_ok=True)
         image.save(output_path, "JPEG", quality=82, optimize=True)
@@ -938,7 +1098,7 @@ class _ReportBuilder:
         self.document.build(self.story, onFirstPage=footer, onLaterPages=footer)
 
 
-def _add_dataset(builder: _ReportBuilder, run_dir: Path, context: dict):
+def _add_dataset(builder: _ReportBuilder, run_dir: Path, context: dict, metrics: dict | None = None):
     summary = context.get("dataset_summary") or {}
     pre_augmentation = summary.get("pre_augmentation") or {}
     if not pre_augmentation and summary.get("dataset_root"):
@@ -998,7 +1158,23 @@ def _add_dataset(builder: _ReportBuilder, run_dir: Path, context: dict):
         return
     builder.heading("Training Dataset Samples by Class")
     names, selections = _sample_images_by_class(yaml_path, summary)
-    assets_dir = run_dir / "report_assets" / "samples"
+    task = _report_task(context, metrics, run_dir) or _infer_sample_task(selections)
+    annotation_labels = {
+        "detect": "Bounding-box annotations are shown for the named class.",
+        "segment": "Instance-segmentation polygon annotations are shown for the named class.",
+        "semantic": "Semantic-segmentation samples are shown without YOLO vector overlays.",
+        "classify": "Classification samples are shown without spatial annotation overlays.",
+    }
+    builder.paragraph(
+        annotation_labels.get(
+            task,
+            "Annotation format could not be identified safely, so samples are shown without spatial overlays.",
+        ),
+        "Small",
+    )
+    asset_task = task or "unknown"
+    assets_dir = run_dir / "report_assets" / f"samples-v{SAMPLE_RENDERER_VERSION}" / asset_task
+    render_warnings: list[str] = []
     from reportlab.platypus import Image as ReportImage, Table, TableStyle
     from PIL import Image as PILImage
 
@@ -1006,9 +1182,18 @@ def _add_dataset(builder: _ReportBuilder, run_dir: Path, context: dict):
         builder.heading(class_name, 3)
         cells = []
         for index, (image_path, label_path) in enumerate(selections.get(class_id, []), start=1):
-            target = assets_dir / f"class-{class_id}-{index}.jpg"
+            signature = _sample_asset_signature(image_path, label_path, asset_task, class_id)
+            target = assets_dir / f"class-{class_id}-{index}-{signature}.jpg"
             if not target.is_file():
-                _annotated_thumbnail(image_path, label_path, names, target)
+                _annotated_thumbnail(
+                    image_path,
+                    label_path,
+                    names,
+                    target,
+                    task=task,
+                    target_class_id=class_id,
+                    warnings=render_warnings,
+                )
             if target.is_file():
                 with PILImage.open(target) as sample_image:
                     width, height = sample_image.size
@@ -1020,6 +1205,8 @@ def _add_dataset(builder: _ReportBuilder, run_dir: Path, context: dict):
         sample_table = Table([cells], colWidths=[58 * builder.mm] * len(cells), hAlign="LEFT")
         sample_table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
         builder.story.append(sample_table)
+    if render_warnings:
+        builder.paragraph(" ".join(render_warnings), "Small")
 
 
 def _add_executive_summary(
@@ -1336,7 +1523,7 @@ def _add_technical_appendix(
     rows = [["Parameter", "Value"]] + [[key, value] for key, value in sorted(hyperparameters.items())]
     builder.table(rows, widths=[70 * builder.mm, 105 * builder.mm])
 
-    _add_dataset(builder, run_dir, context)
+    _add_dataset(builder, run_dir, context, metrics)
 
     _ensure_report_metric_plots(run_dir, metrics)
     builder.heading("Additional Training Plots")
