@@ -12,6 +12,7 @@ services:
         DFINE_REPO_URL: "${DFINE_REPO_URL:-https://github.com/Peterande/D-FINE.git}"
         DFINE_REPO_REF: "${DFINE_REPO_REF:-}"
     container_name: yolov8-training-web
+    restart: unless-stopped
     shm_size: "8gb"
     env_file:
       - .env
@@ -21,7 +22,7 @@ services:
       RFDETR_CACHE_DIR: /home/appuser/.roboflow/models
       DFINE_REPO_DIR: /opt/D-FINE
     network_mode: host
-    command: ["uvicorn", "vision.ai.web.app:app", "--host", "${WEB_HOST:-127.0.0.1}", "--port", "8000"]
+    command: ["uvicorn", "vision.ai.web.app:app", "--host", "${WEB_HOST:-0.0.0.0}", "--port", "8000"]
     volumes:
       - ../../..:/app
       - ./datasets:/app/vision/ai/web/datasets
