@@ -228,6 +228,11 @@ def annotation_qa_thresholds(
             "sam_confidence_min": 0.25,
             "box_tolerance_percent": 8.0,
             "sam_max_difference_percent": 35.0,
+            "segment_keep_iou": 0.82,
+            "segment_review_iou": 0.45,
+            "segment_boundary_f1_min": 0.35,
+            "segment_area_ratio_min": 0.35,
+            "segment_area_ratio_max": 2.5,
         },
         "strict": {
             "bbox_iou": 0.65,
@@ -239,6 +244,11 @@ def annotation_qa_thresholds(
             "sam_confidence_min": 0.25,
             "box_tolerance_percent": 3.0,
             "sam_max_difference_percent": 15.0,
+            "segment_keep_iou": 0.92,
+            "segment_review_iou": 0.65,
+            "segment_boundary_f1_min": 0.60,
+            "segment_area_ratio_min": 0.60,
+            "segment_area_ratio_max": 1.6,
         },
     }
     thresholds = dict(presets.get(str(preset or "").lower(), {
@@ -251,6 +261,11 @@ def annotation_qa_thresholds(
         "sam_confidence_min": 0.25,
         "box_tolerance_percent": 5.0,
         "sam_max_difference_percent": 25.0,
+        "segment_keep_iou": 0.88,
+        "segment_review_iou": 0.55,
+        "segment_boundary_f1_min": 0.45,
+        "segment_area_ratio_min": 0.50,
+        "segment_area_ratio_max": 2.0,
     }))
     if box_tolerance_percent is not None:
         thresholds["box_tolerance_percent"] = max(0.0, min(50.0, float(box_tolerance_percent)))
@@ -322,6 +337,188 @@ def yolo_bbox_from_pixels(class_id, box: list[int] | tuple[int, int, int, int], 
         f"{box_width:.6f}",
         f"{box_height:.6f}",
     ])
+
+
+def normalize_annotation_qa_task(value: str) -> str:
+    task = str(value or "auto").strip().lower()
+    aliases = {"detect": "detect", "detection": "detect", "segment": "segment", "segmentation": "segment", "auto": "auto"}
+    if task not in aliases:
+        raise ValueError("Annotation task must be auto, detection, or segmentation.")
+    return aliases[task]
+
+
+def annotation_task_for_fields(fields: list[str]) -> Optional[str]:
+    if len(fields) == 5:
+        return "detect"
+    # YOLO segmentation is a class id followed by at least three x/y pairs.
+    if len(fields) >= 7 and (len(fields) - 1) % 2 == 0:
+        try:
+            [float(value) for value in fields]
+        except ValueError:
+            return None
+        return "segment"
+    return None
+
+
+def detect_annotation_qa_task(split_contexts: list[tuple], requested_task: str = "auto") -> str:
+    requested = normalize_annotation_qa_task(requested_task)
+    observed: set[str] = set()
+    files_checked = 0
+    for _split, _images_path, labels_path, images in split_contexts:
+        if labels_path is None:
+            continue
+        for image_path in images:
+            label_path = yolo_label_path(image_path, labels_path)
+            if label_path is None or not label_path.is_file():
+                continue
+            files_checked += 1
+            for line in label_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                fields = line.strip().split()
+                if not fields:
+                    continue
+                task = annotation_task_for_fields(fields)
+                if task:
+                    observed.add(task)
+            if files_checked >= 200 or len(observed) > 1:
+                break
+        if files_checked >= 200 or len(observed) > 1:
+            break
+    if len(observed) > 1:
+        raise RuntimeError("Annotation QA does not accept mixed detection and segmentation rows in one dataset.")
+    detected = next(iter(observed), None)
+    if requested != "auto":
+        if detected and detected != requested:
+            raise RuntimeError(f"The selected {requested} task does not match the detected {detected} annotations.")
+        return requested
+    if detected is None:
+        raise RuntimeError("Could not detect YOLO detection boxes or segmentation polygons in the selected splits.")
+    return detected
+
+
+def pixel_polygon_from_yolo(fields: list[str], width: int, height: int) -> Optional[list[list[int]]]:
+    if annotation_task_for_fields(fields) != "segment":
+        return None
+    try:
+        coordinates = [float(value) for value in fields[1:]]
+    except ValueError:
+        return None
+    if any(not math.isfinite(value) or value < 0.0 or value > 1.0 for value in coordinates):
+        return None
+    points = [
+        [
+            max(0, min(width - 1, int(round(coordinates[index] * width)))),
+            max(0, min(height - 1, int(round(coordinates[index + 1] * height)))),
+        ]
+        for index in range(0, len(coordinates), 2)
+    ]
+    if len({tuple(point) for point in points}) < 3:
+        return None
+    area = abs(sum(
+        points[index][0] * points[(index + 1) % len(points)][1]
+        - points[(index + 1) % len(points)][0] * points[index][1]
+        for index in range(len(points))
+    )) / 2
+    return points if area >= 1.0 else None
+
+
+def polygon_bbox(points: list[list[int]]) -> tuple[int, int, int, int]:
+    xs = [int(point[0]) for point in points]
+    ys = [int(point[1]) for point in points]
+    return min(xs), min(ys), max(xs) + 1, max(ys) + 1
+
+
+def polygon_mask(points: list[list[int]], width: int, height: int):
+    import cv2
+    import numpy as np
+
+    mask = np.zeros((height, width), dtype="uint8")
+    cv2.fillPoly(mask, [np.asarray(points, dtype="int32")], 1)
+    return mask
+
+
+def mask_to_polygon(mask, width: int, height: int, max_points: int = 256) -> Optional[list[list[int]]]:
+    import cv2
+    import numpy as np
+
+    array = mask_to_uint8(mask, width, height)
+    contours, _hierarchy = cv2.findContours(array, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = [contour for contour in contours if cv2.contourArea(contour) >= 1.0]
+    if not contours:
+        return None
+    contours.sort(key=cv2.contourArea, reverse=True)
+    largest_area = float(cv2.contourArea(contours[0]))
+    if len(contours) > 1 and float(cv2.contourArea(contours[1])) > largest_area * 0.05:
+        return None
+    perimeter = cv2.arcLength(contours[0], True)
+    epsilon = max(0.5, perimeter * 0.0025)
+    simplified = cv2.approxPolyDP(contours[0], epsilon, True).reshape(-1, 2)
+    while len(simplified) > max_points and epsilon < perimeter * 0.05:
+        epsilon *= 1.5
+        simplified = cv2.approxPolyDP(contours[0], epsilon, True).reshape(-1, 2)
+    points = [[int(point[0]), int(point[1])] for point in simplified]
+    return points if 3 <= len(points) <= max_points else None
+
+
+def yolo_polygon_from_pixels(class_id, points: list[list[int]], width: int, height: int) -> str:
+    if width <= 0 or height <= 0 or len(points) < 3:
+        raise ValueError("Corrected segmentation polygon is invalid.")
+    values = [str(int(float(class_id)))]
+    for x, y in points:
+        values.extend((
+            f"{max(0.0, min(1.0, float(x) / width)):.6f}",
+            f"{max(0.0, min(1.0, float(y) / height)):.6f}",
+        ))
+    return " ".join(values)
+
+
+def annotation_qa_segmentation_metrics(original_mask, sam_mask) -> dict:
+    import cv2
+    import numpy as np
+
+    original = np.asarray(original_mask) > 0
+    candidate = np.asarray(sam_mask) > 0
+    intersection = int(np.logical_and(original, candidate).sum())
+    original_area = int(original.sum())
+    sam_area = int(candidate.sum())
+    union = original_area + sam_area - intersection
+    mask_iou = intersection / union if union else 0.0
+    coverage = intersection / original_area if original_area else 0.0
+    precision = intersection / sam_area if sam_area else 0.0
+    area_ratio = sam_area / original_area if original_area else 0.0
+
+    def centroid(binary):
+        moments = cv2.moments(binary.astype("uint8"))
+        if moments["m00"] <= 0:
+            return 0.0, 0.0
+        return moments["m10"] / moments["m00"], moments["m01"] / moments["m00"]
+
+    ox, oy = centroid(original)
+    sx, sy = centroid(candidate)
+    height, width = original.shape[:2]
+    centroid_shift = math.hypot(ox - sx, oy - sy) / max(1.0, width, height)
+    kernel = np.ones((3, 3), dtype="uint8")
+    original_edge = cv2.morphologyEx(original.astype("uint8"), cv2.MORPH_GRADIENT, kernel) > 0
+    sam_edge = cv2.morphologyEx(candidate.astype("uint8"), cv2.MORPH_GRADIENT, kernel) > 0
+    expanded_original = cv2.dilate(original_edge.astype("uint8"), kernel) > 0
+    expanded_sam = cv2.dilate(sam_edge.astype("uint8"), kernel) > 0
+    original_edge_count = int(original_edge.sum())
+    sam_edge_count = int(sam_edge.sum())
+    boundary_recall = int(np.logical_and(original_edge, expanded_sam).sum()) / original_edge_count if original_edge_count else 0.0
+    boundary_precision = int(np.logical_and(sam_edge, expanded_original).sum()) / sam_edge_count if sam_edge_count else 0.0
+    boundary_f1 = (
+        2 * boundary_precision * boundary_recall / (boundary_precision + boundary_recall)
+        if boundary_precision + boundary_recall > 0 else 0.0
+    )
+    return {
+        "mask_iou": round(mask_iou, 4),
+        "original_coverage": round(coverage, 4),
+        "sam_precision": round(precision, 4),
+        "mask_area_ratio": round(area_ratio, 4),
+        "centroid_shift": round(centroid_shift, 4),
+        "boundary_f1": round(boundary_f1, 4),
+        "original_mask_area": original_area,
+        "sam_mask_area": sam_area,
+    }
 
 
 def bbox_area(box: tuple[int, int, int, int]) -> int:
@@ -652,6 +849,21 @@ def issue_is_safe_sam_replacement(issue: dict) -> bool:
     )
 
 
+def issue_is_reviewable_sam_polygon(issue: dict) -> bool:
+    prompt_stability = (issue.get("metrics") or {}).get("prompt_stability") or {}
+    polygon = issue.get("recommended_polygon")
+    return (
+        issue.get("annotation_task") == "segment"
+        and issue.get("auto_fix_eligible") is True
+        and issue.get("quality_gate_passed") is True
+        and issue.get("difference_band") == "reviewable"
+        and issue.get("fix_type") == "replace_polygon"
+        and prompt_stability.get("passed", True) is True
+        and isinstance(polygon, list)
+        and len(polygon) >= 3
+    )
+
+
 def mask_bbox(mask) -> Optional[tuple[int, int, int, int]]:
     import numpy as np
 
@@ -688,6 +900,9 @@ def annotation_issue(
     preview: str = "",
     label_row: Optional[int] = None,
     recommended_bbox: Optional[tuple[int, int, int, int]] = None,
+    annotation_task: str = "detect",
+    original_polygon: Optional[list[list[int]]] = None,
+    recommended_polygon: Optional[list[list[int]]] = None,
 ) -> dict:
     return {
         "issue_id": f"{job_id}-{index:06d}",
@@ -703,7 +918,10 @@ def annotation_issue(
         "original_bbox": list(original_bbox) if original_bbox else None,
         "sam_bbox": list(sam_bbox) if sam_bbox else None,
         "recommended_bbox": list(recommended_bbox) if recommended_bbox else None,
-        "fix_type": "replace_box" if recommended_bbox else "",
+        "original_polygon": original_polygon or None,
+        "recommended_polygon": recommended_polygon or None,
+        "annotation_task": annotation_task,
+        "fix_type": "replace_polygon" if recommended_polygon else ("replace_box" if recommended_bbox else ""),
         "accepted_fix": "",
         "accepted_class_id": None,
         "accepted_class_name": "",
@@ -719,6 +937,7 @@ def draw_annotation_qa_preview(
     output_path: Path,
     issue: dict,
     mask=None,
+    original_mask=None,
 ):
     import cv2
     import numpy as np
@@ -731,6 +950,14 @@ def draw_annotation_qa_preview(
     raw_path = output_path.with_name(f"{output_path.stem}.raw.jpg")
     cv2.imwrite(str(raw_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
     issue["raw_preview"] = f"previews/{raw_path.name}"
+    if original_mask is not None:
+        original_mask_array = mask_to_uint8(original_mask, width, height)
+        original_mask_path = output_path.with_name(f"{output_path.stem}.original-mask.jpg")
+        cv2.imwrite(str(original_mask_path), original_mask_array * 255, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        issue["original_mask_preview"] = f"previews/{original_mask_path.name}"
+        original_overlay = image.copy()
+        original_overlay[original_mask_array > 0] = (40, 210, 255)
+        image = cv2.addWeighted(original_overlay, 0.22, image, 0.78, 0)
     if mask is not None:
         mask_array = mask_to_uint8(mask, width, height)
         mask_path = output_path.with_name(f"{output_path.stem}.mask.jpg")
@@ -740,11 +967,17 @@ def draw_annotation_qa_preview(
         overlay[mask_array > 0] = (255, 220, 70)
         image = cv2.addWeighted(overlay, 0.35, image, 0.65, 0)
     original = issue.get("original_bbox")
-    if original:
+    original_polygon = issue.get("original_polygon")
+    if original_polygon:
+        cv2.polylines(image, [np.asarray(original_polygon, dtype="int32")], True, (0, 210, 255), 2)
+    elif original:
         x1, y1, x2, y2 = [int(value) for value in original]
         cv2.rectangle(image, (x1, y1), (x2, y2), (0, 210, 255), 2)
     sam_box = issue.get("sam_bbox")
-    if sam_box:
+    recommended_polygon = issue.get("recommended_polygon") or issue.get("sam_polygon")
+    if recommended_polygon:
+        cv2.polylines(image, [np.asarray(recommended_polygon, dtype="int32")], True, (255, 150, 0), 2)
+    elif sam_box:
         x1, y1, x2, y2 = [int(value) for value in sam_box]
         cv2.rectangle(image, (x1, y1), (x2, y2), (255, 150, 0), 2)
     caption = f"{issue['severity'].upper()} {issue['issue_type']} {issue['score']:.2f}"
@@ -765,6 +998,7 @@ def annotation_qa_summary(
     yolo_boxes_accepted: int = 0,
     policy: Optional[dict] = None,
     class_label_counts: Optional[dict] = None,
+    annotation_task: str = "detect",
 ) -> dict:
     severity_counts = {"high": 0, "medium": 0, "low": 0}
     type_counts: dict[str, int] = {}
@@ -794,7 +1028,7 @@ def annotation_qa_summary(
         decision = str(issue.get("qa_decision") or "human_review")
         if decision != "auto_keep_yolo":
             decision_counts[decision] = decision_counts.get(decision, 0) + 1
-        if issue.get("accepted_fix") == "sam_box" and issue.get("accepted_fix_source") == "automatic":
+        if issue.get("accepted_fix") in {"sam_box", "sam_polygon"} and issue.get("accepted_fix_source") == "automatic":
             automatic_fixes_queued += 1
         if issue.get("audit_required") and issue.get("audit_status") == "pending":
             audits_pending += 1
@@ -811,21 +1045,25 @@ def annotation_qa_summary(
             if issue.get("audit_required"):
                 audit_status = str(issue.get("audit_status") or "pending")
                 class_row["audits"][audit_status] = class_row["audits"].get(audit_status, 0) + 1
-        if issue_is_safe_sam_replacement(issue):
+        if issue_is_safe_sam_replacement(issue) or issue_is_reviewable_sam_polygon(issue):
             replacements_available += 1
-        elif issue.get("sam_bbox") and difference_band in {"reviewable", "large_disagreement"}:
+        elif (issue.get("sam_bbox") or issue.get("recommended_polygon")) and difference_band in {"reviewable", "large_disagreement"}:
             replacements_blocked += 1
     return {
         "report_version": ANNOTATION_QA_REPORT_VERSION,
         "model": model,
         "scope": scope,
         "preset": preset,
+        "annotation_task": annotation_task,
         "box_tolerance_percent": round(float(box_tolerance_percent), 4),
         "sam_max_difference_percent": round(float(sam_max_difference_percent), 4),
         "images_scanned": images_scanned,
         "labels_checked": labels_checked,
-        "boxes_checked": labels_checked,
+        "boxes_checked": labels_checked if annotation_task == "detect" else 0,
+        "masks_checked": labels_checked if annotation_task == "segment" else 0,
         "yolo_boxes_accepted": yolo_boxes_accepted,
+        "original_annotations_accepted": yolo_boxes_accepted,
+        "segmentation_report_version": 1 if annotation_task == "segment" else None,
         "moderate_disagreements": difference_band_counts.get("reviewable", 0),
         "large_disagreements": difference_band_counts.get("large_disagreement", 0),
         "sam_replacements_available": replacements_available,
@@ -862,6 +1100,7 @@ def write_annotation_qa_report(run_dir: Path, issues: list[dict], summary: dict)
         "quality_gate_passed", "auto_fix_eligible", "applied", "corrected_label_path",
         "qa_decision", "decision_reasons", "automatic_fix_eligible", "accepted_fix_source",
         "audit_required", "audit_status", "sam_selected_variant",
+        "annotation_task", "original_polygon", "recommended_polygon",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
@@ -923,6 +1162,15 @@ def set_annotation_qa_issue_fix(run_dir: Path, issue_id: str, fix: str, class_id
         if issue.get("audit_required"):
             issue["audit_status"] = "passed"
             issue["accepted_fix_source"] = "human_audited"
+    elif fix_value == "sam_polygon":
+        if not issue_is_reviewable_sam_polygon(issue):
+            raise HTTPException(
+                status_code=400,
+                detail="This SAM polygon is not a stable, representable segmentation suggestion.",
+            )
+        issue["accepted_fix"] = "sam_polygon"
+        issue["accepted_fix_source"] = "human"
+        issue["review_status"] = "fix_accepted"
     elif fix_value == "class":
         if class_id is None:
             raise HTTPException(status_code=400, detail="Class fix requires a class id.")
@@ -964,11 +1212,14 @@ def issue_label_path_in_copy(issue: dict, dataset_root: Path, corrected_root: Pa
 
 def apply_annotation_qa_fix(issue: dict, dataset_root: Path, corrected_root: Path) -> dict:
     has_box_fix = issue.get("accepted_fix") == "sam_box"
+    has_polygon_fix = issue.get("accepted_fix") == "sam_polygon"
     has_class_fix = issue.get("accepted_class_id") is not None
-    if not has_box_fix and not has_class_fix:
+    if not has_box_fix and not has_polygon_fix and not has_class_fix:
         return {"applied": False, "reason": "No accepted fix."}
     if has_box_fix and not issue_is_safe_sam_replacement(issue):
         return {"applied": False, "reason": "Issue is outside the safe SAM correction band."}
+    if has_polygon_fix and not issue_is_reviewable_sam_polygon(issue):
+        return {"applied": False, "reason": "SAM polygon is not a safe manual suggestion."}
     label_row = issue.get("label_row")
     if not isinstance(label_row, int) or label_row < 1:
         return {"applied": False, "reason": "Issue has no label row reference."}
@@ -997,14 +1248,18 @@ def apply_annotation_qa_fix(issue: dict, dataset_root: Path, corrected_root: Pat
 
     original_row = lines[line_index]
     original_fields = original_row.strip().split()
-    if len(original_fields) != 5:
-        return {"applied": False, "reason": "Referenced label row is not a YOLO detection box."}
+    original_task = annotation_task_for_fields(original_fields)
+    expected_task = "segment" if has_polygon_fix or issue.get("annotation_task") == "segment" else "detect"
+    if original_task != expected_task:
+        return {"applied": False, "reason": f"Referenced label row is not a YOLO {expected_task} annotation."}
     corrected_class_id = issue.get("accepted_class_id") if has_class_fix else issue.get("class_id")
     try:
         if has_box_fix:
             corrected_row = yolo_bbox_from_pixels(corrected_class_id, issue["recommended_bbox"], width, height)
+        elif has_polygon_fix:
+            corrected_row = yolo_polygon_from_pixels(corrected_class_id, issue["recommended_polygon"], width, height)
         else:
-            corrected_row = " ".join([str(int(float(corrected_class_id))), *original_fields[1:5]])
+            corrected_row = " ".join([str(int(float(corrected_class_id))), *original_fields[1:]])
     except (TypeError, ValueError) as exc:
         return {"applied": False, "reason": str(exc)}
     lines[line_index] = corrected_row
@@ -1070,7 +1325,7 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
     corrected_yaml.write_text(yaml.safe_dump(corrected_payload, sort_keys=False), encoding="utf-8")
 
     def issue_has_accepted_fix(item: dict) -> bool:
-        return item.get("accepted_fix") == "sam_box" or item.get("accepted_class_id") is not None
+        return item.get("accepted_fix") in {"sam_box", "sam_polygon"} or item.get("accepted_class_id") is not None
 
     applied = 0
     skipped = []
@@ -1125,6 +1380,11 @@ def apply_annotation_qa_fixes(job_id: str) -> dict:
 def annotation_qa_roboflow_context(job_id: str) -> tuple[Path, dict, Path, dict, list[str]]:
     run_dir = annotation_qa_run_dir(job_id)
     report = load_annotation_qa_report(run_dir)
+    if (report.get("summary") or {}).get("annotation_task") == "segment":
+        raise HTTPException(
+            status_code=409,
+            detail="Roboflow publishing for segmentation corrections is disabled until polygon conflict synchronization is validated.",
+        )
     fix_summary = read_json_object(run_dir / ANNOTATION_QA_FIX_SUMMARY_FILE)
     corrected_root_value = fix_summary.get("corrected_dataset_root")
     if not corrected_root_value:
@@ -1396,8 +1656,9 @@ def annotation_qa_candidates_for_image(
     height: int,
     thresholds: dict,
     stop_event: threading.Event,
+    force_stability: bool = False,
 ) -> Optional[list[list[dict]]]:
-    """Run original prompts first and stability prompts only for reviewable boxes."""
+    """Run original prompts first and stability prompts for reviewable boxes or masks."""
     candidates_by_label: list[list[dict]] = [[] for _ in labels]
     if not labels:
         return candidates_by_label
@@ -1451,7 +1712,7 @@ def annotation_qa_candidates_for_image(
                 thresholds["box_tolerance_percent"],
                 thresholds["sam_max_difference_percent"],
             )
-            if annotation_qa_difference_band(differences) != "reviewable":
+            if not force_stability and annotation_qa_difference_band(differences) != "reviewable":
                 continue
             direction = -1.0 if label_index % 2 else 1.0
             variants = (
@@ -1509,6 +1770,10 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             labels_path = label_folder_for_images(dataset_root, images_path)
             images = image_files(images_path) if images_path and images_path.is_dir() else []
             split_contexts.append((split, images_path, labels_path, images))
+        annotation_task = detect_annotation_qa_task(
+            split_contexts,
+            request_payload.get("task", "auto"),
+        )
         max_images = request_payload.get("max_images")
         total_images = sum(len(images) for _split, _images_path, _labels_path, images in split_contexts)
         if max_images:
@@ -1522,6 +1787,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             stage="loading_model",
             percent=2,
             detail=f"Loading {request_payload['model']}.",
+            annotation_task=annotation_task,
             total_images=total_images,
             run_dir=str(run_dir),
             report_available=False,
@@ -1552,6 +1818,8 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
         auto_correction_mode = str(request_payload.get("auto_correction_mode", "shadow")).lower()
         policy = {
             "mode": auto_correction_mode,
+            "annotation_task": annotation_task,
+            "automatic_polygon_replacement": False,
             "model": model_config["label"],
             "model_id": model_config["id"],
             "automatic_allowed": model_config["automatic_allowed"],
@@ -1611,6 +1879,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             audit_required: bool = False,
             audit_status: str = "not_required",
             mask=None,
+            original_mask=None,
         ):
             issue.update({
                 "sam_prompt_index": sam_prompt_index,
@@ -1629,7 +1898,13 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                 "audit_status": audit_status,
             })
             issue["preview"] = f"previews/{issue['issue_id']}.jpg"
-            draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, mask)
+            draw_annotation_qa_preview(
+                image_path,
+                run_dir / issue["preview"],
+                issue,
+                mask,
+                original_mask,
+            )
             issues.append(issue)
 
         for split, _images_path, labels_path, images in split_contexts:
@@ -1678,26 +1953,47 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         ))
                         continue
                     class_name = class_names[class_id] if 0 <= class_id < len(class_names) else f"class_{class_id}"
-                    if len(fields) != 5:
+                    row_task = annotation_task_for_fields(fields)
+                    if row_task != annotation_task:
                         issue_index += 1
-                        issues.append(annotation_issue(
+                        issue = annotation_issue(
                             job_id, issue_index, image_path, split, class_id, class_name,
                             "unsupported_annotation", "low", 0.2,
-                            "V1 SAM QA checks YOLO detection boxes only.",
-                        ))
+                            f"This row is not a valid YOLO {annotation_task} annotation.",
+                            label_row=row_index,
+                            annotation_task=annotation_task,
+                        )
+                        append_qa_issue(issue, qa_decision="manual_only", decision_reasons=["unsupported_annotation"])
                         continue
-                    box = pixel_bbox_from_yolo(fields, width, height)
+                    polygon = None
+                    original_mask = None
+                    if annotation_task == "segment":
+                        polygon = pixel_polygon_from_yolo(fields, width, height)
+                        if polygon is not None:
+                            box = polygon_bbox(polygon)
+                            original_mask = polygon_mask(polygon, width, height)
+                        else:
+                            box = None
+                    else:
+                        box = pixel_bbox_from_yolo(fields, width, height)
                     if box is None:
                         issue_index += 1
-                        issues.append(annotation_issue(
+                        issue = annotation_issue(
                             job_id, issue_index, image_path, split, class_id, class_name,
-                            "invalid_label", "high", 1.0, f"Invalid YOLO bbox on row {row_index}.",
-                        ))
+                            "invalid_polygon" if annotation_task == "segment" else "invalid_label",
+                            "high", 1.0,
+                            f"Invalid YOLO {'polygon' if annotation_task == 'segment' else 'bbox'} on row {row_index}.",
+                            label_row=row_index,
+                            annotation_task=annotation_task,
+                        )
+                        append_qa_issue(issue, qa_decision="manual_only", decision_reasons=["invalid_annotation"])
                         continue
                     labels.append({
                         "class_id": class_id,
                         "class_name": class_name,
                         "bbox": box,
+                        "polygon": polygon,
+                        "original_mask": original_mask,
                         "row_index": row_index,
                     })
 
@@ -1705,18 +2001,36 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                     for right in range(left + 1, len(labels)):
                         if labels[left]["class_id"] != labels[right]["class_id"]:
                             continue
-                        overlap = bbox_iou(labels[left]["bbox"], labels[right]["bbox"])
+                        overlap = (
+                            annotation_qa_mask_iou(labels[left]["original_mask"], labels[right]["original_mask"])
+                            if annotation_task == "segment"
+                            else bbox_iou(labels[left]["bbox"], labels[right]["bbox"])
+                        )
                         if overlap >= thresholds["duplicate_iou"]:
                             issue_index += 1
                             issue = annotation_issue(
                                 job_id, issue_index, image_path, split,
                                 labels[left]["class_id"], labels[left]["class_name"],
-                                "duplicate_box", "medium", overlap,
-                                "Two same-class boxes overlap heavily.",
+                                "duplicate_segment" if annotation_task == "segment" else "duplicate_box",
+                                "medium", overlap,
+                                "Two same-class annotations overlap heavily.",
                                 labels[left]["bbox"], labels[right]["bbox"], {"bbox_iou": overlap},
                                 label_row=labels[left].get("row_index"),
+                                annotation_task=annotation_task,
+                                original_polygon=labels[left].get("polygon"),
                             )
-                            issues.append(issue)
+                            if annotation_task == "segment":
+                                issue["sam_polygon"] = labels[right].get("polygon")
+                                append_qa_issue(
+                                    issue,
+                                    metrics={"mask_iou": round(overlap, 4)},
+                                    qa_decision="human_review",
+                                    decision_reasons=["possible_duplicate_segment"],
+                                    mask=labels[right].get("original_mask"),
+                                    original_mask=labels[left].get("original_mask"),
+                                )
+                            else:
+                                issues.append(issue)
 
                 candidates_by_label = annotation_qa_candidates_for_image(
                     sam_runtime,
@@ -1726,6 +2040,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                     height,
                     thresholds,
                     stop_event,
+                    force_stability=annotation_task == "segment",
                 )
                 if candidates_by_label is None:
                     issue_index += 1
@@ -1752,8 +2067,18 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             "SAM did not return a usable mask for one or more prompts for this box.",
                             box,
                             label_row=label.get("row_index"),
+                            annotation_task=annotation_task,
+                            original_polygon=label.get("polygon"),
                         )
-                        issues.append(issue)
+                        if annotation_task == "segment":
+                            append_qa_issue(
+                                issue,
+                                qa_decision="manual_only",
+                                decision_reasons=["empty_sam_mask"],
+                                original_mask=label.get("original_mask"),
+                            )
+                        else:
+                            issues.append(issue)
                         continue
                     mask = selected_candidate["mask"]
                     sam_confidence = selected_candidate.get("confidence")
@@ -1761,14 +2086,25 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                     sam_prompt_variant = selected_candidate.get("variant", "")
                     if mask is None:
                         issue_index += 1
-                        issues.append(annotation_issue(
+                        issue = annotation_issue(
                             job_id, issue_index, image_path, split,
                             label["class_id"], label["class_name"],
                             "empty_mask", "high", 1.0,
                             "SAM returned no mask for this prompt.",
                             box,
                             label_row=label.get("row_index"),
-                        ))
+                            annotation_task=annotation_task,
+                            original_polygon=label.get("polygon"),
+                        )
+                        if annotation_task == "segment":
+                            append_qa_issue(
+                                issue,
+                                qa_decision="manual_only",
+                                decision_reasons=["empty_sam_mask"],
+                                original_mask=label.get("original_mask"),
+                            )
+                        else:
+                            issues.append(issue)
                         continue
                     mask_array = mask_to_uint8(mask, width, height)
                     sam_box = mask_bbox(mask_array)
@@ -1781,9 +2117,17 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                             "SAM returned an empty mask for this box.",
                             box,
                             label_row=label.get("row_index"),
+                            annotation_task=annotation_task,
+                            original_polygon=label.get("polygon"),
                         )
                         issue["preview"] = f"previews/{issue['issue_id']}.jpg"
-                        draw_annotation_qa_preview(image_path, run_dir / issue["preview"], issue, None)
+                        draw_annotation_qa_preview(
+                            image_path,
+                            run_dir / issue["preview"],
+                            issue,
+                            None,
+                            label.get("original_mask"),
+                        )
                         issues.append(issue)
                         continue
                     stability = annotation_qa_prompt_stability(
@@ -1792,6 +2136,125 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
                         thresholds["sam_stability_bbox_iou_min"],
                         thresholds["sam_stability_edge_percent_max"],
                     )
+                    if annotation_task == "segment":
+                        original_mask = label["original_mask"]
+                        metrics = annotation_qa_segmentation_metrics(original_mask, mask_array)
+                        metrics["prompt_stability"] = stability
+                        if sam_confidence is not None:
+                            metrics["sam_confidence"] = round(sam_confidence, 4)
+                        sam_polygon = mask_to_polygon(mask_array, width, height)
+                        mask_iou = float(metrics["mask_iou"])
+                        if mask_iou >= thresholds["segment_keep_iou"]:
+                            difference_band = "within_tolerance"
+                        elif mask_iou >= thresholds["segment_review_iou"]:
+                            difference_band = "reviewable"
+                        else:
+                            difference_band = "large_disagreement"
+                        metrics["difference_band"] = difference_band
+                        quality_checks = {
+                            "sam_confidence": sam_confidence is not None and sam_confidence >= thresholds["sam_confidence_min"],
+                            "mask_iou": mask_iou >= thresholds["segment_review_iou"],
+                            "boundary_f1": metrics["boundary_f1"] >= thresholds["segment_boundary_f1_min"],
+                            "area_ratio": thresholds["segment_area_ratio_min"] <= metrics["mask_area_ratio"] <= thresholds["segment_area_ratio_max"],
+                            "prompt_stability": bool(stability.get("passed")),
+                            "representable_polygon": sam_polygon is not None,
+                        }
+                        quality_gate_passed = all(quality_checks.values())
+                        quality_checks["passed"] = quality_gate_passed
+                        metrics["sam_quality_checks"] = quality_checks
+
+                        if difference_band == "within_tolerance":
+                            yolo_boxes_accepted += 1
+                            audit_required = auto_correction_mode != "manual" and should_audit_decision(
+                                image_path.name, label["class_id"], label.get("row_index"), "auto_keep_yolo",
+                            )
+                            if audit_required:
+                                issue_index += 1
+                                issue = annotation_issue(
+                                    job_id, issue_index, image_path, split,
+                                    label["class_id"], label["class_name"],
+                                    "auto_keep_audit", "low", 1.0 - mask_iou,
+                                    "The YOLO polygon and SAM mask agree; this keep decision was sampled for audit.",
+                                    box, sam_box, metrics,
+                                    label_row=label.get("row_index"),
+                                    annotation_task="segment",
+                                    original_polygon=label["polygon"],
+                                )
+                                issue["sam_polygon"] = sam_polygon
+                                append_qa_issue(
+                                    issue,
+                                    metrics=metrics,
+                                    sam_prompt_index=sam_prompt_index,
+                                    sam_prompt_variant=sam_prompt_variant,
+                                    sam_confidence=sam_confidence,
+                                    difference_band=difference_band,
+                                    quality_gate_passed=quality_gate_passed,
+                                    qa_decision="auto_keep_yolo",
+                                    decision_reasons=["mask_within_tolerance"],
+                                    audit_required=True,
+                                    audit_status="pending",
+                                    mask=mask_array,
+                                    original_mask=original_mask,
+                                )
+                            continue
+
+                        if difference_band == "large_disagreement":
+                            issue_type = "large_mask_disagreement"
+                            severity = "high"
+                            message = "SAM and the YOLO polygon have low mask agreement; polygon replacement is blocked."
+                        elif sam_confidence is None or sam_confidence < thresholds["sam_confidence_min"]:
+                            issue_type = "low_confidence_mask"
+                            severity = "medium"
+                            message = "SAM mask confidence is below the review threshold."
+                        elif metrics["mask_area_ratio"] < thresholds["segment_area_ratio_min"]:
+                            issue_type = "missing_object_area"
+                            severity = "medium"
+                            message = "The SAM mask covers substantially less area than the YOLO polygon."
+                        elif metrics["mask_area_ratio"] > thresholds["segment_area_ratio_max"]:
+                            issue_type = "excess_mask_area"
+                            severity = "medium"
+                            message = "The SAM mask covers substantially more area than the YOLO polygon."
+                        elif metrics["boundary_f1"] < thresholds["segment_boundary_f1_min"]:
+                            issue_type = "low_boundary_agreement"
+                            severity = "medium"
+                            message = "The SAM boundary and YOLO polygon boundary differ materially."
+                        elif not stability.get("passed"):
+                            issue_type = "unstable_sam_segmentation"
+                            severity = "medium"
+                            message = "SAM segmentation changed materially when its box prompt was expanded or shifted."
+                        else:
+                            issue_type = "moderate_mask_difference"
+                            severity = "low"
+                            message = "The SAM mask and YOLO polygon differ enough to require human review."
+
+                        auto_fix_eligible = difference_band == "reviewable" and quality_gate_passed
+                        issue_index += 1
+                        issue = annotation_issue(
+                            job_id, issue_index, image_path, split,
+                            label["class_id"], label["class_name"], issue_type, severity,
+                            1.0 - mask_iou, message, box, sam_box, metrics,
+                            label_row=label.get("row_index"),
+                            annotation_task="segment",
+                            original_polygon=label["polygon"],
+                            recommended_polygon=sam_polygon if auto_fix_eligible else None,
+                        )
+                        issue["sam_polygon"] = sam_polygon
+                        append_qa_issue(
+                            issue,
+                            metrics=metrics,
+                            sam_prompt_index=sam_prompt_index,
+                            sam_prompt_variant=sam_prompt_variant,
+                            sam_confidence=sam_confidence,
+                            difference_band=difference_band,
+                            quality_gate_passed=quality_gate_passed,
+                            auto_fix_eligible=auto_fix_eligible,
+                            automatic_fix_eligible=False,
+                            qa_decision="human_review" if auto_fix_eligible else "manual_only",
+                            decision_reasons=["segmentation_manual_review_required"],
+                            mask=mask_array,
+                            original_mask=original_mask,
+                        )
+                        continue
                     neighbor_iou = annotation_qa_max_neighbor_iou(labels, label_index)
                     overlap = bbox_iou(box, sam_box)
                     center_shift = bbox_center_shift(box, sam_box)
@@ -2037,6 +2500,7 @@ def run_annotation_qa_job(job_id: str, request_payload: dict, stop_event: thread
             yolo_boxes_accepted,
             policy,
             class_label_counts,
+            annotation_task,
         )
         summary.update({
             "dataset_yaml": str(yaml_path),
@@ -2157,6 +2621,15 @@ __all__ = [
     "yolo_label_path",
     "pixel_bbox_from_yolo",
     "yolo_bbox_from_pixels",
+    "normalize_annotation_qa_task",
+    "annotation_task_for_fields",
+    "detect_annotation_qa_task",
+    "pixel_polygon_from_yolo",
+    "polygon_bbox",
+    "polygon_mask",
+    "mask_to_polygon",
+    "yolo_polygon_from_pixels",
+    "annotation_qa_segmentation_metrics",
     "bbox_area",
     "bbox_iou",
     "bbox_center_shift",
@@ -2171,6 +2644,7 @@ __all__ = [
     "annotation_qa_auto_gate",
     "annotation_qa_audit_required",
     "issue_is_safe_sam_replacement",
+    "issue_is_reviewable_sam_polygon",
     "mask_bbox",
     "mask_to_uint8",
     "annotation_issue",

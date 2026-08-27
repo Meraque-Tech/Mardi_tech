@@ -32,6 +32,7 @@ class DatasetDownloadRequest(BaseModel):
 
 class AnnotationQaRequest(BaseModel):
     dataset_yaml: str
+    task: str = "auto"
     model: str = os.getenv("SAM_QA_MODEL", "sam2.1_s.pt")
     scope: str = "all"
     preset: str = "balanced"

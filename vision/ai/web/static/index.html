@@ -428,6 +428,14 @@
           <div class="qa-workflow-content">
             <div class="grid three annotation-qa-controls qa-essential-controls">
               <label>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Auto detects standard YOLO detection boxes or segmentation polygons. Choose explicitly when dataset metadata is ambiguous.">Annotation task</span>
+                <select id="annotation-qa-task">
+                  <option value="auto" selected>Auto detect — recommended</option>
+                  <option value="detect">Object detection boxes</option>
+                  <option value="segment">Segmentation polygons</option>
+                </select>
+              </label>
+              <label>
                 <span class="tooltip-label" tabindex="0" data-tooltip="Dataset split to scan. All splits scans train, validation, and test when present; validation is a faster pre-training check.">Scan scope</span>
                 <select id="annotation-qa-scope">
                   <option value="all">All available splits</option>
@@ -1468,9 +1476,10 @@
             <canvas id="qa-review-canvas" aria-label="Interactive Annotation QA comparison" hidden></canvas>
             <div id="qa-review-empty" class="qa-review-empty" hidden>No preview available for this issue.</div>
             <div class="qa-overlay-controls" id="qa-overlay-controls" role="group" aria-label="Preview overlays" hidden>
-              <label><input id="qa-overlay-yolo" type="checkbox" checked> YOLO box</label>
+              <label><input id="qa-overlay-yolo" type="checkbox" checked> Original annotation</label>
+              <label><input id="qa-overlay-original-mask" type="checkbox" checked> Original mask</label>
               <label><input id="qa-overlay-mask" type="checkbox" checked> SAM mask</label>
-              <label><input id="qa-overlay-sam" type="checkbox" checked> SAM box</label>
+              <label><input id="qa-overlay-sam" type="checkbox" checked> SAM suggestion</label>
             </div>
             <div class="qa-image-controls" role="group" aria-label="Preview zoom controls">
               <button id="qa-review-zoom-out" class="secondary compact" type="button" aria-label="Zoom out">−</button>
@@ -1485,9 +1494,9 @@
               <p id="qa-review-suggestion"></p>
             </div>
             <div class="qa-review-legend">
-              <span><i class="qa-legend-original"></i> YOLO box</span>
+              <span><i class="qa-legend-original"></i> Original annotation</span>
               <span><i class="qa-legend-mask"></i> SAM mask</span>
-              <span><i class="qa-legend-sam"></i> SAM box</span>
+              <span><i class="qa-legend-sam"></i> SAM suggestion</span>
             </div>
             <div class="qa-review-pending-fix" id="qa-review-pending-fix"></div>
             <div class="qa-review-actions">

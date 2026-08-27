@@ -31,6 +31,7 @@ from ..services.annotation_qa import (
     build_annotation_qa_roboflow_preview,
     ensure_annotation_qa_path,
     normalize_annotation_qa_model_name,
+    normalize_annotation_qa_task,
     publish_annotation_qa_to_roboflow,
     run_annotation_qa_job,
     set_annotation_qa_issue_fix,
@@ -79,6 +80,10 @@ def create_annotation_qa_router(deps: AnnotationQaRouterDependencies) -> APIRout
     @serialized_compute_start
     def start_annotation_qa(request: AnnotationQaRequest):
         ensure_compute_available("annotation QA")
+        try:
+            annotation_task = normalize_annotation_qa_task(request.task)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         if request.sam_max_difference_percent <= request.box_tolerance_percent:
             raise HTTPException(
                 status_code=422,
@@ -89,6 +94,11 @@ def create_annotation_qa_router(deps: AnnotationQaRouterDependencies) -> APIRout
             raise HTTPException(
                 status_code=422,
                 detail="Automatic correction mode must be manual, shadow, or automatic.",
+            )
+        if annotation_task == "segment" and auto_correction_mode == "automatic":
+            raise HTTPException(
+                status_code=422,
+                detail="Automatic polygon replacement is disabled. Use Suggestions only or Human decisions only.",
             )
         with annotation_qa_jobs_lock:
             active = next(
@@ -121,6 +131,7 @@ def create_annotation_qa_router(deps: AnnotationQaRouterDependencies) -> APIRout
         stop_event = threading.Event()
         request_payload = {
             "dataset_yaml": str(yaml_path),
+            "task": annotation_task,
             "model": model,
             "model_label": model_status["label"],
             "scope": request.scope,
@@ -148,6 +159,7 @@ def create_annotation_qa_router(deps: AnnotationQaRouterDependencies) -> APIRout
             "detail": "Annotation QA queued.",
             "run_dir": str(run_dir),
             "dataset_yaml": str(yaml_path),
+            "annotation_task": annotation_task,
             "model": model,
             "model_label": model_status["label"],
             "scope": request.scope,

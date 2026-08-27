@@ -2151,7 +2151,7 @@ function annotationQaIssueCounts(issues = annotationQaIssuesList()) {
     if (issue.audit_required && issue.audit_status === "pending") {
       counts.audits += 1;
     }
-    if (unresolved && issueCanAcceptSamBox(issue)) {
+    if (unresolved && issueCanAcceptSamSuggestion(issue)) {
       counts.safeSuggestions += 1;
     }
     if (issue.review_status === "needs_fix" || (!annotationQaIsResolved(issue) && issue.difference_band === "large_disagreement")) {
@@ -2168,13 +2168,21 @@ function updateAnnotationQaConfigurationSummary() {
   const scopeLabels = { all: "all splits", val: "validation", train: "training", test: "test" };
   const presetLabels = { balanced: "Balanced review", lenient: "Quick check", strict: "Thorough review" };
   const modeLabels = { shadow: "suggestions only", automatic: "safe corrections + audit", manual: "human decisions only" };
+  const taskLabels = { auto: "auto task", detect: "detection", segment: "segmentation" };
   const scope = $("annotation-qa-scope").value;
   const preset = $("annotation-qa-preset").value;
   const mode = $("annotation-qa-auto-mode").value;
-  $("annotation-qa-config-summary").textContent = `${presetLabels[preset]} · ${scopeLabels[scope]} · ${modeLabels[mode]}`;
-  const modeText = mode === "automatic"
+  const task = $("annotation-qa-task").value;
+  if (task === "segment" && mode === "automatic") {
+    $("annotation-qa-auto-mode").value = "shadow";
+  }
+  const effectiveMode = $("annotation-qa-auto-mode").value;
+  $("annotation-qa-config-summary").textContent = `${presetLabels[preset]} · ${scopeLabels[scope]} · ${taskLabels[task]} · ${modeLabels[effectiveMode]}`;
+  const modeText = task === "segment"
+    ? "SAM polygon suggestions require human acceptance; automatic polygon replacement is disabled."
+    : effectiveMode === "automatic"
     ? "Policy-approved SAM replacements may be queued automatically; sampled decisions must be audited before finalization."
-    : mode === "manual"
+    : effectiveMode === "manual"
       ? "Every flagged annotation requires a human decision; no automatic corrections will be queued."
       : "SAM may suggest safer boxes, but nothing will be queued without a reviewer.";
   $("annotation-qa-configuration-explainer").textContent = `Scan ${scopeLabels[scope]} with ${presetLabels[preset].toLowerCase()} sensitivity. ${modeText}`;
@@ -2201,7 +2209,7 @@ function updateAnnotationQaModelStatus() {
   const model = selectedAnnotationQaModelStatus();
   const automaticOption = [...$("annotation-qa-auto-mode").options].find((option) => option.value === "automatic");
   if (automaticOption) {
-    automaticOption.disabled = Boolean(model && !model.automatic_allowed);
+    automaticOption.disabled = $("annotation-qa-task")?.value === "segment" || Boolean(model && !model.automatic_allowed);
   }
   if (model && !model.automatic_allowed && $("annotation-qa-auto-mode").value === "automatic") {
     $("annotation-qa-auto-mode").value = "shadow";
@@ -2261,7 +2269,7 @@ function setAnnotationQaProgress(visible, job = {}) {
 function annotationQaAcceptedFixCount() {
   const issues = Array.isArray(state.annotationQaReport?.issues) ? state.annotationQaReport.issues : [];
   return issues.filter((issue) => (
-    issue.accepted_fix === "sam_box"
+    ["sam_box", "sam_polygon"].includes(issue.accepted_fix)
     || (issue.accepted_class_id !== null && issue.accepted_class_id !== undefined)
   )).length;
 }
@@ -2277,11 +2285,14 @@ function annotationQaFixCounts() {
     if (issue.accepted_fix === "sam_box") {
       counts.box += 1;
     }
+    if (issue.accepted_fix === "sam_polygon") {
+      counts.polygon += 1;
+    }
     if (issue.accepted_class_id !== null && issue.accepted_class_id !== undefined) {
       counts.class += 1;
     }
     return counts;
-  }, { box: 0, class: 0 });
+  }, { box: 0, polygon: 0, class: 0 });
 }
 
 function annotationQaHasLegacySamFixes() {
@@ -2310,7 +2321,7 @@ function renderAnnotationQaFixSummary() {
     summary.textContent = `${pendingAudits} sampled automatic decision${pendingAudits === 1 ? "" : "s"} require an audit before creating a corrected dataset.`;
     return;
   }
-  const total = counts.box + counts.class;
+  const total = counts.box + counts.polygon + counts.class;
   if (!total) {
     summary.textContent = state.annotationQaCorrectedDatasetYaml
       ? "Corrected dataset is ready."
@@ -2320,6 +2331,9 @@ function renderAnnotationQaFixSummary() {
   const parts = [];
   if (counts.box) {
     parts.push(`${counts.box} box ${counts.box === 1 ? "fix" : "fixes"}`);
+  }
+  if (counts.polygon) {
+    parts.push(`${counts.polygon} polygon ${counts.polygon === 1 ? "fix" : "fixes"}`);
   }
   if (counts.class) {
     parts.push(`${counts.class} class ${counts.class === 1 ? "change" : "changes"}`);
@@ -2388,11 +2402,19 @@ function renderAnnotationQaRoboflowSync() {
   const target = `${binding.workspace || "unknown workspace"}/${binding.project || "unknown project"}`;
   $("annotation-qa-roboflow-target").textContent = `${target} · imported version ${binding.source_version || "unknown"}`;
   const preview = state.annotationQaRoboflowPreview;
+  const segmentation = state.annotationQaReport?.summary?.annotation_task === "segment";
   const counts = preview?.counts || {};
   const busy = state.annotationQaRoboflowPreviewing || state.annotationQaRoboflowPublishing;
   const hasCorrectedDataset = Boolean(state.annotationQaCorrectedDatasetYaml);
   const ready = Number(counts.ready || 0);
   const results = $("annotation-qa-roboflow-results");
+  if (segmentation) {
+    results.innerHTML = "<span><strong>Disabled</strong> Segmentation publishing remains blocked until polygon conflict synchronization is validated.</span>";
+    $("annotation-qa-roboflow-state").textContent = "Polygon publishing disabled";
+    $("preview-annotation-qa-roboflow").disabled = true;
+    $("publish-annotation-qa-roboflow").disabled = true;
+    return;
+  }
   if (preview) {
     const labels = preview.results ? [
       ["Published", counts.published || 0],
@@ -2454,7 +2476,7 @@ function syncAnnotationQaActionStates() {
   $("stop-annotation-qa").textContent = state.annotationQaStopping ? "Stopping..." : "Stop";
   $("stop-annotation-qa").setAttribute("aria-busy", String(state.annotationQaStopping));
   [
-    "annotation-qa-model", "annotation-qa-scope", "annotation-qa-preset", "annotation-qa-tolerance",
+    "annotation-qa-model", "annotation-qa-task", "annotation-qa-scope", "annotation-qa-preset", "annotation-qa-tolerance",
     "annotation-qa-max-difference", "annotation-qa-auto-mode", "annotation-qa-audit",
     "annotation-qa-prompt-expansion", "annotation-qa-prompt-jitter", "annotation-qa-stability-iou",
     "annotation-qa-stability-edge", "annotation-qa-auto-quality", "annotation-qa-auto-iou",
@@ -2533,10 +2555,13 @@ function renderAnnotationQaSummary(summary = {}) {
     runDetails.innerHTML = `
       <div><span>Images scanned</span><strong>${summary.images_scanned || 0}</strong></div>
       <div><span>Labels checked</span><strong>${summary.labels_checked || 0}</strong></div>
+      <div><span>Annotation task</span><strong>${summary.annotation_task === "segment" ? "Segmentation" : "Detection"}</strong></div>
       <div><span>Model</span><strong>${escapeHtml(summary.model || summary.sam_model || $("annotation-qa-model").value)}</strong></div>
       <div><span>Scope</span><strong>${escapeHtml(summary.scope || $("annotation-qa-scope").value)}</strong></div>
-      <div><span>Box tolerance</span><strong>${Number(summary.box_tolerance_percent ?? 5).toFixed(1)}%</strong></div>
-      <div><span>SAM difference limit</span><strong>${Number(summary.sam_max_difference_percent ?? 25).toFixed(1)}%</strong></div>
+      ${summary.annotation_task === "segment"
+        ? `<div><span>Masks checked</span><strong>${summary.masks_checked || 0}</strong></div>`
+        : `<div><span>Box tolerance</span><strong>${Number(summary.box_tolerance_percent ?? 5).toFixed(1)}%</strong></div>
+           <div><span>SAM difference limit</span><strong>${Number(summary.sam_max_difference_percent ?? 25).toFixed(1)}%</strong></div>`}
       <div><span>YOLO kept automatically</span><strong>${summary.qa_decisions?.auto_keep_yolo || summary.yolo_boxes_accepted || 0}</strong></div>
       <div><span>SAM replacements blocked</span><strong>${summary.sam_replacements_blocked || 0}</strong></div>
       ${summary.auto_correction_policy?.runtime ? `
@@ -2597,6 +2622,14 @@ function annotationQaIssueTypeLabel(issueType) {
     empty_mask: "Empty SAM mask",
     sam_mapping_error: "SAM mapping error",
     duplicate_box: "Possible duplicate box",
+    duplicate_segment: "Possible duplicate segment",
+    invalid_polygon: "Invalid polygon",
+    moderate_mask_difference: "Moderate mask difference",
+    large_mask_disagreement: "Large mask disagreement",
+    missing_object_area: "SAM mask misses object area",
+    excess_mask_area: "SAM mask includes excess area",
+    low_boundary_agreement: "Low boundary agreement",
+    unstable_sam_segmentation: "Unstable SAM segmentation",
     invalid_label: "Invalid label",
     unsupported_annotation: "Unsupported annotation",
     image_read_error: "Image read error",
@@ -2610,7 +2643,7 @@ function annotationQaIssueTypeLabel(issueType) {
 }
 
 function issueCanBulkAcceptSamBox(issue) {
-  return issueCanAcceptSamBox(issue) && !(issue.audit_required && issue.audit_status === "pending");
+  return issueCanAcceptSamSuggestion(issue) && !(issue.audit_required && issue.audit_status === "pending");
 }
 
 function annotationQaIssueRows(issues) {
@@ -2788,7 +2821,10 @@ async function bulkAcceptAnnotationQaSamBoxes() {
     for (let index = 0; index < issueIds.length; index += 1) {
       await apiJson(`/api/annotation-qa/fix/${encodeURIComponent(state.annotationQaJobId)}`, {
         method: "POST",
-        body: JSON.stringify({ issue_id: issueIds[index], fix: "sam_box" }),
+        body: JSON.stringify({
+          issue_id: issueIds[index],
+          fix: annotationQaIssueById(issueIds[index])?.annotation_task === "segment" ? "sam_polygon" : "sam_box",
+        }),
       });
       button.textContent = `Queueing ${index + 1}/${issueIds.length}...`;
     }
@@ -3043,6 +3079,7 @@ async function runAnnotationQa() {
       method: "POST",
       body: JSON.stringify({
         dataset_yaml: state.datasetYaml,
+        task: $("annotation-qa-task").value,
         model: $("annotation-qa-model").value,
         scope: $("annotation-qa-scope").value,
         preset: $("annotation-qa-preset").value,
@@ -3128,14 +3165,16 @@ async function acceptAnnotationQaSamBox(issueId) {
     return false;
   }
   try {
+    const activeIssue = annotationQaIssueById(issueId);
+    const segmentation = activeIssue?.annotation_task === "segment";
     const result = await apiJson(`/api/annotation-qa/fix/${encodeURIComponent(state.annotationQaJobId)}`, {
       method: "POST",
-      body: JSON.stringify({ issue_id: issueId, fix: "sam_box" }),
+      body: JSON.stringify({ issue_id: issueId, fix: segmentation ? "sam_polygon" : "sam_box" }),
     });
     if (state.annotationQaReport?.issues) {
       const issue = state.annotationQaReport.issues.find((item) => item.issue_id === issueId);
       if (issue) {
-        issue.accepted_fix = result.accepted_fix || "sam_box";
+        issue.accepted_fix = result.accepted_fix || (segmentation ? "sam_polygon" : "sam_box");
         issue.accepted_fix_source = result.accepted_fix_source || issue.accepted_fix_source || "human";
         issue.audit_status = result.audit_status || issue.audit_status || "not_required";
         issue.review_status = result.review_status || "fix_accepted";
@@ -3144,7 +3183,7 @@ async function acceptAnnotationQaSamBox(issueId) {
         }
       }
     }
-    setMessage("SAM box queued for this issue. Create the corrected dataset when you are ready.");
+    setMessage(`SAM ${segmentation ? "polygon" : "box"} queued for this issue. Create the corrected dataset when you are ready.`);
     renderAnnotationQaSummary(state.annotationQaReport?.summary || {});
     renderAnnotationQaIssues();
     syncAnnotationQaActionStates();
@@ -3349,10 +3388,10 @@ async function undoAnnotationQaDecision() {
       method: "POST",
       body: JSON.stringify({ issue_id: snapshot.issueId, status: snapshot.reviewStatus }),
     });
-    if (snapshot.acceptedFix === "sam_box") {
+    if (["sam_box", "sam_polygon"].includes(snapshot.acceptedFix)) {
       await apiJson(`/api/annotation-qa/fix/${encodeURIComponent(state.annotationQaJobId)}`, {
         method: "POST",
-        body: JSON.stringify({ issue_id: snapshot.issueId, fix: "sam_box" }),
+        body: JSON.stringify({ issue_id: snapshot.issueId, fix: snapshot.acceptedFix }),
       });
     }
     if (snapshot.acceptedClassId !== null && snapshot.acceptedClassId !== undefined) {
@@ -3522,12 +3561,28 @@ function annotationQaReviewSummary(issue) {
     moderate_box_difference: "YOLO and SAM differ beyond the acceptance tolerance but remain inside the reviewable correction band.",
     large_box_disagreement: "YOLO and SAM differ beyond the configured maximum for automatic correction.",
     sam_mapping_error: "SAM output could not be safely matched to the requested label boxes.",
+    moderate_mask_difference: "The original YOLO polygon and SAM mask differ enough to require review.",
+    large_mask_disagreement: "The original polygon and SAM mask have low overlap.",
+    missing_object_area: "The SAM mask covers less object area than the YOLO polygon.",
+    excess_mask_area: "The SAM mask extends beyond the YOLO polygon.",
+    low_boundary_agreement: "The YOLO polygon and SAM boundary do not agree closely.",
+    unstable_sam_segmentation: "The SAM mask changed when its prompt was expanded or shifted.",
+    duplicate_segment: "Two same-class segmentation masks overlap heavily.",
   };
   return summaries[type] || issue.message || "Review this annotation.";
 }
 
 function annotationQaReviewSuggestion(issue) {
   const type = String(issue.issue_type || "");
+  if (issue.annotation_task === "segment") {
+    if (type === "large_mask_disagreement" || type === "unstable_sam_segmentation") {
+      return "Automatic polygon replacement is blocked. Keep the original polygon or send it for manual correction.";
+    }
+    if (issueCanAcceptSamPolygon(issue)) {
+      return "Compare the yellow original polygon with the blue SAM contour. Queue the SAM polygon only when it follows the intended object better.";
+    }
+    return "Review the polygon and mask overlays. Keep the original annotation unless the issue needs a manual correction.";
+  }
   if (type === "low_box_agreement" || type === "loose_box") {
     return "Check whether the yellow YOLO box includes too much background. Use the blue SAM box only if it fits the plant better.";
   }
@@ -3561,10 +3616,26 @@ function annotationQaReviewSuggestion(issue) {
 function annotationQaMetricSummaryText(issue) {
   const metrics = issue.metrics || {};
   const parts = [];
+  if (issue.annotation_task === "segment") {
+    if (metrics.mask_iou !== undefined) {
+      parts.push(`Mask IoU: ${(Number(metrics.mask_iou) * 100).toFixed(1)}%`);
+    }
+    if (metrics.boundary_f1 !== undefined) {
+      parts.push(`Boundary agreement: ${(Number(metrics.boundary_f1) * 100).toFixed(1)}%`);
+    }
+    if (metrics.original_coverage !== undefined) {
+      parts.push(`Original coverage: ${(Number(metrics.original_coverage) * 100).toFixed(1)}%`);
+    }
+    if (metrics.mask_area_ratio !== undefined) {
+      parts.push(`SAM/original area: ${Number(metrics.mask_area_ratio).toFixed(2)}×`);
+    }
+  }
   if (metrics.bbox_iou !== null && metrics.bbox_iou !== undefined) {
     parts.push(`Overlap: ${qaLevel(metrics.bbox_iou, 0.45, 0.75)}`);
   }
-  parts.push(annotationQaBoxDifferenceText(issue));
+  if (issue.annotation_task !== "segment") {
+    parts.push(annotationQaBoxDifferenceText(issue));
+  }
   if (metrics.center_shift !== null && metrics.center_shift !== undefined) {
     const shift = Number(metrics.center_shift);
     let label = "Unknown";
@@ -3629,10 +3700,29 @@ function issueCanAcceptSamBox(issue) {
     && edgeDifferences.within_max_difference === true;
 }
 
+function issueCanAcceptSamPolygon(issue) {
+  const promptStability = issue?.metrics?.prompt_stability || {};
+  return issue?.annotation_task === "segment"
+    && issue?.auto_fix_eligible === true
+    && issue?.quality_gate_passed === true
+    && issue?.difference_band === "reviewable"
+    && issue?.fix_type === "replace_polygon"
+    && Array.isArray(issue.recommended_polygon)
+    && issue.recommended_polygon.length >= 3
+    && promptStability.passed !== false;
+}
+
+function issueCanAcceptSamSuggestion(issue) {
+  return issueCanAcceptSamBox(issue) || issueCanAcceptSamPolygon(issue);
+}
+
 function acceptedFixText(issue) {
   const fixes = [];
   if (issue.accepted_fix === "sam_box") {
     fixes.push("SAM box");
+  }
+  if (issue.accepted_fix === "sam_polygon") {
+    fixes.push("SAM polygon");
   }
   if (issue.accepted_class_id !== null && issue.accepted_class_id !== undefined) {
     fixes.push(`class ${issue.accepted_class_name || `ID ${issue.accepted_class_id}`}`);
@@ -3644,6 +3734,9 @@ function pendingCorrectionText(issue) {
   const fixes = [];
   if (issue.accepted_fix === "sam_box") {
     fixes.push(`box ${bboxText(issue.original_bbox)} -> ${bboxText(issue.recommended_bbox)}`);
+  }
+  if (issue.accepted_fix === "sam_polygon") {
+    fixes.push(`polygon ${issue.original_polygon?.length || 0} points -> ${issue.recommended_polygon?.length || 0} points`);
   }
   if (issue.accepted_class_id !== null && issue.accepted_class_id !== undefined) {
     const originalClass = issue.class_name || (issue.class_id !== null && issue.class_id !== undefined ? `ID ${issue.class_id}` : "unknown");
@@ -3657,7 +3750,7 @@ function renderAnnotationQaPendingFix(issue) {
   if (!container) {
     return;
   }
-  const hasFix = issue.accepted_fix === "sam_box"
+  const hasFix = ["sam_box", "sam_polygon"].includes(issue.accepted_fix)
     || (issue.accepted_class_id !== null && issue.accepted_class_id !== undefined);
   container.classList.toggle("is-empty", !hasFix);
   container.textContent = pendingCorrectionText(issue);
@@ -3727,9 +3820,50 @@ function drawAnnotationQaBox(context, bbox, color, label) {
   context.restore();
 }
 
+function drawAnnotationQaPolygon(context, polygon, color, label) {
+  if (!Array.isArray(polygon) || polygon.length < 3) {
+    return;
+  }
+  const points = polygon.map((point) => [Number(point?.[0]) || 0, Number(point?.[1]) || 0]);
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = Math.max(2, context.canvas.width / 600);
+  context.beginPath();
+  context.moveTo(points[0][0], points[0][1]);
+  points.slice(1).forEach((point) => context.lineTo(point[0], point[1]));
+  context.closePath();
+  context.stroke();
+  context.font = `700 ${Math.max(12, context.canvas.width / 80)}px sans-serif`;
+  context.fillStyle = color;
+  context.fillText(label, points[0][0] + 4, Math.max(14, points[0][1] - 5));
+  context.restore();
+}
+
+function drawAnnotationQaMaskOverlay(context, maskImage, color) {
+  if (!maskImage) {
+    return;
+  }
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = context.canvas.width;
+  maskCanvas.height = context.canvas.height;
+  const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true });
+  maskContext.drawImage(maskImage, 0, 0, maskCanvas.width, maskCanvas.height);
+  const pixels = maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+  for (let index = 0; index < pixels.data.length; index += 4) {
+    const visible = pixels.data[index] > 127;
+    pixels.data[index] = color[0];
+    pixels.data[index + 1] = color[1];
+    pixels.data[index + 2] = color[2];
+    pixels.data[index + 3] = visible ? color[3] : 0;
+  }
+  maskContext.putImageData(pixels, 0, 0);
+  context.drawImage(maskCanvas, 0, 0);
+}
+
 async function renderAnnotationQaCanvas(issue) {
   const rawUrl = annotationQaPreviewAssetUrl(issue, "raw_preview");
   const maskUrl = annotationQaPreviewAssetUrl(issue, "mask_preview");
+  const originalMaskUrl = annotationQaPreviewAssetUrl(issue, "original_mask_preview");
   const canvas = $("qa-review-canvas");
   const fallback = $("qa-review-image");
   const controls = $("qa-overlay-controls");
@@ -3742,9 +3876,10 @@ async function renderAnnotationQaCanvas(issue) {
     return;
   }
   try {
-    const [rawImage, maskImage] = await Promise.all([
+    const [rawImage, maskImage, originalMaskImage] = await Promise.all([
       loadAnnotationQaImage(rawUrl),
       maskUrl ? loadAnnotationQaImage(maskUrl).catch(() => null) : Promise.resolve(null),
+      originalMaskUrl ? loadAnnotationQaImage(originalMaskUrl).catch(() => null) : Promise.resolve(null),
     ]);
     if (revision !== state.annotationQaCanvasRevision || state.annotationQaActiveIssueId !== issue.issue_id) {
       return;
@@ -3754,29 +3889,27 @@ async function renderAnnotationQaCanvas(issue) {
     const context = canvas.getContext("2d");
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(rawImage, 0, 0, canvas.width, canvas.height);
+    $("qa-overlay-original-mask").disabled = !originalMaskImage;
+    if (originalMaskImage && $("qa-overlay-original-mask").checked) {
+      drawAnnotationQaMaskOverlay(context, originalMaskImage, [255, 205, 0, 70]);
+    }
     $("qa-overlay-mask").disabled = !maskImage;
     if (maskImage && $("qa-overlay-mask").checked) {
-      const maskCanvas = document.createElement("canvas");
-      maskCanvas.width = canvas.width;
-      maskCanvas.height = canvas.height;
-      const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true });
-      maskContext.drawImage(maskImage, 0, 0, canvas.width, canvas.height);
-      const pixels = maskContext.getImageData(0, 0, canvas.width, canvas.height);
-      for (let index = 0; index < pixels.data.length; index += 4) {
-        const visible = pixels.data[index] > 127;
-        pixels.data[index] = 255;
-        pixels.data[index + 1] = 220;
-        pixels.data[index + 2] = 70;
-        pixels.data[index + 3] = visible ? 105 : 0;
-      }
-      maskContext.putImageData(pixels, 0, 0);
-      context.drawImage(maskCanvas, 0, 0);
+      drawAnnotationQaMaskOverlay(context, maskImage, [0, 150, 255, 90]);
     }
     if ($("qa-overlay-yolo").checked) {
-      drawAnnotationQaBox(context, issue.original_bbox, "rgb(255, 210, 0)", "YOLO");
+      if (issue.annotation_task === "segment") {
+        drawAnnotationQaPolygon(context, issue.original_polygon, "rgb(255, 210, 0)", "YOLO");
+      } else {
+        drawAnnotationQaBox(context, issue.original_bbox, "rgb(255, 210, 0)", "YOLO");
+      }
     }
     if ($("qa-overlay-sam").checked) {
-      drawAnnotationQaBox(context, issue.sam_bbox, "rgb(0, 150, 255)", "SAM");
+      if (issue.annotation_task === "segment") {
+        drawAnnotationQaPolygon(context, issue.sam_polygon || issue.recommended_polygon, "rgb(0, 150, 255)", "SAM");
+      } else {
+        drawAnnotationQaBox(context, issue.sam_bbox, "rgb(0, 150, 255)", "SAM");
+      }
     }
     fallback.hidden = true;
     canvas.hidden = false;
@@ -3833,20 +3966,24 @@ function renderAnnotationQaReview(issue) {
     <div><dt>YOLO box</dt><dd>${escapeHtml(bboxText(issue.original_bbox))}</dd></div>
     <div><dt>SAM box</dt><dd>${escapeHtml(bboxText(issue.sam_bbox))}</dd></div>
     <div><dt>Recommended box</dt><dd>${escapeHtml(bboxText(issue.recommended_bbox))}</dd></div>
+    <div><dt>Original polygon</dt><dd>${issue.annotation_task === "segment" ? `${issue.original_polygon?.length || 0} points` : "not applicable"}</dd></div>
+    <div><dt>SAM polygon</dt><dd>${issue.annotation_task === "segment" ? `${(issue.sam_polygon || issue.recommended_polygon)?.length || 0} points` : "not applicable"}</dd></div>
     <div><dt>Metrics</dt><dd>${escapeHtml(metricsText(issue.metrics))}</dd></div>
     <div><dt>Queued correction</dt><dd>${escapeHtml(acceptedFixText(issue))}</dd></div>
   `;
   renderAnnotationQaPendingFix(issue);
   renderAnnotationQaClassSelector(issue);
+  const annotationNoun = issue.annotation_task === "segment" ? "polygon" : "box";
   $("qa-review-keep-yolo").innerHTML = issue.review_status === "accepted"
-    ? "<span>1</span> Original box kept"
-    : "<span>1</span> Keep original box";
-  const canAcceptSam = issueCanAcceptSamBox(issue);
+    ? `<span>1</span> Original ${annotationNoun} kept`
+    : `<span>1</span> Keep original ${annotationNoun}`;
+  const canAcceptSam = issueCanAcceptSamSuggestion(issue);
   $("qa-review-accept-sam").disabled = !canAcceptSam;
-  const samActionText = issue.accepted_fix === "sam_box"
+  const samFixQueued = ["sam_box", "sam_polygon"].includes(issue.accepted_fix);
+  const samActionText = samFixQueued
     ? issue.audit_required && issue.audit_status !== "passed"
-      ? "Confirm audited SAM box"
-      : "SAM box queued"
+      ? `Confirm audited SAM ${annotationNoun}`
+      : `SAM ${annotationNoun} queued`
     : issue.difference_band === "large_disagreement"
       ? "SAM replacement blocked"
       : issue.difference_band === "reviewable" && !canAcceptSam
@@ -6710,6 +6847,10 @@ $("annotation-qa-preset").addEventListener("change", () => {
 });
 $("annotation-qa-scope").addEventListener("change", updateAnnotationQaConfigurationSummary);
 $("annotation-qa-auto-mode").addEventListener("change", updateAnnotationQaConfigurationSummary);
+$("annotation-qa-task").addEventListener("change", () => {
+  updateAnnotationQaModelStatus();
+  updateAnnotationQaConfigurationSummary();
+});
 $("annotation-qa-model").addEventListener("change", updateAnnotationQaModelStatus);
 $("download-annotation-qa-csv").addEventListener("click", () => downloadAnnotationQaReport("csv"));
 $("download-annotation-qa-json").addEventListener("click", () => downloadAnnotationQaReport("json"));
@@ -6989,7 +7130,7 @@ if ($("qa-review-modal")) {
       decideAnnotationQaSamBox();
     }
   });
-  $("qa-review-keep-yolo").addEventListener("click", () => decideAnnotationQaStatus("accepted", "Original YOLO box kept."));
+  $("qa-review-keep-yolo").addEventListener("click", () => decideAnnotationQaStatus("accepted", "Original YOLO annotation kept."));
   $("qa-review-accept-class").addEventListener("click", () => {
     if (state.annotationQaActiveIssueId) {
       decideAnnotationQaClassChange();
@@ -7007,7 +7148,7 @@ if ($("qa-review-modal")) {
   $("qa-review-zoom-out").addEventListener("click", () => setAnnotationQaZoom(state.annotationQaZoom - 0.25));
   $("qa-review-zoom-reset").addEventListener("click", () => setAnnotationQaZoom(1));
   $("qa-review-zoom-in").addEventListener("click", () => setAnnotationQaZoom(state.annotationQaZoom + 0.25));
-  ["qa-overlay-yolo", "qa-overlay-mask", "qa-overlay-sam"].forEach((id) => {
+  ["qa-overlay-yolo", "qa-overlay-original-mask", "qa-overlay-mask", "qa-overlay-sam"].forEach((id) => {
     $(id).addEventListener("change", () => {
       const issue = annotationQaIssueById(state.annotationQaActiveIssueId);
       if (issue) {

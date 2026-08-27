@@ -134,6 +134,16 @@ datasets are copy-on-write, and reports created before the current
 prompt-mapping, difference-band, and stability safeguards must be rerun before
 SAM box corrections can be accepted.
 
+Standard YOLO segmentation rows (`class x1 y1 ...`) are supported in Auto or
+Segmentation mode. QA rasterizes each original polygon, prompts SAM with its
+bounds, and compares mask IoU, coverage, area, centroid, boundary agreement,
+confidence, and prompt stability. Previews show the original polygon/mask and
+the SAM mask/contour. Stable, representable SAM polygons may be accepted
+manually into a copy-on-write corrected dataset. Automatic polygon replacement
+and Roboflow polygon publishing remain disabled until segmentation thresholds
+and remote conflict synchronization are calibrated. Mixed detection and
+segmentation rows are rejected explicitly.
+
 SAM 3 is available as a separate local QA backend when `sam3.pt` exists at
 the repository root or at `SAM3_QA_MODEL_PATH`. It requires Ultralytics
 8.3.237 or newer. The 16 GB profile caps inference at SAM 3's stride-aligned

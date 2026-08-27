@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+import math
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ def load_qa_helpers():
         "bbox_edge_differences",
         "annotation_qa_difference_band",
         "issue_is_safe_sam_replacement",
+        "issue_is_reviewable_sam_polygon",
         "annotation_qa_thresholds",
         "annotation_qa_summary",
         "bbox_area",
@@ -37,11 +39,27 @@ def load_qa_helpers():
         "mask_bbox",
         "draw_annotation_qa_preview",
         "annotation_qa_candidates_for_image",
+        "normalize_annotation_qa_task",
+        "annotation_task_for_fields",
+        "pixel_polygon_from_yolo",
+        "polygon_bbox",
+        "polygon_mask",
+        "mask_to_polygon",
+        "yolo_polygon_from_pixels",
+        "annotation_qa_segmentation_metrics",
+        "issue_label_path_in_copy",
+        "apply_annotation_qa_fix",
     }
     module = ast.Module(
         body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names],
         type_ignores=[],
     )
+    class DummyHTTPException(Exception):
+        def __init__(self, status_code=500, detail=""):
+            self.status_code = status_code
+            self.detail = detail
+            super().__init__(detail)
+
     namespace = {
         "Optional": Optional,
         "Path": Path,
@@ -49,9 +67,11 @@ def load_qa_helpers():
         "MYT": timezone(timedelta(hours=8)),
         "ANNOTATION_QA_REPORT_VERSION": 4,
         "hashlib": hashlib,
+        "math": math,
         "threading": threading,
         "SamQaRuntime": object,
         "InferenceStopped": RuntimeError,
+        "HTTPException": DummyHTTPException,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace
@@ -96,6 +116,97 @@ class FakeModel:
 
 
 class AnnotationQaTests(unittest.TestCase):
+    def test_annotation_task_recognizes_detection_and_segmentation_rows(self):
+        detect = "0 0.5 0.5 0.2 0.3".split()
+        segment = "1 0.1 0.1 0.8 0.1 0.8 0.8 0.1 0.8".split()
+
+        self.assertEqual(QA_HELPERS["annotation_task_for_fields"](detect), "detect")
+        self.assertEqual(QA_HELPERS["annotation_task_for_fields"](segment), "segment")
+        self.assertIsNone(QA_HELPERS["annotation_task_for_fields"]("0 1 2 3 4 5".split()))
+
+    def test_polygon_parse_rasterize_and_serialize_round_trip(self):
+        fields = "1 0.1 0.1 0.8 0.1 0.8 0.8 0.1 0.8".split()
+        polygon = QA_HELPERS["pixel_polygon_from_yolo"](fields, 100, 80)
+
+        self.assertEqual(polygon, [[10, 8], [80, 8], [80, 64], [10, 64]])
+        self.assertEqual(QA_HELPERS["polygon_bbox"](polygon), (10, 8, 81, 65))
+        mask = QA_HELPERS["polygon_mask"](polygon, 100, 80)
+        self.assertGreater(int(mask.sum()), 3000)
+        row = QA_HELPERS["yolo_polygon_from_pixels"](1, polygon, 100, 80)
+        self.assertEqual(QA_HELPERS["annotation_task_for_fields"](row.split()), "segment")
+
+    def test_segmentation_metrics_and_contour_are_mask_aware(self):
+        original = np.zeros((100, 100), dtype=np.uint8)
+        original[20:80, 20:80] = 1
+        same = original.copy()
+        shifted = np.zeros_like(original)
+        shifted[35:95, 35:95] = 1
+
+        exact = QA_HELPERS["annotation_qa_segmentation_metrics"](original, same)
+        different = QA_HELPERS["annotation_qa_segmentation_metrics"](original, shifted)
+        self.assertEqual(exact["mask_iou"], 1.0)
+        self.assertEqual(exact["boundary_f1"], 1.0)
+        self.assertLess(different["mask_iou"], exact["mask_iou"])
+        contour = QA_HELPERS["mask_to_polygon"](same, 100, 100)
+        self.assertIsNotNone(contour)
+        self.assertGreaterEqual(len(contour), 3)
+
+    def test_reviewable_polygon_requires_manual_quality_gates(self):
+        issue = {
+            "annotation_task": "segment",
+            "auto_fix_eligible": True,
+            "quality_gate_passed": True,
+            "difference_band": "reviewable",
+            "fix_type": "replace_polygon",
+            "recommended_polygon": [[1, 1], [9, 1], [9, 9], [1, 9]],
+            "metrics": {"prompt_stability": {"passed": True}},
+        }
+        self.assertTrue(QA_HELPERS["issue_is_reviewable_sam_polygon"](issue))
+        issue["metrics"]["prompt_stability"]["passed"] = False
+        self.assertFalse(QA_HELPERS["issue_is_reviewable_sam_polygon"](issue))
+
+    def test_manual_polygon_fix_preserves_copy_and_unrelated_rows(self):
+        import cv2
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            corrected = root / "corrected"
+            source_image = source / "train" / "images" / "sample.jpg"
+            corrected_image = corrected / "train" / "images" / "sample.jpg"
+            source_label = source / "train" / "labels" / "sample.txt"
+            corrected_label = corrected / "train" / "labels" / "sample.txt"
+            for path in (source_image, corrected_image, source_label, corrected_label):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(source_image), np.full((100, 100, 3), 120, dtype=np.uint8))
+            cv2.imwrite(str(corrected_image), np.full((100, 100, 3), 120, dtype=np.uint8))
+            original = "1 0.1 0.1 0.8 0.1 0.8 0.8 0.1 0.8"
+            unrelated = "0 0.2 0.2 0.3 0.2 0.3 0.3 0.2 0.3"
+            source_label.write_text(f"{original}\n{unrelated}\n", encoding="utf-8")
+            corrected_label.write_text(f"{original}\n{unrelated}\n", encoding="utf-8")
+            issue = {
+                "image": str(source_image),
+                "split": "train",
+                "class_id": 1,
+                "label_row": 1,
+                "annotation_task": "segment",
+                "accepted_fix": "sam_polygon",
+                "auto_fix_eligible": True,
+                "quality_gate_passed": True,
+                "difference_band": "reviewable",
+                "fix_type": "replace_polygon",
+                "recommended_polygon": [[15, 15], [75, 15], [75, 75], [15, 75]],
+                "metrics": {"prompt_stability": {"passed": True}},
+            }
+
+            result = QA_HELPERS["apply_annotation_qa_fix"](issue, source, corrected)
+
+            self.assertTrue(result["applied"])
+            rows = corrected_label.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(rows[1], unrelated)
+            self.assertEqual(rows[0], "1 0.150000 0.150000 0.750000 0.150000 0.750000 0.750000 0.150000 0.750000")
+            self.assertEqual(source_label.read_text(encoding="utf-8").splitlines()[0], original)
+
     def test_staged_prompts_skip_stability_work_for_boxes_within_tolerance(self):
         class Runtime:
             def __init__(self):
@@ -170,6 +281,34 @@ class AnnotationQaTests(unittest.TestCase):
             self.assertTrue((preview_path.parent / "issue.mask.jpg").is_file())
             self.assertEqual(issue["raw_preview"], "previews/issue.raw.jpg")
             self.assertEqual(issue["mask_preview"], "previews/issue.mask.jpg")
+
+    def test_segmentation_preview_writes_original_and_sam_masks(self):
+        import cv2
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            image_path = root / "image.jpg"
+            preview_path = root / "previews" / "segment.jpg"
+            cv2.imwrite(str(image_path), np.full((60, 80, 3), 100, dtype=np.uint8))
+            original = np.zeros((60, 80), dtype=np.uint8)
+            original[10:50, 10:50] = 1
+            sam = np.zeros((60, 80), dtype=np.uint8)
+            sam[12:52, 12:52] = 1
+            issue = {
+                "severity": "low",
+                "issue_type": "moderate_mask_difference",
+                "score": 0.2,
+                "original_bbox": [10, 10, 50, 50],
+                "sam_bbox": [12, 12, 52, 52],
+                "original_polygon": [[10, 10], [50, 10], [50, 50], [10, 50]],
+                "sam_polygon": [[12, 12], [52, 12], [52, 52], [12, 52]],
+            }
+
+            QA_HELPERS["draw_annotation_qa_preview"](image_path, preview_path, issue, sam, original)
+
+            self.assertTrue(preview_path.is_file())
+            self.assertTrue((preview_path.parent / "segment.original-mask.jpg").is_file())
+            self.assertEqual(issue["original_mask_preview"], "previews/segment.original-mask.jpg")
 
     def test_masks_are_restored_to_original_prompt_indices(self):
         mask_zero = np.zeros((4, 4), dtype=np.uint8)

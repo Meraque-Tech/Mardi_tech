@@ -39,6 +39,8 @@ def test_annotation_qa_has_a_dedicated_guided_workflow():
     for stage in ("config", "run", "review", "finalize"):
         assert f'id="qa-stage-indicator-{stage}"' in markup
     assert 'id="annotation-qa-configuration-explainer"' in markup
+    assert 'id="annotation-qa-task"' in markup
+    assert '<option value="segment">Segmentation polygons</option>' in markup
     assert 'Advanced model and safety settings' in markup
 
 
@@ -73,10 +75,13 @@ def test_review_dialog_supports_fast_safe_decisions():
     assert 'id="qa-overlay-yolo"' in markup
     assert 'id="qa-overlay-mask"' in markup
     assert 'id="qa-overlay-sam"' in markup
+    assert 'id="qa-overlay-original-mask"' in markup
     assert "function annotationQaFilteredIssues" in script
     assert "function decideAnnotationQaStatus" in script
     assert "function undoAnnotationQaDecision" in script
     assert "function setAnnotationQaZoom" in script
+    assert "function drawAnnotationQaPolygon" in script
+    assert "function issueCanAcceptSamPolygon" in script
     assert 'event.key === "Tab"' in script
 
 
@@ -111,6 +116,8 @@ def test_roboflow_publish_is_bound_previewed_and_confirmed():
     assert "window.confirm" in script
     assert 'request.preview_id' in app_source
     assert 'request.confirmed' in app_source
+    assert "Segmentation publishing remains blocked" in script
+    assert "Roboflow publishing for segmentation corrections is disabled" in app_source
 
 
 def test_sam3_is_exposed_with_memory_and_safety_controls():
