@@ -252,7 +252,7 @@ def parse_args():
     parser.add_argument(
         "--optimizer",
         default=None,
-        help="Optimizer to use, for example auto, SGD, Adam, or AdamW. Overrides TRAINING_CONFIG.",
+        help="Optimizer to use, for example auto, MuSGD, SGD, Adam, or AdamW. Overrides TRAINING_CONFIG.",
     )
     parser.add_argument(
         "--lr0",

@@ -680,6 +680,7 @@
                 <span class="tooltip-label" tabindex="0" data-tooltip="Optimizer used for weight updates. Auto lets Ultralytics choose based on model and training setup.">Optimizer</span>
                 <select id="optimizer">
                   <option value="auto" selected>Auto (recommended)</option>
+                  <option value="MuSGD">MuSGD</option>
                   <option value="SGD">SGD</option>
                   <option value="Adam">Adam</option>
                   <option value="AdamW">AdamW</option>
@@ -699,7 +700,7 @@
               <h3>Optimization</h3>
             <div class="grid three">
               <label>
-                <span class="tooltip-label" tabindex="0" data-tooltip="Initial learning rate for a manually selected optimizer. With Auto, Ultralytics selects this value.">Initial LR</span>
+                <span class="tooltip-label" tabindex="0" data-tooltip="Base learning rate for a manually selected optimizer. With MuSGD, some parameter groups use a higher rate (3× in the pinned runtime). With Auto, Ultralytics selects this value.">Initial LR</span>
                 <input id="lr0" type="number" min="0" step="0.0001" value="0.001">
               </label>
               <label data-ultralytics-only>
